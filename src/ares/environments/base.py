@@ -257,7 +257,7 @@ class Janitor:
 _ENVIRONMENT_JANITOR = Janitor()
 
 
-class CodeBaseEnv[TaskType](Environment[llms.LLMRequest, llms.LLMRequest | None, float, float]):
+class CodeBaseEnv[TaskType](Environment[llms.LLMResponse, llms.LLMRequest | None, float, float]):
     """Base environment for code agents that computes reward at the end of an episode."""
 
     def __init__(
