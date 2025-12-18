@@ -1,0 +1,42 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "ares"
+version = "0.0.1"
+authors = [
+    {name = "Joshua Greaves", email = "josh@withmartian.com"},
+    {name = "Ryan Smith", email = "ryan@withmartian.com"},
+    {name = "Alex Zverianskii", email = "alex@withmartian.com"},
+]
+description = "Agentic Research and Evaluation Suite"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "daytona>=0.125.0",
+    "docker>=7.1.0",
+    "frozendict>=2.4.7",
+    "harbor>=0.1.25",
+    "httpx>=0.28.1",
+    "jinja2>=3.1.6",
+    "mini-swe-agent>=1.17.3",
+    "numpy>=2.3.5",
+    # TODO: Fix this hard requirement.
+    # This is required by harbor.
+    "openai<=1.100.0",
+    "pydantic>=2.12.5",
+    "pydantic-settings>=2.12.0",
+    "pyyaml>=6.0.3",
+    "swebench>=4.1.0",
+    "tenacity>=9.1.2",
+    # TODO: Add experiment logging that doesn't require torch.
+    # This is only needed for tensorboard support.
+    "torch>=2.9.1",
+]
+
+[dependency-groups]
+dev = [
+    "pyright>=1.1.406",
+    "ruff>=0.14.1",
+]
