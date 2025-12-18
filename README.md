@@ -11,7 +11,7 @@ For now, we recommend running ARES locally from this directory:
 and you're ready to get started.
 
 Alternatively, include it as a dependency in your own project's pyproject.toml using a relative path.
-Pypi installation will be coming soon.
+PyPI installation will be coming soon.
 
 ## Getting Started
 
