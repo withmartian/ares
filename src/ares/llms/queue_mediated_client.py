@@ -27,8 +27,8 @@ class QueueMediatedLLMClient(llm_clients.LLMClient):
         # The code agent will block until the LLM request is answered.
         # The LLM request will be sent to the queue and the code agent will
         # wait for the LLM response.
-        llm_request, future = llm_client.q.get()
-        llm_resposne = ...
+        llm_request, future = await llm_client.q.get()
+        llm_response = ...
         future.set_result(llm_response)
     ```
 
