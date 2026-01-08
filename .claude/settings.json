@@ -1,0 +1,14 @@
+{
+    "permissions": {
+      "allow": [],
+      "deny": [
+        "Read(./.env)",
+        "Read(./.env.*)",
+        "Read(./.envrc)",
+        "Read(./secrets/**)",
+        "Read(./git/**)",
+        "Read(./gha-creds-*.json)"
+      ],
+      "ask": []
+    }
+  }

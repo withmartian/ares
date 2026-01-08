@@ -2,16 +2,21 @@
 
 from collections.abc import Iterable
 import dataclasses
-from typing import Protocol
+from typing import Any, Protocol
 
 from openai.types.chat import chat_completion as chat_completion_type
 from openai.types.chat import chat_completion_message_param
 
 
+# TODO: expand the request/response model for LLM reqs.
 @dataclasses.dataclass(frozen=True)
 class LLMRequest:
     messages: Iterable[chat_completion_message_param.ChatCompletionMessageParam]
-    temperature: float = 1.0
+    temperature: float | None = None
+
+    def as_kwargs(self) -> dict[str, Any]:
+        """Converts the request to a dictionary of kwargs, filtering out None values."""
+        return {k: v for k, v in dataclasses.asdict(self).items() if v is not None}
 
 
 @dataclasses.dataclass(frozen=True)
@@ -20,7 +25,5 @@ class LLMResponse:
     cost: float
 
 
-# TODO: Move this to its own module.
 class LLMClient(Protocol):
-    # TODO: expand the request/response model for LLM reqs.
     async def __call__(self, request: LLMRequest) -> LLMResponse: ...
