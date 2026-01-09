@@ -34,11 +34,13 @@ dependencies = [
     # This is only needed for tensorboard support.
     "tensorboard>=2.20.0",
     "torch>=2.9.1",
-    "transformers>=4.57.3",
 ]
 
 [dependency-groups]
 dev = [
     "pyright>=1.1.406",
     "ruff>=0.14.1",
+]
+examples = [
+    "transformers>=4.57.3",
 ]

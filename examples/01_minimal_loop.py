@@ -1,4 +1,12 @@
-"""Minimal example of using ARES with SWE-bench environment."""
+"""Minimal example of using ARES with SWE-bench environment.
+
+Example usage:
+
+    1. Make sure you have examples dependencies installed
+       `uv sync --group examples`
+    2. Run the example
+       `uv run -m examples.01_minimal_loop`
+"""
 
 import asyncio
 

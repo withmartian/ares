@@ -1,4 +1,12 @@
-"""Minimal example of using ARES with SWE-bench environment and a local LLM."""
+"""Minimal example of using ARES with SWE-bench environment and a local LLM.
+
+Example usage:
+
+    1. Make sure you have examples dependencies installed
+       `uv sync --group examples`
+    2. Run the example
+       `uv run -m examples.02_local_llm`
+"""
 
 import asyncio
 import time
