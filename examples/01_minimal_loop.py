@@ -1,7 +1,15 @@
-"""Minimal example of using ARES with SWE-bench environment."""
+"""Minimal example of using ARES with SWE-bench environment.
+
+Example usage:
+
+    uv run -m examples.01_minimal_loop
+
+"""
 
 import asyncio
 
+from ares.code_agents import mini_swe_agent
+from ares.containers import docker
 from ares.environments import swebench_env
 from ares.llms import chat_completions_compatible
 from ares.llms import llm_clients
@@ -21,8 +29,17 @@ async def main():
     print(f"Repository: {tasks[0].repo}")
     print("-" * 80)
 
-    # Create the SWE-bench environment
-    async with swebench_env.SweBenchEnv(tasks=tasks) as env:
+    # Create the SWE-bench environment.
+    # The environment will run with a specific code agent, defaulting to the MiniSWECodeAgent.
+    # It will also use a specific container factory, which defaults to Daytona.
+    # For this example, we are using local Docker containers.
+    code_agent_factory = mini_swe_agent.MiniSWECodeAgent
+    container_factory = docker.DockerContainer
+    async with swebench_env.SweBenchEnv(
+        tasks=tasks,
+        code_agent_factory=code_agent_factory,
+        container_factory=container_factory,
+    ) as env:
         # Reset the environment to get the first timestep
         ts = await env.reset()
         step_count = 0
