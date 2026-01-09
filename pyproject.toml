@@ -34,6 +34,7 @@ dependencies = [
     # This is only needed for tensorboard support.
     "tensorboard>=2.20.0",
     "torch>=2.9.1",
+    "transformers>=4.57.3",
 ]
 
 [dependency-groups]
