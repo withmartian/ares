@@ -34,11 +34,7 @@ def _get_llm_client(base_url: str, api_key: str) -> openai.AsyncClient:
 async def _query_llm_with_retry(
     llm_client: openai.AsyncClient, model: str, request: llm_clients.LLMRequest
 ) -> openai.types.chat.chat_completion.ChatCompletion:
-    response = await llm_client.chat.completions.create(
-        model=model,
-        messages=request.messages,
-        temperature=request.temperature,
-    )
+    response = await llm_client.chat.completions.create(model=model, **request.as_kwargs())
     return response
 
 
@@ -50,6 +46,11 @@ class ChatCompletionCompatibleLLMClient(llm_clients.LLMClient):
 
     async def __call__(self, request: llm_clients.LLMRequest) -> llm_clients.LLMResponse:
         _LOGGER.debug("[%d] Requesting LLM.", id(self))
+
+        # GPT-5 models don't support temperature.
+        if self.model.startswith("openai/gpt-5"):
+            request = dataclasses.replace(request, temperature=None)
+
         response = await _query_llm_with_retry(_get_llm_client(self.base_url, self.api_key), self.model, request)
         _LOGGER.debug("[%d] LLM response received.", id(self))
 
