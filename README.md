@@ -59,3 +59,25 @@ async def main():
 if __name__ == "__main__":
     asyncio.run(main())
 ```
+## Running examples
+
+ARES includes a couple example scripts in `examples/`. Each example includes an example invocation in its module docstring.
+
+1. Install base dependencies:
+
+   `uv sync`
+
+2. Install example dependencies:
+
+   `uv sync --group examples`
+
+3. Run an example:
+
+   Minimal setup (local Docker containers):
+
+   `uv run -m examples.01_minimal_loop`
+
+   Local LLM variant (downloads a HuggingFace model; may be slower / require more resources):
+
+   `uv run -m examples.02_local_llm`
+
