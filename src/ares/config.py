@@ -1,9 +1,25 @@
 """Configuration for ARES."""
 
 import os
+import getpass
 
 import pydantic
 import pydantic_settings
+
+
+def _default_user() -> str:
+    """Best-effort default username for headless/container environments."""
+    for k in ("USER", "LOGNAME"):
+        v = (os.environ.get(k) or "").strip()
+        if v:
+            return v
+    try:
+        v = (getpass.getuser() or "").strip()
+        if v:
+            return v
+    except Exception:
+        pass
+    return "unknown"
 
 
 class _Config(pydantic_settings.BaseSettings):
@@ -13,9 +29,10 @@ class _Config(pydantic_settings.BaseSettings):
         extra="ignore",
     )
 
-    # Defaults to USER environment variable, if available.
-    # Otherwise, falls back to getlogin().
-    user: str = os.getlogin()
+    # Defaults to USER/LOGNAME environment variable, if available.
+    # Otherwise, falls back to getpass.getuser().
+    # As a last resort, uses "unknown".
+    user: str = _default_user()
 
     # Configuration for LLM requests.
     chat_completion_api_base_url: str = "https://api.withmartian.com/v1"
