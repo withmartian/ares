@@ -1,11 +1,9 @@
 import getpass
 import importlib
-import os
 import sys
 
 
 def _fresh_import_config():
-    # Ensure a clean import so CONFIG is rebuilt using our monkeypatched env.
     sys.modules.pop("ares.config", None)
     import ares.config as cfg
     return importlib.reload(cfg)
@@ -14,9 +12,6 @@ def _fresh_import_config():
 def test_config_user_from_getpass(monkeypatch):
     monkeypatch.delenv("USER", raising=False)
     monkeypatch.delenv("LOGNAME", raising=False)
-
-    # Required for CONFIG instantiation.
-    # In this project, BaseSettings reads from CHAT_COMPLETION_API_KEY.
     monkeypatch.setenv("CHAT_COMPLETION_API_KEY", "test-key")
 
     monkeypatch.setattr(getpass, "getuser", lambda: "jane")
