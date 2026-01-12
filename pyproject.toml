@@ -45,3 +45,7 @@ dev = [
 examples = [
     "transformers>=4.57.3",
 ]
+
+[tool.pytest.ini_options]
+testpaths = ["src"]
+python_files = ["test_*.py", "*_test.py"]
