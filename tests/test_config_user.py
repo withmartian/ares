@@ -6,10 +6,11 @@ def _reload_config(monkeypatch):
     monkeypatch.delenv("USER", raising=False)
     monkeypatch.delenv("LOGNAME", raising=False)
 
-    # Required for config validation. Depending on pydantic-settings config,
-    # this may be read with or without an env prefix.
+    # Required for config validation. pydantic-settings may or may not apply an env prefix.
     monkeypatch.setenv("CHAT_COMPLETION_API_KEY", "test-key")
     monkeypatch.setenv("ARES_CHAT_COMPLETION_API_KEY", "test-key")
+    monkeypatch.setenv("CONFIG_CHAT_COMPLETION_API_KEY", "test-key")
+    monkeypatch.setenv("_CONFIG_CHAT_COMPLETION_API_KEY", "test-key")
 
     import ares.config as cfg
     return importlib.reload(cfg)
