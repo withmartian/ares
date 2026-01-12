@@ -8,15 +8,19 @@ import pydantic_settings
 
 
 def _default_user() -> str:
-    """Best-effort default username for headless/container environments."""
-    for k in ("USER", "LOGNAME"):
-        v = (os.environ.get(k) or "").strip()
-        if v:
-            return v
+    """Best-effort default username for headless/container environments.
+
+    We avoid os.getlogin() because it raises OSError in containers/CI
+    environments that lack a controlling terminal.
+    """
+    for env_var in ("USER", "LOGNAME"):
+        env_val = (os.environ.get(env_var) or "").strip()
+        if env_val:
+            return env_val
     try:
-        v = (getpass.getuser() or "").strip()
-        if v:
-            return v
+        env_val = (getpass.getuser() or "").strip()
+        if env_val:
+            return env_val
     except Exception:
         pass
     return "unknown"
