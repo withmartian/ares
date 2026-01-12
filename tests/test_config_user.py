@@ -3,7 +3,6 @@ import getpass
 
 
 def _reload_config(monkeypatch):
-    # Ensure env vars are not set
     monkeypatch.delenv("USER", raising=False)
     monkeypatch.delenv("LOGNAME", raising=False)
 
