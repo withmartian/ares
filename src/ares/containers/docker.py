@@ -83,7 +83,7 @@ class DockerContainer(containers.Container):
         if len(local_paths) != len(remote_paths):
             raise ValueError("local_paths and remote_paths must have the same length")
 
-        for local_path, remote_path in zip(local_paths, remote_paths):
+        for local_path, remote_path in zip(local_paths, remote_paths, strict=False):
             # Create a tar archive in memory
             tar_stream = io.BytesIO()
             with tarfile.open(fileobj=tar_stream, mode="w") as tar:
@@ -105,7 +105,7 @@ class DockerContainer(containers.Container):
         if len(remote_paths) != len(local_paths):
             raise ValueError("remote_paths and local_paths must have the same length")
 
-        for remote_path, local_path in zip(remote_paths, local_paths):
+        for remote_path, local_path in zip(remote_paths, local_paths, strict=False):
             # Ensure the local directory exists
             local_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -117,17 +117,16 @@ class DockerContainer(containers.Container):
 
             # Extract the file from the tar archive
             tar_bytes = b"".join(tar_stream)
-            tar_file = tarfile.open(fileobj=io.BytesIO(tar_bytes))
-
-            # Extract the file
-            members = tar_file.getmembers()
-            if members:
-                # Get the first member (the file we want)
-                member = members[0]
-                file_data = tar_file.extractfile(member)
-                if file_data:
-                    with open(local_path, "wb") as f:
-                        f.write(file_data.read())
+            with tarfile.open(fileobj=io.BytesIO(tar_bytes)) as tar_file:
+                # Extract the file
+                members = tar_file.getmembers()
+                if members:
+                    # Get the first member (the file we want)
+                    member = members[0]
+                    file_data = tar_file.extractfile(member)
+                    if file_data:
+                        with open(local_path, "wb") as f:
+                            f.write(file_data.read())
 
     @classmethod
     def from_image(

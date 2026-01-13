@@ -1,7 +1,7 @@
 """Configuration for ARES."""
 
-import os
 import getpass
+import os
 
 import pydantic
 import pydantic_settings
