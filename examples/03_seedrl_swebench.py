@@ -131,12 +131,20 @@ class Learner:
         self,
         model_name: str = "Qwen/Qwen2.5-1.5B-Instruct",
         device: str | None = None,
+        max_batch_size: int = 8,
+        batch_timeout: float = 0.5,
     ):
         self.model_name = model_name
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+        self.max_batch_size = max_batch_size
+        self.batch_timeout = batch_timeout
 
         print(f"[Learner] Loading model {model_name} on {self.device}...")
         self.tokenizer = transformers.AutoTokenizer.from_pretrained(model_name)
+        # Set padding token if not set
+        if self.tokenizer.pad_token is None:
+            self.tokenizer.pad_token = self.tokenizer.eos_token
+
         self.model = transformers.AutoModelForCausalLM.from_pretrained(model_name)
         self.model.to(self.device)
         self.model.eval()  # Inference mode
@@ -145,6 +153,8 @@ class Learner:
         hidden_size = self.model.config.hidden_size
         self.value_head = C51ValueHead(hidden_size=hidden_size).to(self.device)
         print(f"[Learner] Attached C51 value head with {hidden_size}-dim inputs")
+        print(f"[Learner] Batching enabled: max_batch_size={max_batch_size}, "
+              f"batch_timeout={batch_timeout}s")
 
         self.request_queue: asyncio.Queue[InferenceRequest] = asyncio.Queue()
         self.inference_task: asyncio.Task[None] | None = None
@@ -152,6 +162,8 @@ class Learner:
         # Stats
         self.total_requests = 0
         self.total_tokens_generated = 0
+        self.total_batches = 0
+        self.max_batch_size_seen = 0
 
     async def start(self) -> None:
         """Start the inference loop."""
@@ -166,8 +178,12 @@ class Learner:
                 await self.inference_task
             except asyncio.CancelledError:
                 pass
-        print(f"[Learner] Stopped. Processed {self.total_requests} requests, "
+        avg_batch_size = self.total_requests / self.total_batches if self.total_batches > 0 else 0
+        print(f"[Learner] Stopped. Processed {self.total_requests} requests "
+              f"in {self.total_batches} batches, "
               f"generated {self.total_tokens_generated} tokens.")
+        print(f"[Learner] Batch stats: avg_size={avg_batch_size:.2f}, "
+              f"max_size={self.max_batch_size_seen}")
 
     async def request_inference(self, actor_id: int, request: llm_clients.LLMRequest) -> llm_clients.LLMResponse:
         """Submit an inference request and await the response.
@@ -191,34 +207,62 @@ class Learner:
     async def _inference_loop(self) -> None:
         """Main inference loop that processes requests from the queue.
 
-        In a production system, this would:
-        - Batch multiple requests together for efficiency
-        - Use dynamic batching with padding/truncation
-        - Handle variable-length sequences
-
-        For this demo, we process requests sequentially.
+        This implements continuous batching:
+        - Collects requests up to max_batch_size OR waits up to batch_timeout
+        - Batches multiple requests together for efficiency
+        - Uses dynamic batching with padding for variable-length sequences
+        - Distributes responses back to the correct futures
         """
         print("[Learner] Inference loop running...")
 
         while True:
             try:
-                # Get next request (blocks until available)
-                req = await self.request_queue.get()
+                batch: list[InferenceRequest] = []
 
-                # Run inference in a thread to avoid blocking the event loop
-                response = await asyncio.to_thread(self._run_inference, req)
+                # Get first request (blocks until available)
+                first_req = await self.request_queue.get()
+                batch.append(first_req)
 
-                # Send response back to the actor
-                req.response_future.set_result(response)
+                # Collect additional requests up to max_batch_size or batch_timeout
+                batch_start_time = time.time()
+                while len(batch) < self.max_batch_size:
+                    time_remaining = self.batch_timeout - (time.time() - batch_start_time)
+                    if time_remaining <= 0:
+                        break
 
-                self.total_requests += 1
+                    try:
+                        # Try to get more requests with timeout
+                        req = await asyncio.wait_for(
+                            self.request_queue.get(),
+                            timeout=time_remaining
+                        )
+                        batch.append(req)
+                    except asyncio.TimeoutError:
+                        # Timeout reached, process current batch
+                        break
+
+                # Update stats
+                batch_size = len(batch)
+                self.total_batches += 1
+                self.max_batch_size_seen = max(self.max_batch_size_seen, batch_size)
+
+                # Run batched inference in a thread to avoid blocking the event loop
+                responses = await asyncio.to_thread(self._run_batched_inference, batch)
+
+                # Distribute responses back to the correct futures
+                for req, response in zip(batch, responses):
+                    req.response_future.set_result(response)
+
+                self.total_requests += batch_size
 
             except asyncio.CancelledError:
                 break
             except Exception as e:
                 print(f"[Learner] Error in inference loop: {e}")
-                if not req.response_future.done():
-                    req.response_future.set_exception(e)
+                # Set exception on all requests in the batch that haven't been completed
+                for req in batch:
+                    if not req.response_future.done():
+                        req.response_future.set_exception(e)
 
     def _run_inference(self, req: InferenceRequest) -> llm_clients.LLMResponse:
         """Run inference on a single request (blocking call, runs in thread pool).
@@ -303,6 +347,148 @@ class Learner:
         )
 
         return response
+
+    def _run_batched_inference(
+        self, batch: list[InferenceRequest]
+    ) -> list[llm_clients.LLMResponse]:
+        """Run inference on a batch of requests with proper padding (blocking call, runs in thread pool).
+
+        Args:
+            batch: List of InferenceRequests to process together
+
+        Returns:
+            List of LLMResponses, one per request in the same order
+        """
+        batch_size = len(batch)
+
+        if batch_size == 1:
+            # Fall back to single inference for batch size 1
+            return [self._run_inference(batch[0])]
+
+        # Tokenize all requests separately first
+        tokenized_inputs = []
+        for req in batch:
+            inputs = self.tokenizer.apply_chat_template(
+                req.request.messages,
+                add_generation_prompt=True,
+                tokenize=True,
+                return_dict=True,
+                return_tensors="pt",
+            )
+            tokenized_inputs.append(inputs)
+
+        # Find the maximum sequence length in the batch
+        max_length = max(inputs["input_ids"].shape[1] for inputs in tokenized_inputs)
+
+        # Pad all inputs to the same length (left padding for decoder-only models)
+        padded_input_ids = []
+        padded_attention_masks = []
+
+        for inputs in tokenized_inputs:
+            input_ids = inputs["input_ids"][0]  # Remove batch dimension
+            attention_mask = inputs["attention_mask"][0]
+
+            # Calculate padding needed
+            padding_length = max_length - len(input_ids)
+
+            if padding_length > 0:
+                # Left padding for decoder-only models
+                pad_token_id = self.tokenizer.pad_token_id
+                input_ids = torch.cat([
+                    torch.full((padding_length,), pad_token_id, dtype=input_ids.dtype),
+                    input_ids
+                ])
+                attention_mask = torch.cat([
+                    torch.zeros(padding_length, dtype=attention_mask.dtype),
+                    attention_mask
+                ])
+
+            padded_input_ids.append(input_ids)
+            padded_attention_masks.append(attention_mask)
+
+        # Stack into batched tensors
+        batched_input_ids = torch.stack(padded_input_ids).to(self.device)
+        batched_attention_mask = torch.stack(padded_attention_masks).to(self.device)
+
+        # Get generation parameters from requests (use first request's params)
+        temperature = batch[0].request.temperature or 1.0
+        do_sample = True if batch[0].request.temperature else False
+
+        # Generate completions for the entire batch
+        with torch.no_grad():
+            outputs = self.model.generate(
+                input_ids=batched_input_ids,
+                attention_mask=batched_attention_mask,
+                max_new_tokens=2048,
+                temperature=temperature,
+                do_sample=do_sample,
+                pad_token_id=self.tokenizer.pad_token_id,
+            )
+
+            # Get value head outputs for the batch
+            model_outputs = self.model(
+                input_ids=batched_input_ids,
+                attention_mask=batched_attention_mask,
+                output_hidden_states=True,
+            )
+            last_hidden_states = model_outputs.hidden_states[-1]  # Last layer
+            value_output = self.value_head(last_hidden_states)
+
+            # Print value head output shape once for demonstration
+            if self.total_requests == 0:
+                print(f"[Learner] Value head output shapes (batch_size={batch_size}):")
+                print(f"  - logits: {value_output['logits'].shape}")
+                print(f"  - probs: {value_output['probs'].shape}")
+                print(f"  - value: {value_output['value'].shape}")
+                print(f"  - estimated values: {value_output['value'].squeeze().tolist()}")
+
+        # Process outputs for each request in the batch
+        responses = []
+        for i, (req, original_inputs) in enumerate(zip(batch, tokenized_inputs)):
+            # Calculate number of input tokens for this specific request
+            num_input_tokens = original_inputs["input_ids"].shape[-1]
+
+            # Decode output for this batch element
+            output_tokens = outputs[i]
+            num_output_tokens = len(output_tokens) - max_length
+
+            # Extract only the generated tokens (after the padded input)
+            generated_tokens = output_tokens[max_length:]
+            output_text = self.tokenizer.decode(
+                generated_tokens,
+                skip_special_tokens=True,
+            )
+
+            self.total_tokens_generated += num_output_tokens
+
+            # Wrap in OpenAI-compatible response
+            response = llm_clients.LLMResponse(
+                chat_completion_response=openai.types.chat.chat_completion.ChatCompletion(
+                    id=str(uuid.uuid4()),
+                    choices=[
+                        openai.types.chat.chat_completion.Choice(
+                            message=openai.types.chat.chat_completion_message.ChatCompletionMessage(
+                                content=output_text,
+                                role="assistant",
+                            ),
+                            finish_reason="stop",
+                            index=0,
+                        )
+                    ],
+                    created=int(time.time()),
+                    model=self.model_name,
+                    object="chat.completion",
+                    usage=openai.types.completion_usage.CompletionUsage(
+                        prompt_tokens=num_input_tokens,
+                        completion_tokens=num_output_tokens,
+                        total_tokens=num_input_tokens + num_output_tokens,
+                    ),
+                ),
+                cost=0.0,
+            )
+            responses.append(response)
+
+        return responses
 
 
 # ============================================================================
