@@ -70,17 +70,16 @@ Thread Safety and Async Usage:
 """
 
 import asyncio
-from collections import defaultdict
-from dataclasses import dataclass
-from dataclasses import field
-from enum import Enum
+import collections
+import dataclasses
+import enum
 import random
 import time
 from typing import Any
 import uuid
 
 
-class EpisodeStatus(Enum):
+class EpisodeStatus(enum.Enum):
     """Status of an episode in the replay buffer."""
 
     IN_PROGRESS = "in_progress"
@@ -88,7 +87,7 @@ class EpisodeStatus(Enum):
     TRUNCATED = "truncated"  # Episode ended due to time limit or external constraint
 
 
-@dataclass
+@dataclasses.dataclass
 class Episode:
     """An episode containing sequences of observations, actions, and rewards.
 
@@ -113,18 +112,18 @@ class Episode:
 
     episode_id: str
     agent_id: str
-    observations: list[Any] = field(default_factory=list)
-    actions: list[Any] = field(default_factory=list)
-    rewards: list[float] = field(default_factory=list)
+    observations: list[Any] = dataclasses.field(default_factory=list)
+    actions: list[Any] = dataclasses.field(default_factory=list)
+    rewards: list[float] = dataclasses.field(default_factory=list)
     status: EpisodeStatus = EpisodeStatus.IN_PROGRESS
-    start_time: float = field(default_factory=time.time)
+    start_time: float = dataclasses.field(default_factory=time.time)
 
     def __len__(self) -> int:
         """Return the number of valid (obs, action, reward) tuples (i.e., len(actions))."""
         return len(self.actions)
 
 
-@dataclass
+@dataclasses.dataclass
 class NStepSample:
     """A sampled n-step experience for training.
 
@@ -224,7 +223,7 @@ class EpisodeReplayBuffer:
         self._total_steps = 0
 
         # Track episodes by agent for potential future use
-        self._agent_episodes: dict[str, list[str]] = defaultdict(list)
+        self._agent_episodes: dict[str, list[str]] = collections.defaultdict(list)
 
     async def start_episode(
         self,
