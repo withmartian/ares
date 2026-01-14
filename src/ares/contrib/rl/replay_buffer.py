@@ -74,19 +74,15 @@ import collections
 import dataclasses
 import random
 import time
-from typing import Any, Literal, TypeVar
+from typing import Any, Literal
 import uuid
 
 # Type of episode status
 EpisodeStatus = Literal["IN_PROGRESS", "COMPLETED"]
 
-# Generic types for observations and actions
-ObservationType = TypeVar("ObservationType")
-ActionType = TypeVar("ActionType")
 
-
-@dataclasses.dataclass(kw_only=True)
-class Episode:
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class Episode[ObservationType, ActionType]:
     """An episode containing sequences of observations, actions, and rewards.
 
     Storage format:
@@ -110,8 +106,8 @@ class Episode:
 
     episode_id: str
     agent_id: str
-    observations: list[Any] = dataclasses.field(default_factory=list)
-    actions: list[Any] = dataclasses.field(default_factory=list)
+    observations: list[ObservationType] = dataclasses.field(default_factory=list)
+    actions: list[ActionType] = dataclasses.field(default_factory=list)
     rewards: list[float] = dataclasses.field(default_factory=list)
     status: EpisodeStatus = "IN_PROGRESS"
     start_time: float = dataclasses.field(default_factory=time.time)
@@ -231,7 +227,7 @@ class EpisodeReplayBuffer:
             max_steps: Maximum total transitions to store (None = unlimited)
         """
         self._lock = asyncio.Lock()
-        self._episodes: dict[str, Episode] = {}
+        self._episodes: dict[str, Episode[Any, Any]] = {}
         self._max_episodes = max_episodes
         self._max_steps = max_steps
         self._total_steps = 0
@@ -374,8 +370,7 @@ class EpisodeReplayBuffer:
                 # If final_observation is provided but not needed, append it anyway
                 episode.observations.append(final_observation)
 
-            # Update status using object.__setattr__ since dataclass is frozen would prevent direct assignment
-            # Actually, Episode is NOT frozen, so we can directly assign
+            # Update status using object.__setattr__ since Episode dataclass is frozen
             object.__setattr__(episode, "status", status)
 
     async def sample_n_step(
@@ -483,19 +478,8 @@ class EpisodeReplayBuffer:
 
         # next_obs is observation at end_idx
         # If end_idx < len(observations), we have it
-        # Otherwise episode ended and we need the last observation
-        if end_idx < len(episode.observations):
-            next_obs = episode.observations[end_idx]
-        else:
-            # Episode ended; last observation should be at index end_idx-1+1 = end_idx
-            # But if observations has length num_steps+1, then end_idx could equal num_steps
-            # In that case, the last observation is observations[num_steps]
-            # Let's ensure observations has the final obs
-            if len(episode.observations) > end_idx:
-                next_obs = episode.observations[end_idx]
-            else:
-                # Fallback: use the last available observation
-                next_obs = episode.observations[-1]
+        # Otherwise episode ended and we use the last observation
+        next_obs = episode.observations[end_idx] if end_idx < len(episode.observations) else episode.observations[-1]
 
         # Check if episode ended within the window
         done = (end_idx == num_steps) and (episode.status != "IN_PROGRESS")

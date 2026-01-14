@@ -101,9 +101,7 @@ class TestEpisodeLifecycle:
 
         await buffer.append_observation_action_reward(episode_id, observation=[1], action=0, reward=1.0)
 
-        await buffer.end_episode(
-            episode_id, status="COMPLETED", final_observation=[2]
-        )
+        await buffer.end_episode(episode_id, status="COMPLETED", final_observation=[2])
 
         stats = await buffer.get_stats()
         assert stats["completed"] == 1
@@ -117,9 +115,7 @@ class TestEpisodeLifecycle:
 
         await buffer.append_observation_action_reward(episode_id, observation=[1], action=0, reward=1.0)
 
-        await buffer.end_episode(
-            episode_id, status="COMPLETED", final_observation=[2]
-        )
+        await buffer.end_episode(episode_id, status="COMPLETED", final_observation=[2])
 
         stats = await buffer.get_stats()
         assert stats["completed"] == 1
@@ -133,9 +129,7 @@ class TestEpisodeLifecycle:
 
         await buffer.append_observation_action_reward(episode_id, observation=[1], action=0, reward=1.0)
 
-        await buffer.end_episode(
-            episode_id, status="COMPLETED", final_observation=[2]
-        )
+        await buffer.end_episode(episode_id, status="COMPLETED", final_observation=[2])
 
         # Try to append after ending
         with pytest.raises(ValueError, match="Cannot append to finished episode"):
@@ -149,14 +143,10 @@ class TestEpisodeLifecycle:
 
         await buffer.append_observation_action_reward(episode_id, observation=[1], action=0, reward=1.0)
 
-        await buffer.end_episode(
-            episode_id, status="COMPLETED", final_observation=[2]
-        )
+        await buffer.end_episode(episode_id, status="COMPLETED", final_observation=[2])
 
         with pytest.raises(ValueError, match="already finished"):
-            await buffer.end_episode(
-                episode_id, status="COMPLETED", final_observation=[3]
-            )
+            await buffer.end_episode(episode_id, status="COMPLETED", final_observation=[3])
 
     @pytest.mark.asyncio
     async def test_end_episode_with_in_progress_status(self):
@@ -185,9 +175,7 @@ class TestStorageFormat:
         await buffer.append_observation_action_reward(episode_id, observation=obs_0, action=0, reward=1.0)
         await buffer.append_observation_action_reward(episode_id, observation=obs_1, action=1, reward=2.0)
 
-        await buffer.end_episode(
-            episode_id, status="COMPLETED", final_observation=obs_2
-        )
+        await buffer.end_episode(episode_id, status="COMPLETED", final_observation=obs_2)
 
         # Sample and verify next_obs matches subsequent observation
         samples = await buffer.sample_n_step(batch_size=2, n=1, gamma=0.99)
@@ -216,9 +204,7 @@ class TestConcurrency:
             episode_id = await buffer.start_episode(agent_id=agent_id)
             for t in range(num_steps):
                 await buffer.append_observation_action_reward(episode_id, observation=[t], action=t, reward=float(t))
-            await buffer.end_episode(
-                episode_id, status="COMPLETED", final_observation=[num_steps]
-            )
+            await buffer.end_episode(episode_id, status="COMPLETED", final_observation=[num_steps])
 
         # Run multiple episodes concurrently
         tasks = [
@@ -243,9 +229,7 @@ class TestConcurrency:
             episode_id = await buffer.start_episode(agent_id=f"agent_{i}")
             for t in range(10):
                 await buffer.append_observation_action_reward(episode_id, observation=[t], action=t, reward=1.0)
-            await buffer.end_episode(
-                episode_id, status="COMPLETED", final_observation=[10]
-            )
+            await buffer.end_episode(episode_id, status="COMPLETED", final_observation=[10])
 
         async def writer():
             """Write new episodes."""
@@ -253,9 +237,7 @@ class TestConcurrency:
                 episode_id = await buffer.start_episode(agent_id=f"agent_{i}")
                 for t in range(5):
                     await buffer.append_observation_action_reward(episode_id, observation=[t], action=t, reward=1.0)
-                await buffer.end_episode(
-                    episode_id, status="COMPLETED", final_observation=[5]
-                )
+                await buffer.end_episode(episode_id, status="COMPLETED", final_observation=[5])
                 await asyncio.sleep(0.001)  # Small delay to allow interleaving
 
         async def reader():
@@ -289,17 +271,13 @@ class TestUniformSampling:
         ep1 = await buffer.start_episode(agent_id="agent_0")
         for t in range(10):
             await buffer.append_observation_action_reward(ep1, observation={"ep": 1, "t": t}, action=t, reward=1.0)
-        await buffer.end_episode(
-            ep1, status="COMPLETED", final_observation={"ep": 1, "t": 10}
-        )
+        await buffer.end_episode(ep1, status="COMPLETED", final_observation={"ep": 1, "t": 10})
 
         # Episode 2: 30 steps (3x longer)
         ep2 = await buffer.start_episode(agent_id="agent_1")
         for t in range(30):
             await buffer.append_observation_action_reward(ep2, observation={"ep": 2, "t": t}, action=t, reward=1.0)
-        await buffer.end_episode(
-            ep2, status="COMPLETED", final_observation={"ep": 2, "t": 30}
-        )
+        await buffer.end_episode(ep2, status="COMPLETED", final_observation={"ep": 2, "t": 30})
 
         # Sample many times and count samples from each episode
         num_samples = 1000
@@ -325,9 +303,7 @@ class TestUniformSampling:
             episode_ids.append(ep)
             for t in range(10):
                 await buffer.append_observation_action_reward(ep, observation=[i, t], action=t, reward=1.0)
-            await buffer.end_episode(
-                ep, status="COMPLETED", final_observation=[i, 10]
-            )
+            await buffer.end_episode(ep, status="COMPLETED", final_observation=[i, 10])
 
         # Sample exhaustively (all 30 steps)
         samples = await buffer.sample_n_step(batch_size=30, n=1, gamma=0.99)
@@ -354,9 +330,7 @@ class TestNStepSampling:
         # Create episode with 5 steps
         for t in range(5):
             await buffer.append_observation_action_reward(episode_id, observation=[t], action=t, reward=float(t + 1))
-        await buffer.end_episode(
-            episode_id, status="COMPLETED", final_observation=[5]
-        )
+        await buffer.end_episode(episode_id, status="COMPLETED", final_observation=[5])
 
         # Sample with n=3 starting from t=0
         samples = await buffer.sample_n_step(batch_size=1, n=3, gamma=0.9)
@@ -379,9 +353,7 @@ class TestNStepSampling:
         # Create episode with only 3 steps
         for t in range(3):
             await buffer.append_observation_action_reward(episode_id, observation=[t], action=t, reward=float(t + 1))
-        await buffer.end_episode(
-            episode_id, status="COMPLETED", final_observation=[3]
-        )
+        await buffer.end_episode(episode_id, status="COMPLETED", final_observation=[3])
 
         # Request n=5 but only 3 steps available from t=0
         # Should get all 3 steps and truncate
@@ -403,16 +375,12 @@ class TestNStepSampling:
         ep1 = await buffer.start_episode(agent_id="agent_0")
         for t in range(3):
             await buffer.append_observation_action_reward(ep1, observation={"ep": 1, "t": t}, action=t, reward=1.0)
-        await buffer.end_episode(
-            ep1, status="COMPLETED", final_observation={"ep": 1, "t": 3}
-        )
+        await buffer.end_episode(ep1, status="COMPLETED", final_observation={"ep": 1, "t": 3})
 
         ep2 = await buffer.start_episode(agent_id="agent_1")
         for t in range(3):
             await buffer.append_observation_action_reward(ep2, observation={"ep": 2, "t": t}, action=t, reward=2.0)
-        await buffer.end_episode(
-            ep2, status="COMPLETED", final_observation={"ep": 2, "t": 3}
-        )
+        await buffer.end_episode(ep2, status="COMPLETED", final_observation={"ep": 2, "t": 3})
 
         # Sample with large n
         samples = await buffer.sample_n_step(batch_size=10, n=10, gamma=0.9)
@@ -440,9 +408,7 @@ class TestNStepSampling:
         # Create episode with 5 steps
         for t in range(5):
             await buffer.append_observation_action_reward(episode_id, observation=[t], action=t, reward=float(t + 1))
-        await buffer.end_episode(
-            episode_id, status="COMPLETED", final_observation=[5]
-        )
+        await buffer.end_episode(episode_id, status="COMPLETED", final_observation=[5])
 
         # Sample starting from t=3 with n=3
         # Should only get 2 steps (t=3, t=4) because episode has only 5 steps total
@@ -462,9 +428,7 @@ class TestNStepSampling:
 
         for t in range(5):
             await buffer.append_observation_action_reward(episode_id, observation=[t], action=t, reward=1.0)
-        await buffer.end_episode(
-            episode_id, status="COMPLETED", final_observation=[5]
-        )
+        await buffer.end_episode(episode_id, status="COMPLETED", final_observation=[5])
 
         gamma = 0.9
         samples = await buffer.sample_n_step(batch_size=1, n=4, gamma=gamma)
@@ -482,17 +446,13 @@ class TestNStepSampling:
         ep1 = await buffer.start_episode(agent_id="agent_0")
         for t in range(3):
             await buffer.append_observation_action_reward(ep1, observation=[t], action=t, reward=1.0)
-        await buffer.end_episode(
-            ep1, status="COMPLETED", final_observation=[3]
-        )
+        await buffer.end_episode(ep1, status="COMPLETED", final_observation=[3])
 
         # Completed episode 2
         ep2 = await buffer.start_episode(agent_id="agent_1")
         for t in range(3):
             await buffer.append_observation_action_reward(ep2, observation=[t], action=t, reward=1.0)
-        await buffer.end_episode(
-            ep2, status="COMPLETED", final_observation=[3]
-        )
+        await buffer.end_episode(ep2, status="COMPLETED", final_observation=[3])
 
         # Sample with n that includes the end
         samples = await buffer.sample_n_step(batch_size=10, n=5, gamma=0.9)
@@ -518,9 +478,7 @@ class TestCapacityAndEviction:
         for i in range(3):
             ep = await buffer.start_episode(agent_id=f"agent_{i}")
             await buffer.append_observation_action_reward(ep, observation=[i], action=i, reward=1.0)
-            await buffer.end_episode(
-                ep, status="COMPLETED", final_observation=[i + 1]
-            )
+            await buffer.end_episode(ep, status="COMPLETED", final_observation=[i + 1])
 
         stats = await buffer.get_stats()
         assert stats["total_episodes"] == 3
@@ -528,9 +486,7 @@ class TestCapacityAndEviction:
         # Add 4th episode, should evict oldest
         ep4 = await buffer.start_episode(agent_id="agent_3")
         await buffer.append_observation_action_reward(ep4, observation=[3], action=3, reward=1.0)
-        await buffer.end_episode(
-            ep4, status="COMPLETED", final_observation=[4]
-        )
+        await buffer.end_episode(ep4, status="COMPLETED", final_observation=[4])
 
         stats = await buffer.get_stats()
         assert stats["total_episodes"] == 3  # Still at max
@@ -544,16 +500,12 @@ class TestCapacityAndEviction:
         ep1 = await buffer.start_episode(agent_id="agent_0")
         for t in range(5):
             await buffer.append_observation_action_reward(ep1, observation=[t], action=t, reward=1.0)
-        await buffer.end_episode(
-            ep1, status="COMPLETED", final_observation=[5]
-        )
+        await buffer.end_episode(ep1, status="COMPLETED", final_observation=[5])
 
         ep2 = await buffer.start_episode(agent_id="agent_1")
         for t in range(5):
             await buffer.append_observation_action_reward(ep2, observation=[t], action=t, reward=1.0)
-        await buffer.end_episode(
-            ep2, status="COMPLETED", final_observation=[5]
-        )
+        await buffer.end_episode(ep2, status="COMPLETED", final_observation=[5])
 
         stats = await buffer.get_stats()
         assert stats["total_steps"] == 10
@@ -562,9 +514,7 @@ class TestCapacityAndEviction:
         ep3 = await buffer.start_episode(agent_id="agent_2")
         for t in range(3):
             await buffer.append_observation_action_reward(ep3, observation=[t], action=t, reward=1.0)
-        await buffer.end_episode(
-            ep3, status="COMPLETED", final_observation=[3]
-        )
+        await buffer.end_episode(ep3, status="COMPLETED", final_observation=[3])
 
         stats = await buffer.get_stats()
         # Should have evicted ep1, keeping ep2 and ep3
@@ -579,9 +529,7 @@ class TestCapacityAndEviction:
         for i in range(2):
             ep = await buffer.start_episode(agent_id=f"agent_{i}")
             await buffer.append_observation_action_reward(ep, observation=[i], action=i, reward=1.0)
-            await buffer.end_episode(
-                ep, status="COMPLETED", final_observation=[i + 1]
-            )
+            await buffer.end_episode(ep, status="COMPLETED", final_observation=[i + 1])
 
         # Add 1 in-progress episode
         ep_in_progress = await buffer.start_episode(agent_id="agent_in_progress")
@@ -595,9 +543,7 @@ class TestCapacityAndEviction:
         # Add another episode, should evict oldest finished, not in-progress
         ep_new = await buffer.start_episode(agent_id="agent_new")
         await buffer.append_observation_action_reward(ep_new, observation=[100], action=100, reward=1.0)
-        await buffer.end_episode(
-            ep_new, status="COMPLETED", final_observation=[101]
-        )
+        await buffer.end_episode(ep_new, status="COMPLETED", final_observation=[101])
 
         stats = await buffer.get_stats()
         assert stats["total_episodes"] == 3
@@ -612,16 +558,12 @@ class TestCapacityAndEviction:
         ep1 = await buffer.start_episode(agent_id="agent_0")
         for t in range(10):
             await buffer.append_observation_action_reward(ep1, observation=[t], action=t, reward=1.0)
-        await buffer.end_episode(
-            ep1, status="COMPLETED", final_observation=[10]
-        )
+        await buffer.end_episode(ep1, status="COMPLETED", final_observation=[10])
 
         ep2 = await buffer.start_episode(agent_id="agent_1")
         for t in range(5):
             await buffer.append_observation_action_reward(ep2, observation=[t], action=t, reward=1.0)
-        await buffer.end_episode(
-            ep2, status="COMPLETED", final_observation=[5]
-        )
+        await buffer.end_episode(ep2, status="COMPLETED", final_observation=[5])
 
         stats = await buffer.get_stats()
         assert stats["total_steps"] == 15
@@ -630,9 +572,7 @@ class TestCapacityAndEviction:
         ep3 = await buffer.start_episode(agent_id="agent_2")
         for t in range(7):
             await buffer.append_observation_action_reward(ep3, observation=[t], action=t, reward=1.0)
-        await buffer.end_episode(
-            ep3, status="COMPLETED", final_observation=[7]
-        )
+        await buffer.end_episode(ep3, status="COMPLETED", final_observation=[7])
 
         stats = await buffer.get_stats()
         # Should have ep2 (5 steps) + ep3 (7 steps) = 12 steps
@@ -687,9 +627,7 @@ class TestEdgeCases:
         for i in range(3):
             ep = await buffer.start_episode(agent_id=f"agent_{i}")
             await buffer.append_observation_action_reward(ep, observation=[i], action=i, reward=1.0)
-            await buffer.end_episode(
-                ep, status="COMPLETED", final_observation=[i + 1]
-            )
+            await buffer.end_episode(ep, status="COMPLETED", final_observation=[i + 1])
 
         stats = await buffer.get_stats()
         assert stats["total_episodes"] == 3
