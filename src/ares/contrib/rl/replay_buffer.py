@@ -1,5 +1,4 @@
-"""
-Episode Replay Buffer for Multi-Agent Reinforcement Learning.
+"""Episode Replay Buffer for Multi-Agent Reinforcement Learning.
 
 This module provides an asyncio-safe replay buffer that supports:
 - Concurrent experience collection from multiple agents
@@ -91,8 +90,7 @@ class EpisodeStatus(Enum):
 
 @dataclass
 class Episode:
-    """
-    An episode containing sequences of observations, actions, and rewards.
+    """An episode containing sequences of observations, actions, and rewards.
 
     Storage format:
         - observations: [obs_0, obs_1, ..., obs_T]  (length T+1)
@@ -128,8 +126,7 @@ class Episode:
 
 @dataclass
 class NStepSample:
-    """
-    A sampled n-step experience for training.
+    """A sampled n-step experience for training.
 
     The sample captures a trajectory segment starting at time t:
         obs_t, action_t, [r_t, r_{t+1}, ..., r_{t+m-1}], obs_{t+m}
@@ -168,8 +165,7 @@ class NStepSample:
 
 
 def compute_discounted_return(rewards: list[float], gamma: float) -> float:
-    """
-    Compute the discounted return from a sequence of rewards.
+    """Compute the discounted return from a sequence of rewards.
 
     G = sum_{k=0}^{n-1} gamma^k * r_k
 
@@ -184,8 +180,7 @@ def compute_discounted_return(rewards: list[float], gamma: float) -> float:
 
 
 class EpisodeReplayBuffer:
-    """
-    Asyncio-safe replay buffer for episodic reinforcement learning.
+    """Asyncio-safe replay buffer for episodic reinforcement learning.
 
     This buffer stores complete episodes and supports n-step sampling with
     proper handling of episode boundaries. It manages capacity by evicting
@@ -216,8 +211,7 @@ class EpisodeReplayBuffer:
         max_episodes: int | None = None,
         max_steps: int | None = None,
     ):
-        """
-        Initialize the replay buffer.
+        """Initialize the replay buffer.
 
         Args:
             max_episodes: Maximum number of episodes to store (None = unlimited)
@@ -237,8 +231,7 @@ class EpisodeReplayBuffer:
         agent_id: str,
         episode_id: str | None = None,
     ) -> str:
-        """
-        Start a new episode.
+        """Start a new episode.
 
         Args:
             agent_id: Identifier for the agent
@@ -273,8 +266,7 @@ class EpisodeReplayBuffer:
         action: Any,
         reward: float,
     ) -> None:
-        """
-        Append an observation, action, and reward to an episode.
+        """Append an observation, action, and reward to an episode.
 
         At time step t, call this with (obs_t, action_t, reward_t).
         The observation obs_t should be the state in which action_t was taken,
@@ -330,8 +322,7 @@ class EpisodeReplayBuffer:
         status: EpisodeStatus,
         final_observation: Any | None = None,
     ) -> None:
-        """
-        Mark an episode as finished.
+        """Mark an episode as finished.
 
         Args:
             episode_id: The episode to end
@@ -368,8 +359,7 @@ class EpisodeReplayBuffer:
         n: int,
         gamma: float,
     ) -> list[NStepSample]:
-        """
-        Sample n-step experiences uniformly from the buffer.
+        """Sample n-step experiences uniformly from the buffer.
 
         Sampling is uniform over all valid time steps across all episodes.
         Each step (obs_t, action_t, reward_t) has equal probability.
@@ -440,8 +430,7 @@ class EpisodeReplayBuffer:
         n: int,
         gamma: float,
     ) -> NStepSample:
-        """
-        Build an n-step sample starting from a given position.
+        """Build an n-step sample starting from a given position.
 
         Never crosses episode boundary; truncates if fewer than n steps remain.
         """
@@ -499,8 +488,7 @@ class EpisodeReplayBuffer:
         )
 
     async def _evict_if_needed(self) -> None:
-        """
-        Evict oldest episodes if capacity limits are exceeded.
+        """Evict oldest episodes if capacity limits are exceeded.
 
         Eviction policy:
         1. First evict oldest finished episodes (terminal or truncated)
@@ -557,8 +545,7 @@ class EpisodeReplayBuffer:
                 del self._agent_episodes[agent_id]
 
     async def get_stats(self) -> dict[str, Any]:
-        """
-        Get statistics about the replay buffer.
+        """Get statistics about the replay buffer.
 
         Returns:
             Dictionary with buffer statistics
