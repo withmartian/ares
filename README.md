@@ -2,6 +2,13 @@
 
 ARES (Agentic Research and Evaluation Suite) is an RL-first framework for training and evaluating agents.
 
+## Prerequisites
+
+- Python 3.12 or higher
+- [uv](https://docs.astral.sh/uv/) - Fast Python package installer and resolver
+
+To install `uv`, follow the instructions at https://docs.astral.sh/uv/getting-started/installation/
+
 ## Installation
 
 For now, we recommend running ARES locally from this directory:
@@ -12,6 +19,13 @@ and you're ready to get started.
 
 Alternatively, include it as a dependency in your own project's pyproject.toml using a relative path.
 PyPI installation will be coming soon.
+
+## Configuration
+
+ARES requires API keys for various services. To get started:
+
+1. Copy the example environment file: `cp .env.example .env`
+2. Edit `.env` and fill in your API keys (see `.env.example` for required and optional variables)
 
 ## Getting Started
 
