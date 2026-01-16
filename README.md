@@ -230,7 +230,7 @@ For a complete example using local LLMs (no API keys), see `examples/02_local_ll
 
 ARES provides a clean RL abstraction for code agents:
 
-- **Environments**: Async dm_env-compatible environments (SWE-bench, Harbor, etc.)
+- **Environments**: Async dm_env-like environments (SWE-bench, Harbor, etc.)
 - **Containers**: Pluggable container backends (Docker, Daytona)
 - **LLM Clients**: Flexible LLM interfaces (local models, OpenAI-compatible APIs)
 - **Code Agents**: Agents that interact with codebases in containers
