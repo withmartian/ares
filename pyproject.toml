@@ -41,11 +41,14 @@ dev = [
     "pyright>=1.1.406",
     "ruff>=0.14.1",
     "pytest>=8.0.0",
+    "pytest-asyncio>=0.24.0",
 ]
 examples = [
     "transformers>=4.57.3",
 ]
 
 [tool.pytest.ini_options]
-testpaths = ["src"]
+testpaths = ["tests"]
 python_files = ["test_*.py", "*_test.py"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
