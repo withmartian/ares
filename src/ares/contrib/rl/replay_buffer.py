@@ -62,6 +62,7 @@ Thread Safety and Async Usage:
 """
 
 import collections
+from collections import deque
 import dataclasses
 import random
 import time
@@ -228,6 +229,10 @@ class EpisodeReplayBuffer:
         # Track episodes by agent for potential future use
         self._episodes_by_agent: dict[str, list[str]] = collections.defaultdict(list)
 
+        # Track episode IDs in insertion order for efficient sampling and eviction
+        # This deque parallels self._episodes and enables O(1) oldest episode access
+        self._episode_order: deque[str] = deque()
+
     async def start_episode(
         self,
         agent_id: str,
@@ -245,6 +250,7 @@ class EpisodeReplayBuffer:
         episode = Episode(episode_id=episode_id, agent_id=agent_id)
         self._episodes[episode_id] = episode
         self._episodes_by_agent[agent_id].append(episode_id)
+        self._episode_order.append(episode_id)
 
         # Check capacity and evict if needed
         await self._evict_if_needed()
@@ -407,12 +413,13 @@ class EpisodeReplayBuffer:
         if not 0 < gamma <= 1:
             raise ValueError(f"gamma must be in (0, 1], got {gamma}")
 
-        # Build a mapping of cumulative position ranges to episodes
-        # This allows O(log num_episodes) binary search for position->episode mapping
+        # Build episode ranges using the deque for iteration order
+        # This avoids iterating over self._episodes.items() directly
         episode_ranges: list[tuple[int, int, str]] = []  # (start_pos, end_pos, episode_id)
         cumulative_pos = 0
 
-        for episode_id, episode in self._episodes.items():
+        for episode_id in self._episode_order:
+            episode = self._episodes[episode_id]
             valid_count = self._get_valid_step_count(episode)
             if valid_count > 0:
                 episode_ranges.append((cumulative_pos, cumulative_pos + valid_count, episode_id))
@@ -559,6 +566,9 @@ class EpisodeReplayBuffer:
             if not self._episodes_by_agent[agent_id]:
                 del self._episodes_by_agent[agent_id]
 
+        # Remove from episode order deque
+        self._episode_order.remove(episode_id)
+
     async def get_stats(self) -> dict[str, Any]:
         """Get statistics about the replay buffer.
 
@@ -580,4 +590,5 @@ class EpisodeReplayBuffer:
         """Clear all episodes from the buffer."""
         self._episodes.clear()
         self._episodes_by_agent.clear()
+        self._episode_order.clear()
         self._total_steps = 0
