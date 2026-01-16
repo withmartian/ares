@@ -328,7 +328,7 @@ class TestNStepSampling:
         assert sample.rewards_seq == [1.0, 2.0, 3.0]
         assert sample.next_obs == [3]
         assert sample.actual_n == 3
-        assert not sample.done
+        assert not sample.terminal
 
     @pytest.mark.asyncio
     async def test_n_step_truncation_at_boundary(self):
@@ -349,8 +349,7 @@ class TestNStepSampling:
         sample_0 = next(s for s in samples if s.start_step == 0)
         assert sample_0.actual_n == 3
         assert sample_0.rewards_seq == [1.0, 2.0, 3.0]
-        assert sample_0.done  # Episode ended
-        assert sample_0.terminal
+        assert sample_0.terminal  # Episode ended
 
     @pytest.mark.asyncio
     async def test_n_step_never_crosses_episode_boundary(self):
@@ -404,7 +403,7 @@ class TestNStepSampling:
         sample_3 = next(s for s in samples if s.start_step == 3)
         assert sample_3.actual_n == 2
         assert sample_3.rewards_seq == [4.0, 5.0]
-        assert sample_3.done
+        assert sample_3.terminal
 
     @pytest.mark.asyncio
     async def test_n_step_discount_powers(self):
@@ -424,32 +423,35 @@ class TestNStepSampling:
         assert sample.discount_powers == expected_powers
 
     @pytest.mark.asyncio
-    async def test_n_step_terminal_vs_truncated(self):
-        """Test that terminal flag is set correctly for completed episodes."""
+    async def test_n_step_terminal_and_next_discount(self):
+        """Test that terminal flag and next_discount are set correctly."""
         buffer = ares.contrib.rl.replay_buffer.EpisodeReplayBuffer()
 
-        # Completed episode 1
+        # Completed episode with 5 steps
         ep1 = await buffer.start_episode(agent_id="agent_0")
-        for t in range(3):
+        for t in range(5):
             await buffer.append_observation_action_reward(ep1, observation=[t], action=t, reward=1.0)
-        await buffer.end_episode(ep1, status="COMPLETED", final_observation=[3])
+        await buffer.end_episode(ep1, status="COMPLETED", final_observation=[5])
 
-        # Completed episode 2
-        ep2 = await buffer.start_episode(agent_id="agent_1")
-        for t in range(3):
-            await buffer.append_observation_action_reward(ep2, observation=[t], action=t, reward=1.0)
-        await buffer.end_episode(ep2, status="COMPLETED", final_observation=[3])
+        # Sample with n=2
+        gamma = 0.9
+        samples = await buffer.sample_n_step(batch_size=10, n=2, gamma=gamma)
 
-        # Sample with n that includes the end
-        samples = await buffer.sample_n_step(batch_size=10, n=5, gamma=0.9)
+        # Find sample at t=0 (not terminal, should have next_discount=gamma^2)
+        sample_0 = next(s for s in samples if s.start_step == 0)
+        assert not sample_0.terminal
+        assert abs(sample_0.next_discount - gamma**2) < 1e-6
 
-        # Find samples from completed episodes starting at end
-        # With new status system, all completed episodes are terminal, truncated is always False
-        completed_samples = [s for s in samples if s.start_step == 2]
-        for sample in completed_samples:
-            assert sample.done
-            assert sample.terminal
-            assert not sample.truncated
+        # Find sample at t=2 (not terminal, should have next_discount=gamma^2)
+        sample_2 = next(s for s in samples if s.start_step == 2)
+        assert not sample_2.terminal
+        assert abs(sample_2.next_discount - gamma**2) < 1e-6
+
+        # Find sample at t=4 (terminal with actual_n=1, should have next_discount=0)
+        sample_4 = next(s for s in samples if s.start_step == 4)
+        assert sample_4.terminal
+        assert sample_4.actual_n == 1
+        assert sample_4.next_discount == 0.0
 
 
 class TestCapacityAndEviction:

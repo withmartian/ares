@@ -8,19 +8,14 @@ This module provides an asyncio-safe replay buffer that supports:
 
 Storage Design:
     Episodes store per-timestep arrays: observations[t], actions[t], rewards[t].
-    We do NOT duplicate next_state; instead, next_obs is derived from
-    observations[t+1] during sampling.
 
 Usage Example:
     ```python
     import asyncio
-    from ares.contrib.rl.replay_buffer import (
-        EpisodeReplayBuffer,
-        EpisodeStatus,
-    )
+    from ares.contrib.rl import replay_buffer
 
     # Create buffer with capacity limits
-    buffer = EpisodeReplayBuffer(max_episodes=1000, max_steps=100000)
+    buffer = replay_buffer.EpisodeReplayBuffer(max_episodes=1000, max_steps=100000)
 
     # Start an episode (episode_id is auto-generated)
     episode_id = await buffer.start_episode(agent_id="agent_0")
@@ -46,15 +41,15 @@ Usage Example:
         episode_id, obs_1, action_1, reward_1
     )
 
-    # End episode
-    await buffer.end_episode(episode_id, status="COMPLETED")
+    # End episode with final observation
+    await buffer.end_episode(episode_id, status="COMPLETED", final_observation=obs_2)
 
     # Sample n-step batches
     samples = await buffer.sample_n_step(batch_size=32, n=3, gamma=0.99)
     for sample in samples:
         # sample.obs_t, sample.action_t, sample.rewards_seq
-        # sample.next_obs, sample.done, sample.truncated, etc.
-        discounted_return = compute_discounted_return(
+        # sample.next_obs, sample.terminal, etc.
+        discounted_return = replay_buffer.compute_discounted_return(
             sample.rewards_seq, gamma=0.99
         )
     ```
@@ -86,9 +81,8 @@ class Episode[ObservationType, ActionType]:
         - actions: [a_0, a_1, ..., a_{T-1}]          (length T)
         - rewards: [r_0, r_1, ..., r_{T-1}]          (length T)
 
-    At time step t, we have obs_t, action_t, reward_t.
+    A full transition at timestep t consists of (obs_t, action_t, reward_t, obs_{t+1}).
     The next observation obs_{t+1} is stored at observations[t+1].
-    This avoids duplicating states as next_state.
 
     Attributes:
         episode_id: Unique identifier for this episode
@@ -109,8 +103,12 @@ class Episode[ObservationType, ActionType]:
     start_time: float = dataclasses.field(default_factory=time.time)
 
     def __len__(self) -> int:
-        """Return the number of valid (obs, action, reward) tuples (i.e., len(actions))."""
-        return len(self.actions)
+        """Return the number of complete transitions (with both obs_t and obs_{t+1} available).
+
+        A complete transition requires observations[t] and observations[t+1].
+        Returns max(len(observations) - 1, 0).
+        """
+        return max(len(self.observations) - 1, 0)
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
@@ -129,9 +127,11 @@ class ReplaySample[ObservationType, ActionType]:
         action_t: The action taken at time t
         rewards_seq: Sequence of rewards [r_t, r_{t+1}, ..., r_{t+m-1}] (length m)
         next_obs: The observation at time t+m (obs_{t+m})
-        done: True if episode ended within the n-step window
-        truncated: True if episode was truncated (vs terminal) in window
-        terminal: True if episode terminated naturally in window
+        terminal: True if episode terminated within the n-step window
+        next_discount: Discount factor to apply to bootstrap value at next_obs.
+                      This is gamma^m where m is actual_n. When terminal=True, this
+                      should be 0 (no bootstrap). When terminal=False, this is the
+                      discount to apply to the value estimate at next_obs.
         discount_powers: [gamma^0, gamma^1, ..., gamma^{m-1}] for computing returns
         start_step: The starting step index t
         actual_n: The actual number of steps m (may be < n if episode ends)
@@ -144,9 +144,8 @@ class ReplaySample[ObservationType, ActionType]:
     action_t: ActionType
     rewards_seq: list[float]
     next_obs: ObservationType
-    done: bool
-    truncated: bool
     terminal: bool
+    next_discount: float
     discount_powers: list[float]
     start_step: int
     actual_n: int
@@ -312,20 +311,19 @@ class EpisodeReplayBuffer:
         self,
         episode_id: str,
         status: EpisodeStatus = "COMPLETED",
-        final_observation: Any | None = None,
+        final_observation: Any = None,
     ) -> None:
         """Mark an episode as finished.
 
         Args:
             episode_id: The episode to end
             status: Episode status (should be "COMPLETED")
-            final_observation: Optional final observation obs_T after last action.
-                             If provided, appended to observations list.
+            final_observation: Final observation obs_T after last action. Required if not
+                             already appended via append_observation_action_reward.
 
         Raises:
-            ValueError: If episode doesn't exist, is already finished, or
-                       status is IN_PROGRESS, or if final_observation is required
-                       but not provided
+            ValueError: If episode doesn't exist, is already finished,
+                       status is IN_PROGRESS, or final_observation is required but not provided
         """
         if episode_id not in self._episodes:
             raise ValueError(f"Episode {episode_id} not found")
@@ -481,10 +479,10 @@ class EpisodeReplayBuffer:
         next_obs = episode.observations[end_idx] if end_idx < len(episode.observations) else episode.observations[-1]
 
         # Check if episode ended within the window
-        done = (end_idx == num_steps) and (episode.status != "IN_PROGRESS")
-        # With new status system, terminal and truncated are both "COMPLETED"
-        terminal = done  # All completed episodes are considered terminal in new system
-        truncated = False  # No separate truncated status in new system
+        terminal = (end_idx == num_steps) and (episode.status != "IN_PROGRESS")
+
+        # Compute next_discount: gamma^m when not terminal, 0 when terminal
+        next_discount = 0.0 if terminal else gamma**actual_n
 
         # Compute discount powers
         discount_powers = [gamma**k for k in range(actual_n)]
@@ -496,9 +494,8 @@ class EpisodeReplayBuffer:
             action_t=action_t,
             rewards_seq=rewards_seq,
             next_obs=next_obs,
-            done=done,
-            truncated=truncated,
             terminal=terminal,
+            next_discount=next_discount,
             discount_powers=discount_powers,
             start_step=start_idx,
             actual_n=actual_n,
