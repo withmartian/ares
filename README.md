@@ -21,7 +21,7 @@
 
 ARES (Agentic Research and Evaluation Suite) is an RL-first framework for training and evaluating agents. ARES environments use an async version of the [dm_env](https://github.com/google-deepmind/dm_env) spec, making it easy to build and evaluate code agents using reinforcement learning.
 
-## Quick Start (No Accounts or API Keys Required!)
+## Quick Start
 
 Get started in minutes with local Docker containers and a local LLM - no accounts or API keys needed.
 
@@ -30,19 +30,6 @@ Get started in minutes with local Docker containers and a local LLM - no account
 - **Python 3.12 or higher**
 - **[uv](https://docs.astral.sh/uv/)** - Fast Python package installer and resolver
 - **Docker** - For running local containers (install from [docker.com](https://www.docker.com/get-started))
-
-#### Installing uv
-
-```bash
-# macOS/Linux
-curl -LsSf https://astral.sh/uv/install.sh | sh
-
-# Windows (PowerShell)
-powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
-
-# Or via pip
-pip install uv
-```
 
 ### Installation
 
