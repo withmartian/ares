@@ -16,15 +16,16 @@ To install `uv`, follow the instructions at https://docs.astral.sh/uv/getting-st
 
 ### Installation
 
-Clone the repository and install dependencies:
+For now, we recommend running ARES locally from this directory:
 
 ```bash
-git clone https://github.com/withmartian/ares.git
-cd ares
 uv sync --all-groups
 ```
 
-### Your First ARES Agent (No API Keys!)
+and you're ready to get started.
+
+### Your First ARES "Agent"
+No API keys needed!
 
 Run the Hello World example to see the RL loop in action:
 
@@ -42,17 +43,7 @@ You'll see how ARES treats code agent interactions as a reinforcement learning p
 
 ARES includes several examples that demonstrate different usage patterns:
 
-### 1. Hello World (No API Keys)
-**File:** `examples/00_hello_world.py`
-**What you'll need:** Docker
-
-```bash
-uv run -m examples.00_hello_world
-```
-
-Demonstrates the RL loop using local Docker and a mock LLM. Perfect for understanding how ARES works without any external dependencies.
-
-### 2. Minimal Loop (Local Docker + Real LLM)
+### 1. Minimal Loop (Local Docker + Real LLM)
 **File:** `examples/01_minimal_loop.py`
 **What you'll need:** Docker, Martian API key
 
@@ -63,7 +54,7 @@ uv run -m examples.01_minimal_loop
 
 Shows the RL loop with a real LLM (via Martian API) and local Docker containers.
 
-### 3. Local LLM (Fully Local)
+### 2. Local LLM (Fully Local)
 **File:** `examples/02_local_llm.py`
 **What you'll need:** Docker
 
@@ -143,10 +134,3 @@ This example uses:
 - **Container backend:** Local Docker (change to `daytona.DaytonaContainer` for cloud)
 - **LLM backend:** Martian API (or any OpenAI-compatible API)
 - **Code agent:** MiniSWE agent from the mini-swe-agent library
-
-## Next Steps
-
-- Explore the examples in the `examples/` directory
-- Read [CLAUDE.md](CLAUDE.md) for detailed architecture and development information
-- Check out the SWE-bench dataset for more tasks
-- Try different LLM models and container backends

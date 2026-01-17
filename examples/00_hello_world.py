@@ -44,7 +44,7 @@ class MockLLM:
         self.responses = [
             "Let me start by exploring the repository structure.\n\n```bash\nls -la\n```",
             "Now let me check the README.\n\n```bash\ncat README.md | head -20\n```",
-            "I've explored the repository. Let me submit.\n\n```bash\nsubmit\n```",
+            "I've explored the repository. Let me submit.\n\n```bash\necho 'MINI_SWE_AGENT_FINAL_OUTPUT'\n```",
         ]
 
     async def __call__(self, _request: llm_clients.LLMRequest) -> llm_clients.LLMResponse:
@@ -99,7 +99,7 @@ async def main():
 
     # Load SWE-bench tasks (we'll just use one for this demo)
     all_tasks = swebench_env.swebench_verified_tasks()
-    tasks = [all_tasks[0]]  # Just one task
+    tasks = [all_tasks[204]]  # Just one task
 
     print(f"Running on task: {tasks[0].instance_id}")
     print(f"Repository: {tasks[0].repo}")
