@@ -7,10 +7,12 @@ import contextlib
 import dataclasses
 import logging
 import time
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 import numpy as np
-from torch.utils import tensorboard
+
+if TYPE_CHECKING:
+    from torch.utils import tensorboard
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -66,10 +68,16 @@ class LoggingStatTracker(StatTracker):
 
 @dataclasses.dataclass
 class TensorboardStatTracker(StatTracker):
-    metric_writer: tensorboard.SummaryWriter
+    metric_writer: "tensorboard.SummaryWriter"
     period_seconds: float = 60
 
     def __post_init__(self) -> None:
+        try:
+            from torch.utils import tensorboard  # noqa: F401
+        except ImportError as e:
+            raise ImportError(
+                "TensorboardStatTracker requires torch to be installed. Install it with: uv sync --group contrib-rl"
+            ) from e
         self._stats: collections.defaultdict[str, list[float]] = collections.defaultdict(list)
         self._task = asyncio.create_task(self._track())
 
