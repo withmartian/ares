@@ -11,6 +11,7 @@ Example usage:
 import asyncio
 
 from ares.code_agents import mini_swe_agent
+from ares.containers import daytona
 from ares.containers import docker
 from ares.environments import swebench_env
 from ares.llms import chat_completions_compatible
@@ -37,6 +38,7 @@ async def main():
     # For this example, we are using local Docker containers.
     code_agent_factory = mini_swe_agent.MiniSWECodeAgent
     container_factory = docker.DockerContainer
+    # container_factory = daytona.DaytonaContainer
     async with swebench_env.SweBenchEnv(
         tasks=tasks,
         code_agent_factory=code_agent_factory,

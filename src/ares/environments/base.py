@@ -22,6 +22,7 @@ from ares.code_agents import stat_tracker
 from ares.containers import containers
 from ares.containers import daytona as ares_daytona
 from ares.environments import base
+from ares.environments import specs
 from ares.llms import llm_clients
 from ares.llms import queue_mediated_client
 
@@ -34,6 +35,9 @@ os.environ["DOCKER_HOST"] = "unix:///var/run/docker.sock"
 StepType = Literal["FIRST", "MID", "LAST"]
 NestedScalar = dict[str, "Scalar"] | list["Scalar"] | tuple["Scalar", ...]
 Scalar = float | NDArray | NestedScalar
+
+LeafSpec = specs.Array | specs.BoundedArray | specs.DiscreteArray | specs.StringArray
+NestedSpec = dict[str, "NestedSpec"] | list["NestedSpec"] | tuple["NestedSpec", ...] | LeafSpec
 
 
 class TimeStep[ObservationType, RewardType: Scalar, DiscountType: Scalar](NamedTuple):
@@ -123,46 +127,45 @@ class Environment[ActionType, ObservationType, RewardType: Scalar, DiscountType:
         """
         ...
 
-    # TODO: adapt the dm_env specs for ARES.
-    # def reward_spec(self):
-    #     """Describes the reward returned by the environment.
+    def reward_spec(self) -> NestedSpec:
+        """Describes the reward returned by the environment.
 
-    #     By default this is assumed to be a single float.
+        By default this is assumed to be a single float.
 
-    #     Returns:
-    #       An `Array` spec, or a nested dict, list or tuple of `Array` specs.
-    #     """
-    #     return specs.Array(shape=(), dtype=float, name="reward")
+        Returns:
+          An `Array` spec, or a nested dict, list or tuple of `Array` specs.
+        """
+        return specs.Array(shape=(), dtype=float, name="reward")
 
-    # def discount_spec(self) -> specs.Array:
-    #     """Describes the discount returned by the environment.
+    def discount_spec(self) -> NestedSpec:
+        """Describes the discount returned by the environment.
 
-    #     By default this is assumed to be a single float between 0 and 1.
+        By default this is assumed to be a single float between 0 and 1.
 
-    #     Returns:
-    #       An `Array` spec, or a nested dict, list or tuple of `Array` specs.
-    #     """
-    #     return specs.BoundedArray(shape=(), dtype=float, minimum=0.0, maximum=1.0, name="discount")
+        Returns:
+          An `Array` spec, or a nested dict, list or tuple of `Array` specs.
+        """
+        return specs.BoundedArray(shape=(), dtype=float, minimum=0.0, maximum=1.0, name="discount")
 
-    # def observation_spec(self):
-    #     """Defines the observations provided by the environment.
+    def observation_spec(self):
+        """Defines the observations provided by the environment.
 
-    #     May use a subclass of `specs.Array` that specifies additional properties
-    #     such as min and max bounds on the values.
+        May use a subclass of `specs.Array` that specifies additional properties
+        such as min and max bounds on the values.
 
-    #     Returns:
-    #       An `Array` spec, or a nested dict, list or tuple of `Array` specs.
-    #     """
+        Returns:
+          An `Array` spec, or a nested dict, list or tuple of `Array` specs.
+        """
 
-    # def action_spec(self):
-    #     """Defines the actions that should be provided to `step`.
+    def action_spec(self):
+        """Defines the actions that should be provided to `step`.
 
-    #     May use a subclass of `specs.Array` that specifies additional properties
-    #     such as min and max bounds on the values.
+        May use a subclass of `specs.Array` that specifies additional properties
+        such as min and max bounds on the values.
 
-    #     Returns:
-    #       An `Array` spec, or a nested dict, list or tuple of `Array` specs.
-    #     """
+        Returns:
+          An `Array` spec, or a nested dict, list or tuple of `Array` specs.
+        """
 
     async def close(self) -> None:
         """Frees any resources used by the environment.
@@ -322,8 +325,9 @@ class CodeBaseEnv[TaskType](Environment[llm_clients.LLMResponse, llm_clients.LLM
             raise RuntimeError("The code agent didn't make any LLM requests.")
 
         # get_time_step always returns a MID timestep, but we know it's actually a first timestep.
+        # FIRST timesteps should have reward=None and discount=None per dm_env spec.
         assert ts.observation is not None
-        result = TimeStep(step_type="FIRST", reward=ts.reward, discount=ts.discount, observation=ts.observation)
+        result = TimeStep(step_type="FIRST", reward=None, discount=None, observation=ts.observation)
 
         reset_end_time = time.time()
         self._tracker.scalar(f"{self._prefix}/reset", reset_end_time - reset_start_time)
@@ -428,6 +432,64 @@ class CodeBaseEnv[TaskType](Environment[llm_clients.LLMResponse, llm_clients.LLM
     def _assert_active(self) -> None:
         if not self._is_active:
             raise RuntimeError("Environment is not active.")
+
+    def observation_spec(self) -> NestedSpec:
+        """Describes the observations provided by the environment.
+
+        Returns:
+          A nested dict spec describing the structure of LLMRequest observations.
+          Note: observations can be None in terminal states.
+        """
+        return {
+            "messages": [
+                {
+                    "role": specs.StringArray(shape=(), string_type=str, name="role"),
+                    "content": specs.StringArray(shape=(), string_type=str, name="content"),
+                }
+            ],
+            "temperature": specs.Array(shape=(), dtype=float, name="temperature"),
+        }
+
+    def action_spec(self) -> NestedSpec:
+        """Defines the actions that should be provided to `step`.
+
+        Returns:
+          A nested dict spec describing the structure of LLMResponse actions.
+        """
+        return {
+            "chat_completion_response": {
+                "id": specs.StringArray(shape=(), string_type=str, name="id"),
+                "choices": [
+                    {
+                        "message": {
+                            "role": specs.StringArray(shape=(), string_type=str, name="role"),
+                            "content": specs.StringArray(shape=(), string_type=str, name="content"),
+                        },
+                        "finish_reason": specs.StringArray(shape=(), string_type=str, name="finish_reason"),
+                        "index": specs.Array(shape=(), dtype=int, name="index"),
+                    }
+                ],
+                "model": specs.StringArray(shape=(), string_type=str, name="model"),
+                "created": specs.Array(shape=(), dtype=int, name="created"),
+            },
+            "cost": specs.Array(shape=(), dtype=float, name="cost"),
+        }
+
+    def reward_spec(self) -> specs.BoundedArray:
+        """Describes the reward returned by the environment.
+
+        Returns:
+          A `BoundedArray` spec for a single float reward value between 0 and 1.
+        """
+        return specs.BoundedArray(shape=(), dtype=float, minimum=0.0, maximum=1.0, name="reward")
+
+    def discount_spec(self) -> specs.BoundedArray:
+        """Describes the discount returned by the environment.
+
+        Returns:
+          A `BoundedArray` spec for a single float discount value between 0 and 1.
+        """
+        return specs.BoundedArray(shape=(), dtype=float, minimum=0.0, maximum=1.0, name="discount")
 
     @abc.abstractmethod
     async def _reset_task(self) -> None:

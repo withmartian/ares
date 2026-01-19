@@ -84,6 +84,12 @@ ARES treats code agent interactions as a reinforcement learning problem:
 - Manages container lifecycle, code agent execution, and LLM request interception
 - Four abstract methods to implement: `_reset_task()`, `_start_container()`, `_start_code_agent()`, `_compute_reward()`
 - Uses async context manager pattern (`async with env:`) for cleanup
+- Implements dm_env spec methods:
+  - `observation_spec()` - Returns nested dict describing LLMRequest structure (messages list, temperature)
+  - `action_spec()` - Returns nested dict describing LLMResponse structure (chat_completion_response, cost)
+  - `reward_spec()` - Returns BoundedArray [0.0, 1.0] for scalar rewards
+  - `discount_spec()` - Returns BoundedArray [0.0, 1.0] for discount factors
+- FIRST timesteps have `reward=None` and `discount=None` per dm_env spec
 
 **Concrete Implementations:**
 - `SweBenchEnv` (`swebench_env.py`) - For SWE-bench dataset. Each task has a pre-built Docker image. Reward is 1.0 if all FAIL_TO_PASS tests pass.
@@ -93,6 +99,14 @@ ARES treats code agent interactions as a reinforcement learning problem:
 - Step limit reached (default: 100 steps)
 - Agent explicitly submits (signals completion)
 - Container or agent error
+
+**Specs (`specs.py`):**
+- Imported from dm_env specification for describing data structures
+- `Array` - Describes numpy arrays with shape and dtype
+- `BoundedArray` - Array with min/max bounds (used for rewards and discounts)
+- `DiscreteArray` - Special case for discrete action spaces
+- `StringArray` - Describes arrays of strings
+- Specs use nested dicts/lists to describe complex structures like LLMRequest/LLMResponse
 
 #### 2. Code Agents (`src/ares/code_agents/`)
 
@@ -243,9 +257,12 @@ Create `.env` file from `.env.example`:
 ## Testing Patterns
 
 - Tests colocated with source: `*_test.py` or `test_*.py` in `src/`
-- Use pytest fixtures for common setup
-- Async tests use `pytest-asyncio`
-- Mock external services (containers, API calls) in unit tests
+- **Never use pytest fixtures** - instead, use helper functions called at the beginning of each test
+  - Example: `create_mock_container()` instead of `@pytest.fixture def mock_container()`
+  - This makes tests more explicit and easier to understand
+- Async tests use `pytest-asyncio` with `asyncio_mode = "auto"` configuration
+- Mock external services (containers, API calls) in unit tests using `unittest.mock`
+- Use `isinstance()` assertions to help type checker understand narrowed types
 
 ## CI/CD
 
