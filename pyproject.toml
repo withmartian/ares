@@ -52,3 +52,16 @@ testpaths = ["src"]
 python_files = ["test_*.py", "*_test.py"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
+
+[tool.pyright]
+pythonVersion = "3.12"
+typeCheckingMode = "basic"
+exclude = [
+    ".venv",
+    "venv",
+    "build",
+    "dist",
+    ".git",
+    "__pycache__",
+    "node_modules"
+]
