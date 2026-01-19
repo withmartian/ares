@@ -94,12 +94,16 @@ def assert_spec_matches_value(spec, value, path=""):
             assert_spec_matches_value(spec[0], value_list[0], f"{path}[0]")
 
     elif isinstance(spec, (specs.Array, specs.BoundedArray, specs.StringArray)):
+        if value is None:
+            raise AssertionError(f"{path}: Value is None")
+
         # Use the spec's built-in validate method for leaf specs
-        if value is not None:
-            try:
-                spec.validate(value)
-            except ValueError as e:
-                raise AssertionError(f"{path}: Spec validation failed: {e}") from e
+        try:
+            spec.validate(value)
+        except ValueError as e:
+            raise AssertionError(f"{path}: Spec validation failed: {e}") from e
+    else:
+        raise AssertionError(f"{path}: Unknown spec type {type(spec)}")
 
 
 def test_reward_spec_is_bounded_between_zero_and_one():

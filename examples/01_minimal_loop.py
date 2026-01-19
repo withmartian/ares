@@ -11,7 +11,6 @@ Example usage:
 import asyncio
 
 from ares.code_agents import mini_swe_agent
-from ares.containers import daytona
 from ares.containers import docker
 from ares.environments import swebench_env
 from ares.llms import chat_completions_compatible
