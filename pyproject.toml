@@ -49,3 +49,16 @@ examples = [
 [tool.pytest.ini_options]
 testpaths = ["src"]
 python_files = ["test_*.py", "*_test.py"]
+
+[tool.pyright]
+pythonVersion = "3.12"
+typeCheckingMode = "basic"
+exclude = [
+    ".venv",
+    "venv",
+    "build",
+    "dist",
+    ".git",
+    "__pycache__",
+    "node_modules"
+]
