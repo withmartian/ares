@@ -29,11 +29,11 @@ import tqdm
 
 from ares.code_agents import code_agent_base
 from ares.code_agents import mini_swe_agent
-from ares.code_agents import stat_tracker
 from ares.containers import containers
 from ares.containers import daytona as ares_daytona
 from ares.environments import base
 from ares.environments import utils
+from ares.experiment_tracking import stat_tracker
 
 _LOGGER = logging.getLogger(__name__)
 

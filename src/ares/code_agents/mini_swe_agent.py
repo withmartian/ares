@@ -19,8 +19,8 @@ from openai.types.chat import chat_completion_message_param
 import yaml
 
 from ares.code_agents import code_agent_base
-from ares.code_agents import stat_tracker
 from ares.containers import containers
+from ares.experiment_tracking import stat_tracker
 from ares.llms import llm_clients
 
 _LOGGER = logging.getLogger(__name__)

@@ -32,6 +32,9 @@ dependencies = [
     "tenacity>=9.1.2",
 ]
 
+[project.optional-dependencies]
+tensorboard = ["tensorboard>=2.20.0", "torch>=2.9.1"]
+
 [dependency-groups]
 dev = [
     "pyright>=1.1.406",
@@ -40,14 +43,6 @@ dev = [
 ]
 examples = [
     "transformers>=4.57.3",
-]
-contrib-rl = [
-    "tensorboard>=2.20.0",
-    "torch>=2.9.1",
-]
-contrib-mi = [
-    "tensorboard>=2.20.0",
-    "torch>=2.9.1",
 ]
 
 [tool.pytest.ini_options]
