@@ -83,7 +83,7 @@ class DockerContainer(containers.Container):
         if len(local_paths) != len(remote_paths):
             raise ValueError("local_paths and remote_paths must have the same length")
 
-        for local_path, remote_path in zip(local_paths, remote_paths, strict=False):
+        for local_path, remote_path in zip(local_paths, remote_paths, strict=True):
             # Create a tar archive in memory
             tar_stream = io.BytesIO()
             with tarfile.open(fileobj=tar_stream, mode="w") as tar:
@@ -105,7 +105,7 @@ class DockerContainer(containers.Container):
         if len(remote_paths) != len(local_paths):
             raise ValueError("remote_paths and local_paths must have the same length")
 
-        for remote_path, local_path in zip(remote_paths, local_paths, strict=False):
+        for remote_path, local_path in zip(remote_paths, local_paths, strict=True):
             # Ensure the local directory exists
             local_path.parent.mkdir(parents=True, exist_ok=True)
 

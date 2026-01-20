@@ -3,7 +3,6 @@
 import getpass
 import os
 
-import pydantic
 import pydantic_settings
 
 
@@ -40,7 +39,7 @@ class _Config(pydantic_settings.BaseSettings):
 
     # Configuration for LLM requests.
     chat_completion_api_base_url: str = "https://api.withmartian.com/v1"
-    chat_completion_api_key: str = pydantic.Field(...)
+    chat_completion_api_key: str = ""
 
     # Daytona configuration.
     daytona_auto_stop_interval: int = 30  # Minutes.
