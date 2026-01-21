@@ -7,18 +7,29 @@ observations and LLM responses as actions within a standard RL loop.
 The primary way to create environments is via the registry system:
 
     >>> import ares
-    >>> env = ares.make("swebench:lite")
-    >>> env = ares.make("swebench:lite:5")  # Select task index 5
-    >>> env = ares.make("harbor:easy", step_limit=50)  # Override defaults
+    >>> env = ares.make("sbv-mswea")  # SWE-bench Verified with mini-swe-agent
+
+Override container factory or add tracking:
+
+    >>> from ares.containers import daytona
+    >>> from ares.experiment_tracking import stat_tracker
+    >>> tracker = stat_tracker.LoggingStatTracker()
+    >>> env = ares.make("sbv-mswea", container_factory=daytona.DaytonaContainer, tracker=tracker)
 
 To see available presets:
 
-    >>> print(ares.info())
+    >>> print(ares.info())  # List all presets
+    >>> print(ares.info("sbv-mswea"))  # Get info about a specific preset
 
 For advanced usage, register custom presets:
 
     >>> import ares.registry
-    >>> ares.registry.register_preset("custom:my-env", my_factory, "My custom environment")
+    >>> class MyEnvSpec:
+    ...     def get_info(self):
+    ...         return ares.registry.EnvironmentInfo("my-env", "My custom environment", num_tasks=100)
+    ...     def get_env(self, *, container_factory, tracker=None):
+    ...         return MyEnvironment(...)
+    >>> ares.registry.register_preset("my-env", MyEnvSpec())
 
 All other functionality is available via submodules:
 - ares.environments: Environment implementations
