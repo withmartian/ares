@@ -12,7 +12,6 @@ import re
 from typing import Literal
 
 import jinja2
-import minisweagent
 from minisweagent.agents import default as default_agent
 import minisweagent.config
 from openai.types.chat import chat_completion_message_param

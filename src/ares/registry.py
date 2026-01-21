@@ -2,89 +2,114 @@
 
 This module provides a registry system for creating environments with preset configurations.
 The registry allows users to:
-1. Register environment presets with names and factory functions
+1. Register environment presets with names and specs
 2. Create environments using preset names via `make()`
 3. Query available presets via `info()`
-4. Override preset configurations with kwargs
+4. Query information about a specific preset via `info(preset_name)`
 
 The registry itself is empty by default. Default presets are registered in the
 `presets` module to avoid circular imports.
 """
 
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 import dataclasses
 import logging
-from typing import Any
+from typing import Protocol
 
+from ares.containers import containers
+from ares.containers import docker
 from ares.environments import base
+from ares.experiment_tracking import stat_tracker
 
 _LOGGER = logging.getLogger(__name__)
 
-# Registry storage: maps preset names to factory functions
-_REGISTRY: dict[str, Callable[..., Any]] = {}
-
 
 @dataclasses.dataclass(frozen=True)
-class PresetInfo:
-    """Information about a registered preset.
+class EnvironmentInfo:
+    """Metadata about an environment preset.
 
     Attributes:
-        name: The unique identifier for the preset (e.g., "swebench:lite", "harbor:easy").
-        factory: The factory function that creates the environment.
+        name: The unique identifier for the preset (e.g., "swebench-lite", "harbor-easy").
         description: A human-readable description of what the preset provides.
+        num_tasks: The total number of tasks available in this environment dataset.
     """
 
     name: str
-    factory: Callable[..., Any]
     description: str
+    num_tasks: int
+
+    def __str__(self) -> str:
+        """Return formatted preset information."""
+        return f"{self.name} ({self.num_tasks} tasks): {self.description}"
 
 
-def register_preset[EnvType: base.Environment](
+class EnvironmentSpec(Protocol):
+    """Protocol for environment preset specifications.
+
+    An EnvironmentSpec encapsulates both metadata about an environment preset and
+    the logic to create environment instances. This separation allows querying
+    information (like task count) without instantiating the expensive environment.
+
+    The spec pattern is used throughout ARES for protocol-oriented design, enabling
+    different implementations while maintaining a consistent interface.
+    """
+
+    def get_info(self) -> EnvironmentInfo:
+        """Return metadata about this environment preset.
+
+        Returns:
+            Info object containing name, description, and number of tasks.
+        """
+        ...
+
+    def get_env(
+        self,
+        *,
+        container_factory: containers.ContainerFactory,
+        tracker: stat_tracker.StatTracker | None = None,
+    ) -> base.Environment:
+        """Create and return an environment instance.
+
+        Args:
+            container_factory: Factory for creating containers. Required.
+            tracker: Statistics tracker for monitoring. Optional.
+
+        Returns:
+            A configured environment instance ready for use in the RL loop.
+        """
+        ...
+
+
+# Registry storage: maps preset names to environment specs
+_REGISTRY: dict[str, EnvironmentSpec] = {}
+
+
+def register_preset(
     name: str,
-    factory: Callable[..., EnvType],
-    description: str = "",
+    spec: EnvironmentSpec,
 ) -> None:
     """Register an environment preset with the global registry.
 
-    This function allows users to register custom environment configurations that can
-    be instantiated later via `make()`. Presets provide a convenient way to share
-    common environment configurations.
+    This function allows users to register custom environment specifications that can
+    be instantiated later via `make()` or queried via `info()`. Presets provide a
+    convenient way to share common environment configurations.
 
     Args:
         name: Unique identifier for the preset. Convention is "dataset-variant" (e.g.,
             "swebench-lite", "harbor-easy"). Must not already exist in the registry.
             Cannot contain colons as they are reserved for task selection syntax.
-        factory: A callable that creates and returns an environment instance. The factory
-            will be called with any kwargs passed to `make()`, allowing users to override
-            preset defaults.
-        description: Human-readable description of the preset's purpose and configuration.
-            Displayed by `info()`. Defaults to empty string.
+        spec: An EnvironmentSpec instance that provides both metadata (via get_info())
+            and environment creation (via get_env()). The spec's get_env() method will
+            receive any kwargs passed to `make()`, allowing users to override defaults.
 
     Raises:
         ValueError: If a preset with the given name is already registered, or if the
             name contains a colon character.
-
-    Examples:
-        Register a custom preset:
-
-        >>> def my_custom_env_factory(**kwargs):
-        ...     return HarborEnv(tasks=load_harbor_dataset("my-dataset", "v1"), **kwargs)
-        >>> register_preset(
-        ...     "custom-my-dataset",
-        ...     my_custom_env_factory,
-        ...     "Custom Harbor environment for my-dataset v1"
-        ... )
-
-        Register with configurable parameters:
-
-        >>> def configurable_env(**kwargs):
-        ...     step_limit = kwargs.pop("step_limit", 50)  # Default to 50
-        ...     return SwebenchEnv(tasks=load_tasks(), step_limit=step_limit, **kwargs)
-        >>> register_preset("swebench-fast", configurable_env, "Fast SWE-bench with 50 step limit")
     """
     if ":" in name:
         raise ValueError(
-            f"Preset name '{name}' cannot contain colons. Colons are reserved for task selection syntax (e.g., 'preset:5')."
+            f"Preset name '{name}' cannot contain colons. "
+            "Colons are reserved for task selection syntax (e.g., 'preset:5')."
         )
 
     if name in _REGISTRY:
@@ -92,8 +117,8 @@ def register_preset[EnvType: base.Environment](
             f"Preset '{name}' is already registered. Choose a different name or unregister the existing preset first."
         )
 
-    _REGISTRY[name] = factory
-    _LOGGER.debug("Registered preset '%s': %s", name, description or "(no description)")
+    _REGISTRY[name] = spec
+    _LOGGER.debug("Registered preset '%s'", name)
 
 
 def unregister_preset(name: str) -> None:
@@ -115,14 +140,14 @@ def unregister_preset(name: str) -> None:
     _LOGGER.debug("Unregistered preset '%s'", name)
 
 
-def list_presets() -> Sequence[str]:
+def _list_presets() -> Sequence[str]:
     """Return a sorted list of all registered preset names.
 
     Returns:
         A tuple of preset names in alphabetical order.
 
     Examples:
-        >>> presets = list_presets()
+        >>> presets = _list_presets()
         >>> print(presets)
         ('harbor:easy', 'swebench:lite', 'swebench:verified')
     """
@@ -137,7 +162,8 @@ def info(name: str | None = None) -> str:
 
     Returns:
         A formatted string describing the preset(s). For a specific preset, includes
-        the name and description. For all presets, includes a list of names.
+        the name, description, and number of tasks. For all presets, includes a summary
+        table with key information.
 
     Raises:
         KeyError: If a specific name is provided but not found in the registry.
@@ -147,120 +173,90 @@ def info(name: str | None = None) -> str:
 
         >>> print(info())
         Available presets:
-          - harbor:easy
-          - swebench:lite
-          - swebench:verified
+          - sbv-mswea (500 tasks): SWE-bench Verified with mini-swe-agent
 
         Get info for a specific preset:
 
-        >>> print(info("swebench:lite"))
-        Preset: swebench:lite
-        Description: SWE-bench Lite dataset (300 instances)
+        >>> print(info("sbv-mswea"))
+        sbv-mswea (500 tasks): SWE-bench Verified with mini-swe-agent
     """
     if name is not None:
         if name not in _REGISTRY:
-            raise KeyError(f"Preset '{name}' not found. Available presets: {', '.join(list_presets())}")
+            raise KeyError(f"Preset '{name}' not found. Available presets: {', '.join(_list_presets())}")
 
-        # For specific preset, we only have the factory, not the description stored separately
-        # In a full implementation, we'd store PresetInfo objects instead of just factories
-        return f"Preset: {name}\n(Use make() to instantiate)"
+        spec = _REGISTRY[name]
+        return str(spec.get_info())
 
-    # List all presets
-    presets = list_presets()
+    # List all presets with summary information
+    presets = _list_presets()
     if not presets:
         return "No presets registered."
 
     lines = ["Available presets:"]
     for preset_name in presets:
-        lines.append(f"  - {preset_name}")
+        spec = _REGISTRY[preset_name]
+        lines.append(f"  - {spec.get_info()}")
 
     return "\n".join(lines)
 
 
-def make(preset_name: str, **kwargs: Any) -> Any:
+def make(
+    preset_name: str,
+    *,
+    container_factory: containers.ContainerFactory = docker.DockerContainer,
+    tracker: stat_tracker.StatTracker | None = None,
+) -> base.Environment:
     """Create an environment instance from a registered preset.
 
     This is the primary way to instantiate environments in ARES. It looks up the
-    preset by name, creates the environment using the registered factory function,
-    and applies any user-provided overrides via kwargs.
-
-    The preset name may include a task selection suffix in the format "preset:N" where
-    N is a 0-based task index. For example, "swebench:lite:5" creates the "swebench:lite"
-    preset and selects task index 5.
+    preset by name and creates the environment using the registered spec.
 
     Args:
-        preset_name: The name of the preset to instantiate, optionally with ":N" suffix
-            for task selection (e.g., "swebench:lite" or "swebench:lite:5").
-        **kwargs: Additional keyword arguments to pass to the factory function. These
-            override any defaults defined in the preset. Common overrides include:
-            - step_limit: Maximum number of steps per episode
-            - container_factory: Alternative container implementation
-            - code_agent_factory: Alternative code agent implementation
-            - tracker: Statistics tracker instance
+        preset_name: The name of the preset to instantiate (e.g., "sbv-mswea").
+        container_factory: Factory for creating containers. Defaults to DockerContainer.
+        tracker: Statistics tracker for monitoring. Optional.
 
     Returns:
-        An environment instance configured according to the preset and overrides.
+        An environment instance configured according to the preset.
 
     Raises:
         KeyError: If the preset name is not found in the registry.
-        TypeError: If the factory function doesn't accept the provided kwargs.
+        TypeError: If the spec's get_env() method doesn't accept the provided parameters.
 
     Examples:
-        Create environment with default settings:
+        Create environment with default Docker containers:
 
-        >>> env = make("swebench:lite")
+        >>> env = make("sbv-mswea")
 
-        Override step limit:
+        Use Daytona containers instead:
 
-        >>> env = make("swebench:lite", step_limit=50)
+        >>> from ares.containers import daytona
+        >>> env = make("sbv-mswea", container_factory=daytona.DaytonaContainer)
 
-        Select specific task (0-based indexing):
+        Add statistics tracking:
 
-        >>> env = make("swebench:lite:5")  # Select task at index 5
-
-        Override multiple parameters:
-
-        >>> from ares.containers import docker
-        >>> env = make(
-        ...     "harbor:easy",
-        ...     step_limit=200,
-        ...     container_factory=docker.DockerContainer
-        ... )
-
-        The kwargs override mechanism allows presets to define sensible defaults
-        while giving users full control over the final configuration.
+        >>> from ares.experiment_tracking import stat_tracker
+        >>> tracker = stat_tracker.LoggingStatTracker()
+        >>> env = make("sbv-mswea", tracker=tracker)
     """
-    # Check for task selection suffix (e.g., "swebench:lite:5")
-    task_index: int | None = None
-    if ":" in preset_name and preset_name.split(":")[-1].isdigit():
-        parts = preset_name.rsplit(":", 1)
-        preset_name = parts[0]
-        task_index = int(parts[1])
-        _LOGGER.debug("Parsed task index %d from preset name", task_index)
-
     if preset_name not in _REGISTRY:
-        available = ", ".join(list_presets())
+        available = ", ".join(_list_presets())
         raise KeyError(f"Preset '{preset_name}' not found. Available presets: {available or '(none)'}")
 
-    factory = _REGISTRY[preset_name]
-    _LOGGER.info("Creating environment from preset '%s' with kwargs: %s", preset_name, kwargs)
-
-    # Add task_index to kwargs if specified
-    if task_index is not None:
-        if "task_index" in kwargs:
-            _LOGGER.warning(
-                "Overriding task_index from kwargs (%d) with suffix value (%d)",
-                kwargs["task_index"],
-                task_index,
-            )
-        kwargs["task_index"] = task_index
+    spec = _REGISTRY[preset_name]
+    _LOGGER.info(
+        "Creating environment from preset '%s' with container_factory=%s, tracker=%s",
+        preset_name,
+        container_factory,
+        tracker,
+    )
 
     try:
-        env = factory(**kwargs)
+        env = spec.get_env(container_factory=container_factory, tracker=tracker)
     except TypeError as e:
         raise TypeError(
             f"Failed to create environment from preset '{preset_name}'. "
-            f"The factory function may not accept the provided kwargs. "
+            f"The spec's get_env() method may not accept the provided parameters. "
             f"Original error: {e}"
         ) from e
 
@@ -276,7 +272,7 @@ def clear_registry() -> None:
 
     Examples:
         >>> clear_registry()
-        >>> assert len(list_presets()) == 0
+        >>> assert len(_list_presets()) == 0
     """
     _REGISTRY.clear()
     _LOGGER.debug("Cleared all presets from registry")
