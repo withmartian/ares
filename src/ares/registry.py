@@ -51,8 +51,9 @@ def register_preset[EnvType: base.Environment](
     common environment configurations.
 
     Args:
-        name: Unique identifier for the preset. Convention is "dataset:variant" (e.g.,
-            "swebench:lite", "harbor:easy"). Must not already exist in the registry.
+        name: Unique identifier for the preset. Convention is "dataset-variant" (e.g.,
+            "swebench-lite", "harbor-easy"). Must not already exist in the registry.
+            Cannot contain colons as they are reserved for task selection syntax.
         factory: A callable that creates and returns an environment instance. The factory
             will be called with any kwargs passed to `make()`, allowing users to override
             preset defaults.
@@ -60,7 +61,8 @@ def register_preset[EnvType: base.Environment](
             Displayed by `info()`. Defaults to empty string.
 
     Raises:
-        ValueError: If a preset with the given name is already registered.
+        ValueError: If a preset with the given name is already registered, or if the
+            name contains a colon character.
 
     Examples:
         Register a custom preset:
@@ -68,7 +70,7 @@ def register_preset[EnvType: base.Environment](
         >>> def my_custom_env_factory(**kwargs):
         ...     return HarborEnv(tasks=load_harbor_dataset("my-dataset", "v1"), **kwargs)
         >>> register_preset(
-        ...     "custom:my-dataset",
+        ...     "custom-my-dataset",
         ...     my_custom_env_factory,
         ...     "Custom Harbor environment for my-dataset v1"
         ... )
@@ -78,8 +80,13 @@ def register_preset[EnvType: base.Environment](
         >>> def configurable_env(**kwargs):
         ...     step_limit = kwargs.pop("step_limit", 50)  # Default to 50
         ...     return SwebenchEnv(tasks=load_tasks(), step_limit=step_limit, **kwargs)
-        >>> register_preset("swebench:fast", configurable_env, "Fast SWE-bench with 50 step limit")
+        >>> register_preset("swebench-fast", configurable_env, "Fast SWE-bench with 50 step limit")
     """
+    if ":" in name:
+        raise ValueError(
+            f"Preset name '{name}' cannot contain colons. Colons are reserved for task selection syntax (e.g., 'preset:5')."
+        )
+
     if name in _REGISTRY:
         raise ValueError(
             f"Preset '{name}' is already registered. Choose a different name or unregister the existing preset first."

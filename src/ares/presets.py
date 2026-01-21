@@ -224,13 +224,13 @@ def _register_default_presets() -> None:
     """
     # SWE-bench presets
     registry.register_preset(
-        "swebench:verified",
+        "swebench-verified",
         _make_swebench_verified,
         "SWE-bench Verified dataset (500+ validated instances)",
     )
 
     registry.register_preset(
-        "swebench:lite",
+        "swebench-lite",
         _make_swebench_lite,
         "SWE-bench Lite dataset (300 curated instances)",
     )
@@ -252,19 +252,19 @@ def _register_default_presets() -> None:
         return _make_harbor("hard", "v1", **kwargs)
 
     registry.register_preset(
-        "harbor:easy",
+        "harbor-easy",
         _make_harbor_easy,
         "Harbor Easy dataset (beginner-level tasks)",
     )
 
     registry.register_preset(
-        "harbor:medium",
+        "harbor-medium",
         _make_harbor_medium,
         "Harbor Medium dataset (intermediate-level tasks)",
     )
 
     registry.register_preset(
-        "harbor:hard",
+        "harbor-hard",
         _make_harbor_hard,
         "Harbor Hard dataset (advanced-level tasks)",
     )
