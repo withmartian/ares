@@ -14,6 +14,7 @@ The registry itself is empty by default. Default presets are registered in the
 from collections.abc import Sequence
 import dataclasses
 import logging
+import re
 from typing import Protocol
 
 from ares.containers import containers
@@ -22,6 +23,197 @@ from ares.environments import base
 from ares.experiment_tracking import stat_tracker
 
 _LOGGER = logging.getLogger(__name__)
+
+# Valid preset name pattern: alphanumeric + hyphens, underscores, and forward slashes
+_PRESET_NAME_PATTERN = re.compile(r"^[a-zA-Z0-9_/-]+$")
+
+
+class TaskSelector(Protocol):
+    """Protocol for task selection strategies."""
+
+    def __call__[T](self, tasks: Sequence[T]) -> Sequence[T]:
+        """Filter tasks based on selection strategy.
+
+        Args:
+            tasks: Sequence of tasks to filter.
+
+        Returns:
+            Filtered sequence of tasks.
+        """
+        ...
+
+
+@dataclasses.dataclass(frozen=True)
+class IndexSelector:
+    """Select a single task by index.
+
+    Attributes:
+        index: Index of the task to select.
+    """
+
+    index: int
+
+    def __call__[T](self, tasks: Sequence[T]) -> Sequence[T]:
+        """Select single task at index."""
+        return [tasks[self.index]]
+
+
+@dataclasses.dataclass(frozen=True)
+class SliceSelector:
+    """Select tasks by slice (Python-style).
+
+    Attributes:
+        start: Starting index (inclusive). None means start from beginning.
+        end: Ending index (exclusive). None means go to end.
+    """
+
+    start: int | None
+    end: int | None
+
+    def __call__[T](self, tasks: Sequence[T]) -> Sequence[T]:
+        """Filter tasks based on slice specification."""
+        return tasks[self.start : self.end]
+
+
+@dataclasses.dataclass(frozen=True)
+class ShardSelector:
+    """Select tasks by shard index.
+
+    Shards distribute tasks as evenly as possible across multiple partitions.
+    Uses floating point division with rounding to ensure all shards differ by at most 1 task.
+
+    Attributes:
+        shard_index: Which shard to select (0-indexed).
+        total_shards: Total number of shards.
+    """
+
+    shard_index: int
+    total_shards: int
+
+    def __call__[T](self, tasks: Sequence[T]) -> Sequence[T]:
+        """Filter tasks based on shard specification.
+
+        Uses floating point division to distribute tasks evenly across shards.
+        This ensures that all shards have sizes within 1 of each other, avoiding
+        the pattern where early shards get extra tasks and later ones are smaller.
+
+        Example: 100 tasks / 3 shards = [33, 33, 34] instead of [34, 34, 32]
+        """
+        total = len(tasks)
+
+        # Use floating point division to compute shard boundaries
+        # This distributes tasks as evenly as possible across all shards
+        start = round(self.shard_index * total / self.total_shards)
+        end = round((self.shard_index + 1) * total / self.total_shards)
+
+        return tasks[start:end]
+
+
+def _parse_selector(selector_str: str) -> tuple[str, TaskSelector]:
+    """Parse a task selector string into preset name and selector.
+
+    Supported syntaxes:
+    - "dataset" - Select all tasks
+    - "dataset:5" - Select single task at index 5
+    - "dataset:0:10" - Select slice from index 0 to 9 (Python-style)
+    - "dataset:5:" - Select from index 5 to end
+    - "dataset::10" - Select from start to index 10
+    - "dataset@2/8" - Select shard 2 out of 8 total shards
+
+    Args:
+        selector_str: The selector string to parse.
+
+    Returns:
+        A tuple of (preset_name, selector).
+
+    Raises:
+        ValueError: If the selector syntax is invalid.
+    """
+    # Check for shard syntax: dataset@shard/total
+    if "@" in selector_str:
+        parts = selector_str.split("@")
+        if len(parts) != 2:
+            raise ValueError(f"Invalid shard syntax: '{selector_str}'. Expected 'dataset@shard/total'.")
+
+        preset_name = parts[0]
+        shard_spec = parts[1]
+
+        if not shard_spec:
+            raise ValueError(f"Invalid shard syntax: '{selector_str}'. Shard specification cannot be empty.")
+
+        if "/" not in shard_spec:
+            raise ValueError(f"Invalid shard syntax: '{selector_str}'. Expected 'dataset@shard/total'.")
+
+        shard_parts = shard_spec.split("/")
+        if len(shard_parts) != 2:
+            raise ValueError(f"Invalid shard syntax: '{selector_str}'. Expected 'dataset@shard/total'.")
+
+        if not shard_parts[0] or not shard_parts[1]:
+            raise ValueError(f"Invalid shard syntax: '{selector_str}'. Shard and total cannot be empty.")
+
+        try:
+            shard_index = int(shard_parts[0])
+            total_shards = int(shard_parts[1])
+        except ValueError as e:
+            raise ValueError(f"Invalid shard syntax: '{selector_str}'. Shard and total must be integers.") from e
+
+        if shard_index < 0 or total_shards <= 0:
+            raise ValueError(f"Invalid shard values: shard_index={shard_index}, total_shards={total_shards}.")
+        if shard_index >= total_shards:
+            raise ValueError(f"Shard index {shard_index} must be less than total shards {total_shards}.")
+
+        return preset_name, ShardSelector(shard_index=shard_index, total_shards=total_shards)
+
+    # Check for slice/single index syntax: dataset:start:end or dataset:idx
+    if ":" in selector_str:
+        parts = selector_str.split(":")
+        if len(parts) == 2:
+            # Single index: dataset:5
+            preset_name = parts[0]
+            if not parts[1]:
+                raise ValueError(f"Invalid index syntax: '{selector_str}'. Index cannot be empty.")
+
+            try:
+                index = int(parts[1])
+            except ValueError as e:
+                raise ValueError(f"Invalid index syntax: '{selector_str}'. Index must be an integer.") from e
+
+            if index < 0:
+                raise ValueError(f"Invalid index: {index}. Index must be non-negative.")
+
+            return preset_name, IndexSelector(index=index)
+        elif len(parts) == 3:
+            # Slice: dataset:start:end
+            preset_name = parts[0]
+
+            # Parse start (can be empty for None)
+            start = None if not parts[1] else int(parts[1])
+            # Parse end (can be empty for None)
+            end = None if not parts[2] else int(parts[2])
+
+            try:
+                if start is not None:
+                    start = int(parts[1])
+                if end is not None:
+                    end = int(parts[2])
+            except ValueError as e:
+                raise ValueError(f"Invalid slice syntax: '{selector_str}'. Start and end must be integers.") from e
+
+            if start is not None and start < 0:
+                raise ValueError(f"Invalid slice: start={start}. Start must be non-negative.")
+            if end is not None and end < 0:
+                raise ValueError(f"Invalid slice: end={end}. End must be non-negative.")
+            if start is not None and end is not None and start >= end:
+                raise ValueError(f"Invalid slice: start={start}, end={end}. Start must be less than end.")
+
+            return preset_name, SliceSelector(start=start, end=end)
+        else:
+            raise ValueError(
+                f"Invalid selector syntax: '{selector_str}'. Expected 'dataset:idx' or 'dataset:start:end'."
+            )
+
+    # No selector, just preset name - select all tasks
+    return selector_str, SliceSelector(start=None, end=None)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -65,12 +257,14 @@ class EnvironmentSpec(Protocol):
     def get_env(
         self,
         *,
+        selector: TaskSelector,
         container_factory: containers.ContainerFactory,
         tracker: stat_tracker.StatTracker | None = None,
     ) -> base.Environment:
         """Create and return an environment instance.
 
         Args:
+            selector: Task selector to filter which tasks to include.
             container_factory: Factory for creating containers. Required.
             tracker: Statistics tracker for monitoring. Optional.
 
@@ -97,19 +291,20 @@ def register_preset(
     Args:
         name: Unique identifier for the preset. Convention is "dataset-variant" (e.g.,
             "swebench-lite", "harbor-easy"). Must not already exist in the registry.
-            Cannot contain colons as they are reserved for task selection syntax.
+            Must contain only alphanumeric characters, hyphens, underscores, and forward slashes.
+            Cannot contain colons or @ symbols as they are reserved for task selection syntax.
         spec: An EnvironmentSpec instance that provides both metadata (via get_info())
             and environment creation (via get_env()). The spec's get_env() method will
             receive any kwargs passed to `make()`, allowing users to override defaults.
 
     Raises:
         ValueError: If a preset with the given name is already registered, or if the
-            name contains a colon character.
+            name contains invalid characters.
     """
-    if ":" in name:
+    if not _PRESET_NAME_PATTERN.match(name):
         raise ValueError(
-            f"Preset name '{name}' cannot contain colons. "
-            "Colons are reserved for task selection syntax (e.g., 'preset:5')."
+            f"Preset name '{name}' contains invalid characters. "
+            "Only alphanumeric characters, hyphens (-), underscores (_), and forward slashes (/) are allowed."
         )
 
     if name in _REGISTRY:
@@ -212,7 +407,14 @@ def make(
     preset by name and creates the environment using the registered spec.
 
     Args:
-        preset_name: The name of the preset to instantiate (e.g., "sbv-mswea").
+        preset_name: The name of the preset to instantiate, with optional task selector.
+            Examples:
+            - "sbv-mswea" - All tasks
+            - "sbv-mswea:0" - Single task at index 0
+            - "sbv-mswea:0:10" - Tasks 0-9 (slice)
+            - "sbv-mswea:5:" - Tasks from index 5 to end
+            - "sbv-mswea::10" - Tasks from start to index 10
+            - "sbv-mswea@2/8" - Shard 2 out of 8 total shards
         container_factory: Factory for creating containers. Defaults to DockerContainer.
         tracker: Statistics tracker for monitoring. Optional.
 
@@ -221,12 +423,25 @@ def make(
 
     Raises:
         KeyError: If the preset name is not found in the registry.
+        ValueError: If the selector syntax is invalid.
         TypeError: If the spec's get_env() method doesn't accept the provided parameters.
 
     Examples:
         Create environment with default Docker containers:
 
         >>> env = make("sbv-mswea")
+
+        Select single task:
+
+        >>> env = make("sbv-mswea:0")
+
+        Select slice of tasks:
+
+        >>> env = make("sbv-mswea:0:10")
+
+        Select shard:
+
+        >>> env = make("sbv-mswea@2/8")
 
         Use Daytona containers instead:
 
@@ -239,28 +454,32 @@ def make(
         >>> tracker = stat_tracker.LoggingStatTracker()
         >>> env = make("sbv-mswea", tracker=tracker)
     """
-    if preset_name not in _REGISTRY:
-        available = ", ".join(_list_presets())
-        raise KeyError(f"Preset '{preset_name}' not found. Available presets: {available or '(none)'}")
+    # Parse the selector syntax
+    preset_name_clean, selector = _parse_selector(preset_name)
 
-    spec = _REGISTRY[preset_name]
+    if preset_name_clean not in _REGISTRY:
+        available = ", ".join(_list_presets())
+        raise KeyError(f"Preset '{preset_name_clean}' not found. Available presets: {available or '(none)'}")
+
+    spec = _REGISTRY[preset_name_clean]
     _LOGGER.info(
-        "Creating environment from preset '%s' with container_factory=%s, tracker=%s",
-        preset_name,
+        "Creating environment from preset '%s' with selector=%s, container_factory=%s, tracker=%s",
+        preset_name_clean,
+        selector,
         container_factory,
         tracker,
     )
 
     try:
-        env = spec.get_env(container_factory=container_factory, tracker=tracker)
+        env = spec.get_env(selector=selector, container_factory=container_factory, tracker=tracker)
     except TypeError as e:
         raise TypeError(
-            f"Failed to create environment from preset '{preset_name}'. "
+            f"Failed to create environment from preset '{preset_name_clean}'. "
             f"The spec's get_env() method may not accept the provided parameters. "
             f"Original error: {e}"
         ) from e
 
-    _LOGGER.info("Successfully created environment from preset '%s'", preset_name)
+    _LOGGER.info("Successfully created environment from preset '%s'", preset_name_clean)
     return env
 
 

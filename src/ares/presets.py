@@ -36,13 +36,15 @@ class SwebenchVerifiedMiniSWESpec:
     def get_env(
         self,
         *,
+        selector: registry.TaskSelector,
         container_factory: containers.ContainerFactory,
         tracker: stat_tracker.StatTracker | None = None,
     ) -> base.Environment:
         """Create SWE-bench Verified environment with mini-swe-agent."""
-        tasks = swebench_env.swebench_verified_tasks()
+        all_tasks = swebench_env.swebench_verified_tasks()
+        selected_tasks = selector(all_tasks)
         return swebench_env.SweBenchEnv(
-            tasks=tasks,
+            tasks=selected_tasks,
             container_factory=container_factory,
             code_agent_factory=mini_swe_agent.MiniSWECodeAgent,
             step_limit=100,

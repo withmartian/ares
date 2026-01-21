@@ -38,11 +38,13 @@ class _MockEnvSpec:
     def get_env(
         self,
         *,
+        selector: registry.TaskSelector,
         container_factory: containers.ContainerFactory,
         tracker: stat_tracker.StatTracker | None = None,
     ) -> Any:
         """Return test data with received parameters."""
         return {
+            "selector": selector,
             "container_factory": container_factory,
             "tracker": tracker,
         }
@@ -107,7 +109,7 @@ def test_register_preset_with_colon():
     """Test that registering a preset with a colon raises ValueError."""
     spec = _MockEnvSpec(name="invalid:name", description="Test preset")
 
-    with pytest.raises(ValueError, match="cannot contain colons"):
+    with pytest.raises(ValueError, match="contains invalid characters"):
         registry.register_preset("invalid:name", spec)
 
 
@@ -132,6 +134,9 @@ def test_make_with_params():
     result: Any = make("test-params")
     assert result["container_factory"] == docker.DockerContainer
     assert result["tracker"] is None
+    assert isinstance(result["selector"], registry.SliceSelector)
+    assert result["selector"].start is None
+    assert result["selector"].end is None
 
     # Test with explicit tracker
     test_tracker = stat_tracker.NullStatTracker()
@@ -159,3 +164,210 @@ def test_clear_registry():
 
     # Verify defaults are back
     assert set(registry._list_presets()) == original_presets
+
+
+# Selector parsing tests
+
+
+def test_parse_selector_no_selector():
+    """Test parsing preset name without selector."""
+    preset_name, selector = registry._parse_selector("test-preset")
+    assert preset_name == "test-preset"
+    assert isinstance(selector, registry.SliceSelector)
+    assert selector.start is None
+    assert selector.end is None
+
+
+def test_parse_selector_single_index():
+    """Test parsing single index selector."""
+    preset_name, selector = registry._parse_selector("test-preset:5")
+    assert preset_name == "test-preset"
+    assert isinstance(selector, registry.IndexSelector)
+    assert selector.index == 5
+
+
+def test_parse_selector_slice():
+    """Test parsing slice selector."""
+    preset_name, selector = registry._parse_selector("test-preset:0:10")
+    assert preset_name == "test-preset"
+    assert isinstance(selector, registry.SliceSelector)
+    assert selector.start == 0
+    assert selector.end == 10
+
+
+def test_parse_selector_slice_start_only():
+    """Test parsing slice with start only (e.g., :5:)."""
+    preset_name, selector = registry._parse_selector("test-preset:5:")
+    assert preset_name == "test-preset"
+    assert isinstance(selector, registry.SliceSelector)
+    assert selector.start == 5
+    assert selector.end is None
+
+
+def test_parse_selector_slice_end_only():
+    """Test parsing slice with end only (e.g., ::10)."""
+    preset_name, selector = registry._parse_selector("test-preset::10")
+    assert preset_name == "test-preset"
+    assert isinstance(selector, registry.SliceSelector)
+    assert selector.start is None
+    assert selector.end == 10
+
+
+def test_parse_selector_shard():
+    """Test parsing shard selector."""
+    preset_name, selector = registry._parse_selector("test-preset@2/8")
+    assert preset_name == "test-preset"
+    assert isinstance(selector, registry.ShardSelector)
+    assert selector.shard_index == 2
+    assert selector.total_shards == 8
+
+
+def test_parse_selector_invalid_empty_index():
+    """Test that empty index raises ValueError."""
+    with pytest.raises(ValueError, match="Index cannot be empty"):
+        registry._parse_selector("test-preset:")
+
+
+def test_parse_selector_invalid_negative_index():
+    """Test that negative index raises ValueError."""
+    with pytest.raises(ValueError, match="must be non-negative"):
+        registry._parse_selector("test-preset:-1")
+
+
+def test_parse_selector_invalid_slice_order():
+    """Test that start >= end raises ValueError."""
+    with pytest.raises(ValueError, match="Start must be less than end"):
+        registry._parse_selector("test-preset:10:5")
+
+
+def test_parse_selector_invalid_shard_index():
+    """Test that shard_index >= total_shards raises ValueError."""
+    with pytest.raises(ValueError, match="must be less than total shards"):
+        registry._parse_selector("test-preset@8/8")
+
+
+def test_parse_selector_invalid_shard_empty():
+    """Test that empty shard specification raises ValueError."""
+    with pytest.raises(ValueError, match="cannot be empty"):
+        registry._parse_selector("test-preset@")
+
+
+def test_parse_selector_invalid_shard_missing_slash():
+    """Test that shard without slash raises ValueError."""
+    with pytest.raises(ValueError, match="Expected 'dataset@shard/total'"):
+        registry._parse_selector("test-preset@2")
+
+
+# Selector execution tests
+
+
+def test_index_selector():
+    """Test IndexSelector selects single item."""
+    selector = registry.IndexSelector(index=2)
+    tasks = ["a", "b", "c", "d", "e"]
+    result = selector(tasks)
+    assert result == ["c"]
+
+
+def test_slice_selector_full():
+    """Test SliceSelector with both start and end."""
+    selector = registry.SliceSelector(start=1, end=4)
+    tasks = ["a", "b", "c", "d", "e"]
+    result = selector(tasks)
+    assert result == ["b", "c", "d"]
+
+
+def test_slice_selector_start_only():
+    """Test SliceSelector with start only."""
+    selector = registry.SliceSelector(start=2, end=None)
+    tasks = ["a", "b", "c", "d", "e"]
+    result = selector(tasks)
+    assert result == ["c", "d", "e"]
+
+
+def test_slice_selector_end_only():
+    """Test SliceSelector with end only."""
+    selector = registry.SliceSelector(start=None, end=3)
+    tasks = ["a", "b", "c", "d", "e"]
+    result = selector(tasks)
+    assert result == ["a", "b", "c"]
+
+
+def test_slice_selector_all():
+    """Test SliceSelector with no bounds selects all."""
+    selector = registry.SliceSelector(start=None, end=None)
+    tasks = ["a", "b", "c", "d", "e"]
+    result = selector(tasks)
+    assert result == ["a", "b", "c", "d", "e"]
+
+
+def test_shard_selector_even_distribution():
+    """Test ShardSelector distributes tasks evenly."""
+    tasks = list(range(100))
+
+    # 4 shards should each get 25 tasks
+    shard0 = registry.ShardSelector(shard_index=0, total_shards=4)(tasks)
+    shard1 = registry.ShardSelector(shard_index=1, total_shards=4)(tasks)
+    shard2 = registry.ShardSelector(shard_index=2, total_shards=4)(tasks)
+    shard3 = registry.ShardSelector(shard_index=3, total_shards=4)(tasks)
+
+    assert len(shard0) == 25
+    assert len(shard1) == 25
+    assert len(shard2) == 25
+    assert len(shard3) == 25
+
+    # Verify all tasks are included and no duplicates
+    all_tasks = list(shard0) + list(shard1) + list(shard2) + list(shard3)
+    assert sorted(all_tasks) == tasks
+
+
+def test_shard_selector_uneven_distribution():
+    """Test ShardSelector with uneven task count."""
+    tasks = list(range(10))
+
+    # 3 shards: should be [3, 3, 4] or similar
+    shard0 = registry.ShardSelector(shard_index=0, total_shards=3)(tasks)
+    shard1 = registry.ShardSelector(shard_index=1, total_shards=3)(tasks)
+    shard2 = registry.ShardSelector(shard_index=2, total_shards=3)(tasks)
+
+    # All shards should be within 1 of each other
+    lengths = [len(shard0), len(shard1), len(shard2)]
+    assert max(lengths) - min(lengths) <= 1
+
+    # Verify all tasks are included and no duplicates
+    all_tasks = list(shard0) + list(shard1) + list(shard2)
+    assert sorted(all_tasks) == tasks
+
+
+def test_register_preset_invalid_characters():
+    """Test that registering preset with invalid characters raises ValueError."""
+    spec = _MockEnvSpec(name="invalid@name", description="Test preset")
+
+    with pytest.raises(ValueError, match="contains invalid characters"):
+        registry.register_preset("invalid@name", spec)
+
+
+def test_make_with_selector():
+    """Test make() with selector syntax."""
+    spec = _MockEnvSpec(name="test-selector", description="Test preset", num_tasks=10)
+    registry.register_preset("test-selector", spec)
+
+    # Test single index
+    result: Any = make("test-selector:5")
+    assert isinstance(result["selector"], registry.IndexSelector)
+    assert result["selector"].index == 5
+
+    # Test slice
+    result = make("test-selector:0:5")
+    assert isinstance(result["selector"], registry.SliceSelector)
+    assert result["selector"].start == 0
+    assert result["selector"].end == 5
+
+    # Test shard
+    result = make("test-selector@2/4")
+    assert isinstance(result["selector"], registry.ShardSelector)
+    assert result["selector"].shard_index == 2
+    assert result["selector"].total_shards == 4
+
+    # Clean up
+    registry.unregister_preset("test-selector")
