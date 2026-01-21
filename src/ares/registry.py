@@ -14,14 +14,11 @@ The registry itself is empty by default. Default presets are registered in the
 from collections.abc import Callable, Sequence
 import dataclasses
 import logging
-from typing import Any, TypeVar
+from typing import Any
 
 from ares.environments import base
 
 _LOGGER = logging.getLogger(__name__)
-
-# Type variable for environment types
-EnvType = TypeVar("EnvType", bound=base.Environment)
 
 # Registry storage: maps preset names to factory functions
 _REGISTRY: dict[str, Callable[..., Any]] = {}
