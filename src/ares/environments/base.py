@@ -304,11 +304,8 @@ class CodeBaseEnv[TaskType](Environment[llm_clients.LLMResponse, llm_clients.LLM
         self._step_count = 0
         self._requires_reset = False
 
-        if self._container is not None:
-            _LOGGER.debug("[%d] Stopping container on reset.", id(self))
-            # Stop the container to free resources.
-            await self._container.stop()
-            self._container = None
+        # Make sure to stop any current tasks
+        await self._stop_agent_and_container()
 
         await self._reset_task()
         await self._start_container()
@@ -353,8 +350,7 @@ class CodeBaseEnv[TaskType](Environment[llm_clients.LLMResponse, llm_clients.LLM
 
         if self._step_count >= self._step_limit:
             _LOGGER.debug("[%d] Step limit reached. Returning LAST timestep.", id(self))
-            assert self._code_agent_task is not None
-            self._code_agent_task.cancel()
+            await self._stop_agent_and_container()
             # Truncation: step_type="LAST", discount=1.0, unless we're _also_ already in a terminal state.
             ts = TimeStep(step_type="LAST", reward=ts.reward, discount=ts.discount, observation=ts.observation)
 
@@ -402,6 +398,16 @@ class CodeBaseEnv[TaskType](Environment[llm_clients.LLMResponse, llm_clients.LLM
                 return base.TimeStep(step_type="MID", reward=0.0, discount=1.0, observation=req_and_future.value)
 
         raise RuntimeError("Code agent task or LLM request future did not complete.")
+
+    async def _stop_agent_and_container(self) -> None:
+        if self._code_agent_task is not None:
+            _LOGGER.debug("[%d] Stopping code agent task for env.", id(self))
+            self._code_agent_task.cancel()
+            self._code_agent_task = None
+        if self._container is not None:
+            _LOGGER.debug("[%d] Stopping container for env.", id(self))
+            await self._container.stop()
+            self._container = None
 
     async def close(self) -> None:
         # Shut down any resources used by the environment.
