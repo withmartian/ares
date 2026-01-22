@@ -244,7 +244,8 @@ class Janitor:
             env._container.stop_and_remove()
 
     def _sync_cleanup(self):
-        _LOGGER.info("Cleaning up %d environments iteratively...", len(self._environment_by_id))
+        if self._environment_by_id:
+            _LOGGER.info("Cleaning up %d environments iteratively...", len(self._environment_by_id))
         # Copy keys so we can modify the dictionary during iteration.
         keys = list(self._environment_by_id.keys())
         for key in keys:
