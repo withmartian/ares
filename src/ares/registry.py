@@ -5,7 +5,7 @@ The registry allows users to:
 1. Register environment presets with names and specs
 2. Create environments using preset names via `make()`
 3. Query available presets via `info()`
-4. Query information about a specific preset via `info(preset_name)`
+4. Query information about a specific preset via `info(preset_id)`
 
 The registry itself is empty by default. Default presets are registered in the
 `presets` module to avoid circular imports.
@@ -110,7 +110,7 @@ class ShardSelector:
 
 
 def _parse_selector(selector_str: str) -> tuple[str, TaskSelector]:
-    """Parse a task selector string into preset name and selector.
+    """Parse a task selector string into preset ID and selector.
 
     Supported syntaxes:
     - "dataset" - Select all tasks
@@ -124,7 +124,7 @@ def _parse_selector(selector_str: str) -> tuple[str, TaskSelector]:
         selector_str: The selector string to parse.
 
     Returns:
-        A tuple of (preset_name, selector).
+        A tuple of (preset_id, selector).
 
     Raises:
         ValueError: If the selector syntax is invalid.
@@ -135,7 +135,7 @@ def _parse_selector(selector_str: str) -> tuple[str, TaskSelector]:
         if len(parts) != 2:
             raise ValueError(f"Invalid shard syntax: '{selector_str}'. Expected 'dataset@shard/total'.")
 
-        preset_name = parts[0]
+        preset_id = parts[0]
         shard_spec = parts[1]
 
         if not shard_spec:
@@ -162,42 +162,43 @@ def _parse_selector(selector_str: str) -> tuple[str, TaskSelector]:
         if shard_index >= total_shards:
             raise ValueError(f"Shard index {shard_index} must be less than total shards {total_shards}.")
 
-        return preset_name, ShardSelector(shard_index=shard_index, total_shards=total_shards)
+        return preset_id, ShardSelector(shard_index=shard_index, total_shards=total_shards)
 
     # Check for slice/single index syntax: dataset:start:end or dataset:idx
     if ":" in selector_str:
-        parts = selector_str.split(":")
-        if len(parts) == 2:
-            # Single index: dataset:5
-            preset_name = parts[0]
-            if not parts[1]:
-                raise ValueError(f"Invalid index syntax: '{selector_str}'. Index cannot be empty.")
+        preset_id, *parts = selector_str.split(":")
 
+        if not preset_id:
+            raise ValueError(f"Invalid selector syntax: '{selector_str}'. Preset ID cannot be empty.")
+
+        if len(parts) == 1:
+            # Single index: dataset:5
+            idx_str = parts[0]
+
+            if not idx_str:
+                raise ValueError(f"Invalid index syntax: '{selector_str}'. Index cannot be empty.")
             try:
-                index = int(parts[1])
+                index = int(idx_str)
             except ValueError as e:
                 raise ValueError(f"Invalid index syntax: '{selector_str}'. Index must be an integer.") from e
 
             if index < 0:
                 raise ValueError(f"Invalid index: {index}. Index must be non-negative.")
 
-            return preset_name, IndexSelector(index=index)
-        elif len(parts) == 3:
+            return preset_id, IndexSelector(index=index)
+        elif len(parts) == 2:
             # Slice: dataset:start:end
-            preset_name = parts[0]
-
-            # Parse start (can be empty for None)
-            start = None if not parts[1] else int(parts[1])
-            # Parse end (can be empty for None)
-            end = None if not parts[2] else int(parts[2])
+            raw_start, raw_end = parts
 
             try:
-                if start is not None:
-                    start = int(parts[1])
-                if end is not None:
-                    end = int(parts[2])
+                # Parse start (can be empty for None)
+                start = None if not raw_start else int(raw_start)
+                # Parse end (can be empty for None)
+                end = None if not raw_end else int(raw_end)
             except ValueError as e:
-                raise ValueError(f"Invalid slice syntax: '{selector_str}'. Start and end must be integers.") from e
+                raise ValueError(
+                    f"Invalid slice syntax: '{selector_str}'. Start and end must be integers or empty."
+                ) from e
 
             if start is not None and start < 0:
                 raise ValueError(f"Invalid slice: start={start}. Start must be non-negative.")
@@ -206,7 +207,7 @@ def _parse_selector(selector_str: str) -> tuple[str, TaskSelector]:
             if start is not None and end is not None and start >= end:
                 raise ValueError(f"Invalid slice: start={start}, end={end}. Start must be less than end.")
 
-            return preset_name, SliceSelector(start=start, end=end)
+            return preset_id, SliceSelector(start=start, end=end)
         else:
             raise ValueError(
                 f"Invalid selector syntax: '{selector_str}'. Expected 'dataset:idx' or 'dataset:start:end'."
@@ -388,15 +389,15 @@ def info(name: str | None = None) -> str:
         return "No presets registered."
 
     lines = ["Available presets:"]
-    for preset_name in presets:
-        spec = _REGISTRY[preset_name]
+    for preset_id in presets:
+        spec = _REGISTRY[preset_id]
         lines.append(f"  - {spec.get_info()}")
 
     return "\n".join(lines)
 
 
 def make(
-    preset_name: str,
+    preset_id: str,
     *,
     container_factory: containers.ContainerFactory = docker.DockerContainer,
     tracker: stat_tracker.StatTracker | None = None,
@@ -404,10 +405,10 @@ def make(
     """Create an environment instance from a registered preset.
 
     This is the primary way to instantiate environments in ARES. It looks up the
-    preset by name and creates the environment using the registered spec.
+    preset by ID and creates the environment using the registered spec.
 
     Args:
-        preset_name: The name of the preset to instantiate, with optional task selector.
+        preset_id: The ID of the preset to instantiate, with optional task selector.
             Examples:
             - "sbv-mswea" - All tasks
             - "sbv-mswea:0" - Single task at index 0
@@ -455,16 +456,16 @@ def make(
         >>> env = make("sbv-mswea", tracker=tracker)
     """
     # Parse the selector syntax
-    preset_name_clean, selector = _parse_selector(preset_name)
+    preset_id_clean, selector = _parse_selector(preset_id)
 
-    if preset_name_clean not in _REGISTRY:
+    if preset_id_clean not in _REGISTRY:
         available = ", ".join(_list_presets())
-        raise KeyError(f"Preset '{preset_name_clean}' not found. Available presets: {available or '(none)'}")
+        raise KeyError(f"Preset '{preset_id_clean}' not found. Available presets: {available or '(none)'}")
 
-    spec = _REGISTRY[preset_name_clean]
+    spec = _REGISTRY[preset_id_clean]
     _LOGGER.debug(
         "Creating environment from preset '%s' with selector=%s, container_factory=%s, tracker=%s",
-        preset_name_clean,
+        preset_id_clean,
         selector,
         container_factory,
         tracker,
@@ -472,7 +473,7 @@ def make(
 
     env = spec.get_env(selector=selector, container_factory=container_factory, tracker=tracker)
 
-    _LOGGER.debug("Successfully created environment from preset '%s'", preset_name_clean)
+    _LOGGER.debug("Successfully created environment from preset '%s'", preset_id_clean)
     return env
 
 

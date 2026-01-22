@@ -43,6 +43,10 @@ class SwebenchVerifiedMiniSWESpec:
         """Create SWE-bench Verified environment with mini-swe-agent."""
         all_tasks = swebench_env.swebench_verified_tasks()
         selected_tasks = selector(all_tasks)
+
+        if not selected_tasks:
+            raise ValueError("Task selector produced no tasks.")
+
         return swebench_env.SweBenchEnv(
             tasks=selected_tasks,
             container_factory=container_factory,

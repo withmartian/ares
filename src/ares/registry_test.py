@@ -170,9 +170,9 @@ def test_clear_registry():
 
 
 def test_parse_selector_no_selector():
-    """Test parsing preset name without selector."""
-    preset_name, selector = registry._parse_selector("test-preset")
-    assert preset_name == "test-preset"
+    """Test parsing preset ID without selector."""
+    preset_id, selector = registry._parse_selector("test-preset")
+    assert preset_id == "test-preset"
     assert isinstance(selector, registry.SliceSelector)
     assert selector.start is None
     assert selector.end is None
@@ -180,16 +180,16 @@ def test_parse_selector_no_selector():
 
 def test_parse_selector_single_index():
     """Test parsing single index selector."""
-    preset_name, selector = registry._parse_selector("test-preset:5")
-    assert preset_name == "test-preset"
+    preset_id, selector = registry._parse_selector("test-preset:5")
+    assert preset_id == "test-preset"
     assert isinstance(selector, registry.IndexSelector)
     assert selector.index == 5
 
 
 def test_parse_selector_slice():
     """Test parsing slice selector."""
-    preset_name, selector = registry._parse_selector("test-preset:0:10")
-    assert preset_name == "test-preset"
+    preset_id, selector = registry._parse_selector("test-preset:0:10")
+    assert preset_id == "test-preset"
     assert isinstance(selector, registry.SliceSelector)
     assert selector.start == 0
     assert selector.end == 10
@@ -197,8 +197,8 @@ def test_parse_selector_slice():
 
 def test_parse_selector_slice_start_only():
     """Test parsing slice with start only (e.g., :5:)."""
-    preset_name, selector = registry._parse_selector("test-preset:5:")
-    assert preset_name == "test-preset"
+    preset_id, selector = registry._parse_selector("test-preset:5:")
+    assert preset_id == "test-preset"
     assert isinstance(selector, registry.SliceSelector)
     assert selector.start == 5
     assert selector.end is None
@@ -206,8 +206,8 @@ def test_parse_selector_slice_start_only():
 
 def test_parse_selector_slice_end_only():
     """Test parsing slice with end only (e.g., ::10)."""
-    preset_name, selector = registry._parse_selector("test-preset::10")
-    assert preset_name == "test-preset"
+    preset_id, selector = registry._parse_selector("test-preset::10")
+    assert preset_id == "test-preset"
     assert isinstance(selector, registry.SliceSelector)
     assert selector.start is None
     assert selector.end == 10
@@ -215,8 +215,8 @@ def test_parse_selector_slice_end_only():
 
 def test_parse_selector_shard():
     """Test parsing shard selector."""
-    preset_name, selector = registry._parse_selector("test-preset@2/8")
-    assert preset_name == "test-preset"
+    preset_id, selector = registry._parse_selector("test-preset@2/8")
+    assert preset_id == "test-preset"
     assert isinstance(selector, registry.ShardSelector)
     assert selector.shard_index == 2
     assert selector.total_shards == 8
