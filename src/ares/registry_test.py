@@ -371,3 +371,240 @@ def test_make_with_selector():
 
     # Clean up
     registry.unregister_preset("test-selector")
+
+
+# Decorator tests
+
+
+def test_register_env_decorator_basic():
+    """Test basic @register_env decorator functionality."""
+
+    @registry.register_env(
+        name="test-decorator",
+        description="Test decorator registration",
+        num_tasks=42,
+    )
+    def create_test_env(
+        *,
+        selector: registry.TaskSelector,
+        container_factory: containers.ContainerFactory,
+        tracker: stat_tracker.StatTracker | None = None,
+    ) -> dict[str, Any]:
+        """Test environment factory."""
+        return {
+            "selector": selector,
+            "container_factory": container_factory,
+            "tracker": tracker,
+        }
+
+    # Verify preset is registered
+    assert "test-decorator" in registry._list_presets()
+
+    # Verify info is correct
+    info_result = info("test-decorator")
+    assert "test-decorator" in info_result
+    assert "42" in info_result
+    assert "Test decorator registration" in info_result
+
+    # Clean up
+    registry.unregister_preset("test-decorator")
+
+
+def test_register_env_decorator_make():
+    """Test that environments created via make() work with decorator-registered presets."""
+
+    @registry.register_env(
+        name="test-decorator-make",
+        description="Test make with decorator",
+        num_tasks=10,
+    )
+    def create_test_env(
+        *,
+        selector: registry.TaskSelector,
+        container_factory: containers.ContainerFactory,
+        tracker: stat_tracker.StatTracker | None = None,
+    ) -> dict[str, Any]:
+        """Test environment factory."""
+        return {
+            "selector": selector,
+            "container_factory": container_factory,
+            "tracker": tracker,
+        }
+
+    # Test make() with default parameters
+    result: Any = make("test-decorator-make")
+    assert result["container_factory"] == docker.DockerContainer
+    assert result["tracker"] is None
+    assert isinstance(result["selector"], registry.SliceSelector)
+
+    # Test make() with custom tracker
+    test_tracker = stat_tracker.NullStatTracker()
+    result = make("test-decorator-make", tracker=test_tracker)
+    assert result["tracker"] == test_tracker
+
+    # Clean up
+    registry.unregister_preset("test-decorator-make")
+
+
+def test_register_env_decorator_with_selector():
+    """Test that decorator-registered presets work with selector syntax."""
+
+    @registry.register_env(
+        name="test-decorator-selector",
+        description="Test selectors with decorator",
+        num_tasks=100,
+    )
+    def create_test_env(
+        *,
+        selector: registry.TaskSelector,
+        container_factory: containers.ContainerFactory,
+        tracker: stat_tracker.StatTracker | None = None,
+    ) -> dict[str, Any]:
+        """Test environment factory."""
+        return {
+            "selector": selector,
+            "container_factory": container_factory,
+            "tracker": tracker,
+        }
+
+    # Test single index
+    result: Any = make("test-decorator-selector:5")
+    assert isinstance(result["selector"], registry.IndexSelector)
+    assert result["selector"].index == 5
+
+    # Test slice
+    result = make("test-decorator-selector:0:10")
+    assert isinstance(result["selector"], registry.SliceSelector)
+    assert result["selector"].start == 0
+    assert result["selector"].end == 10
+
+    # Test shard
+    result = make("test-decorator-selector@3/8")
+    assert isinstance(result["selector"], registry.ShardSelector)
+    assert result["selector"].shard_index == 3
+    assert result["selector"].total_shards == 8
+
+    # Clean up
+    registry.unregister_preset("test-decorator-selector")
+
+
+def test_register_env_decorator_returns_function():
+    """Test that decorator returns the original function unchanged."""
+
+    @registry.register_env(
+        name="test-decorator-return",
+        description="Test return value",
+        num_tasks=1,
+    )
+    def create_test_env(
+        *,
+        selector: registry.TaskSelector,
+        container_factory: containers.ContainerFactory,
+        tracker: stat_tracker.StatTracker | None = None,
+    ) -> str:
+        """Test environment factory that returns a simple string."""
+        del selector, container_factory, tracker  # Unused in test
+        return "test-result"
+
+    # Verify we can call the decorated function directly
+    selector = registry.SliceSelector(start=None, end=None)
+    result = create_test_env(
+        selector=selector,
+        container_factory=docker.DockerContainer,
+        tracker=None,
+    )
+    assert result == "test-result"
+
+    # Clean up
+    registry.unregister_preset("test-decorator-return")
+
+
+def test_register_env_decorator_duplicate_name():
+    """Test that decorator raises ValueError for duplicate names."""
+
+    @registry.register_env(
+        name="test-decorator-duplicate",
+        description="First registration",
+        num_tasks=1,
+    )
+    def create_first_env(
+        *,
+        selector: registry.TaskSelector,
+        container_factory: containers.ContainerFactory,
+        tracker: stat_tracker.StatTracker | None = None,
+    ) -> str:
+        """First environment factory."""
+        del selector, container_factory, tracker  # Unused in test
+        return "first"
+
+    # Attempting to register a second preset with the same name should fail
+    with pytest.raises(ValueError, match="already registered"):
+
+        @registry.register_env(
+            name="test-decorator-duplicate",
+            description="Second registration",
+            num_tasks=1,
+        )
+        def create_second_env(
+            *,
+            selector: registry.TaskSelector,
+            container_factory: containers.ContainerFactory,
+            tracker: stat_tracker.StatTracker | None = None,
+        ) -> str:
+            """Second environment factory."""
+            del selector, container_factory, tracker  # Unused in test
+            return "second"
+
+    # Clean up
+    registry.unregister_preset("test-decorator-duplicate")
+
+
+def test_register_env_decorator_invalid_name():
+    """Test that decorator raises ValueError for invalid names."""
+
+    with pytest.raises(ValueError, match="contains invalid characters"):
+
+        @registry.register_env(
+            name="invalid:name",
+            description="Invalid name test",
+            num_tasks=1,
+        )
+        def create_invalid_env(
+            *,
+            selector: registry.TaskSelector,
+            container_factory: containers.ContainerFactory,
+            tracker: stat_tracker.StatTracker | None = None,
+        ) -> str:
+            """Environment with invalid name."""
+            del selector, container_factory, tracker  # Unused in test
+            return "invalid"
+
+
+def test_register_env_decorator_metadata():
+    """Test that decorator correctly stores metadata."""
+
+    @registry.register_env(
+        name="test-decorator-metadata",
+        description="Custom description for testing metadata",
+        num_tasks=999,
+    )
+    def create_test_env(
+        *,
+        selector: registry.TaskSelector,
+        container_factory: containers.ContainerFactory,
+        tracker: stat_tracker.StatTracker | None = None,
+    ) -> None:
+        """Test environment factory."""
+        del selector, container_factory, tracker  # Unused in test
+        return None
+
+    # Get the registered spec and verify metadata
+    spec = registry._REGISTRY["test-decorator-metadata"]
+    env_info = spec.get_info()
+
+    assert env_info.name == "test-decorator-metadata"
+    assert env_info.description == "Custom description for testing metadata"
+    assert env_info.num_tasks == 999
+
+    # Clean up
+    registry.unregister_preset("test-decorator-metadata")
