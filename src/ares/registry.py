@@ -462,7 +462,7 @@ def make(
         raise KeyError(f"Preset '{preset_name_clean}' not found. Available presets: {available or '(none)'}")
 
     spec = _REGISTRY[preset_name_clean]
-    _LOGGER.info(
+    _LOGGER.debug(
         "Creating environment from preset '%s' with selector=%s, container_factory=%s, tracker=%s",
         preset_name_clean,
         selector,
@@ -470,16 +470,9 @@ def make(
         tracker,
     )
 
-    try:
-        env = spec.get_env(selector=selector, container_factory=container_factory, tracker=tracker)
-    except TypeError as e:
-        raise TypeError(
-            f"Failed to create environment from preset '{preset_name_clean}'. "
-            f"The spec's get_env() method may not accept the provided parameters. "
-            f"Original error: {e}"
-        ) from e
+    env = spec.get_env(selector=selector, container_factory=container_factory, tracker=tracker)
 
-    _LOGGER.info("Successfully created environment from preset '%s'", preset_name_clean)
+    _LOGGER.debug("Successfully created environment from preset '%s'", preset_name_clean)
     return env
 
 
