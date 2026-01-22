@@ -317,6 +317,113 @@ def register_preset(
     _LOGGER.debug("Registered preset '%s'", name)
 
 
+def register_env(
+    *,
+    name: str | None = None,
+    description: str | None = None,
+    num_tasks: int,
+):
+    """Decorator for registering environment presets.
+
+    This provides syntactic sugar for registering environment presets without
+    manually creating spec classes. The decorated function should have the same
+    signature as EnvironmentSpec.get_env() (minus self).
+
+    Args:
+        name: Unique identifier for the preset. Defaults to the function name.
+            Same rules as register_preset().
+        description: Human-readable description of what the preset provides.
+            Defaults to the function's docstring.
+        num_tasks: Total number of tasks available in this environment dataset.
+
+    Returns:
+        Decorator function that wraps the environment factory and registers it.
+
+    Examples:
+        Register with explicit name and description:
+
+        >>> @register_env(
+        ...     name="my-dataset",
+        ...     description="My custom dataset with specific tasks",
+        ...     num_tasks=100,
+        ... )
+        ... def create_my_env(
+        ...     *,
+        ...     selector: TaskSelector,
+        ...     container_factory: containers.ContainerFactory,
+        ...     tracker: stat_tracker.StatTracker | None = None,
+        ... ) -> base.Environment:
+        ...     # Load tasks, apply selector, create environment
+        ...     return MyEnvironment(...)
+
+        Register using function name and docstring:
+
+        >>> @register_env(num_tasks=50)
+        ... def my_custom_env(
+        ...     *,
+        ...     selector: TaskSelector,
+        ...     container_factory: containers.ContainerFactory,
+        ...     tracker: stat_tracker.StatTracker | None = None,
+        ... ) -> base.Environment:
+        ...     '''Custom environment for testing.'''
+        ...     return MyEnvironment(...)
+        # Registered as "my_custom_env" with description "Custom environment for testing."
+
+        The decorated function can still be called directly:
+
+        >>> env = create_my_env(
+        ...     selector=SliceSelector(start=None, end=None),
+        ...     container_factory=docker.DockerContainer,
+        ... )
+    """
+
+    def decorator(func):
+        """Inner decorator that creates and registers the spec."""
+        # Use function name if name not provided
+        preset_name = name if name is not None else func.__name__
+
+        # Use function docstring if description not provided
+        preset_description = description
+        if preset_description is None:
+            preset_description = func.__doc__ or ""
+            # Clean up docstring (remove leading/trailing whitespace)
+            preset_description = preset_description.strip()
+
+        @dataclasses.dataclass(frozen=True)
+        class _DecoratorGeneratedSpec:
+            """Auto-generated EnvironmentSpec from @register_env decorator."""
+
+            def get_info(self) -> EnvironmentInfo:
+                """Return metadata provided to the decorator."""
+                return EnvironmentInfo(
+                    name=preset_name,
+                    description=preset_description,
+                    num_tasks=num_tasks,
+                )
+
+            def get_env(
+                self,
+                *,
+                selector: TaskSelector,
+                container_factory: containers.ContainerFactory,
+                tracker: stat_tracker.StatTracker | None = None,
+            ) -> base.Environment:
+                """Delegate to the decorated function."""
+                return func(
+                    selector=selector,
+                    container_factory=container_factory,
+                    tracker=tracker,
+                )
+
+        # Register the auto-generated spec
+        register_preset(preset_name, _DecoratorGeneratedSpec())
+
+        # Return original function so it can still be called directly
+        return func
+
+    return decorator
+
+
 def unregister_preset(name: str) -> None:
     """Remove a preset from the registry.
 
