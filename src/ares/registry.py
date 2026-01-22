@@ -99,8 +99,7 @@ def register_preset(
             "swebench-lite", "harbor-easy"). Must not already exist in the registry.
             Cannot contain colons as they are reserved for task selection syntax.
         spec: An EnvironmentSpec instance that provides both metadata (via get_info())
-            and environment creation (via get_env()). The spec's get_env() method will
-            receive any kwargs passed to `make()`, allowing users to override defaults.
+            and environment creation (via get_env()).
 
     Raises:
         ValueError: If a preset with the given name is already registered, or if the
@@ -251,14 +250,7 @@ def make(
         tracker,
     )
 
-    try:
-        env = spec.get_env(container_factory=container_factory, tracker=tracker)
-    except TypeError as e:
-        raise TypeError(
-            f"Failed to create environment from preset '{preset_name}'. "
-            f"The spec's get_env() method may not accept the provided parameters. "
-            f"Original error: {e}"
-        ) from e
+    env = spec.get_env(container_factory=container_factory, tracker=tracker)
 
     _LOGGER.info("Successfully created environment from preset '%s'", preset_name)
     return env

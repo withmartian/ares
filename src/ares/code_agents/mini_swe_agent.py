@@ -7,13 +7,12 @@ Commit hash: 6ff7d26ac371e5bb9611ec37074fc1bedf400895
 
 import dataclasses
 import logging
+import os
 import pathlib
 import re
 from typing import Literal
 
 import jinja2
-from minisweagent.agents import default as default_agent
-import minisweagent.config
 from openai.types.chat import chat_completion_message_param
 import yaml
 
@@ -21,6 +20,11 @@ from ares.code_agents import code_agent_base
 from ares.containers import containers
 from ares.experiment_tracking import stat_tracker
 from ares.llms import llm_clients
+
+# Ensure that MSWEA doesn't log its startup message on import.
+os.environ["MSWEA_SILENT_STARTUP"] = "1"
+from minisweagent.agents import default as default_agent
+import minisweagent.config
 
 _LOGGER = logging.getLogger(__name__)
 
