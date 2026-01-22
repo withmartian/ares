@@ -319,8 +319,8 @@ def register_preset(
 
 def register_env(
     *,
-    name: str,
-    description: str,
+    name: str | None = None,
+    description: str | None = None,
     num_tasks: int,
 ):
     """Decorator for registering environment presets.
@@ -330,15 +330,17 @@ def register_env(
     signature as EnvironmentSpec.get_env() (minus self).
 
     Args:
-        name: Unique identifier for the preset. Same rules as register_preset().
+        name: Unique identifier for the preset. Defaults to the function name.
+            Same rules as register_preset().
         description: Human-readable description of what the preset provides.
+            Defaults to the function's docstring.
         num_tasks: Total number of tasks available in this environment dataset.
 
     Returns:
         Decorator function that wraps the environment factory and registers it.
 
     Examples:
-        Register a custom environment preset:
+        Register with explicit name and description:
 
         >>> @register_env(
         ...     name="my-dataset",
@@ -354,6 +356,19 @@ def register_env(
         ...     # Load tasks, apply selector, create environment
         ...     return MyEnvironment(...)
 
+        Register using function name and docstring:
+
+        >>> @register_env(num_tasks=50)
+        ... def my_custom_env(
+        ...     *,
+        ...     selector: TaskSelector,
+        ...     container_factory: containers.ContainerFactory,
+        ...     tracker: stat_tracker.StatTracker | None = None,
+        ... ) -> base.Environment:
+        ...     '''Custom environment for testing.'''
+        ...     return MyEnvironment(...)
+        # Registered as "my_custom_env" with description "Custom environment for testing."
+
         The decorated function can still be called directly:
 
         >>> env = create_my_env(
@@ -364,6 +379,15 @@ def register_env(
 
     def decorator(func):
         """Inner decorator that creates and registers the spec."""
+        # Use function name if name not provided
+        preset_name = name if name is not None else func.__name__
+
+        # Use function docstring if description not provided
+        preset_description = description
+        if preset_description is None:
+            preset_description = func.__doc__ or ""
+            # Clean up docstring (remove leading/trailing whitespace)
+            preset_description = preset_description.strip()
 
         @dataclasses.dataclass(frozen=True)
         class _DecoratorGeneratedSpec:
@@ -372,8 +396,8 @@ def register_env(
             def get_info(self) -> EnvironmentInfo:
                 """Return metadata provided to the decorator."""
                 return EnvironmentInfo(
-                    name=name,
-                    description=description,
+                    name=preset_name,
+                    description=preset_description,
                     num_tasks=num_tasks,
                 )
 
@@ -392,7 +416,7 @@ def register_env(
                 )
 
         # Register the auto-generated spec
-        register_preset(name, _DecoratorGeneratedSpec())
+        register_preset(preset_name, _DecoratorGeneratedSpec())
 
         # Return original function so it can still be called directly
         return func

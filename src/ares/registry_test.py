@@ -580,31 +580,33 @@ def test_register_env_decorator_invalid_name():
             return "invalid"
 
 
-def test_register_env_decorator_metadata():
-    """Test that decorator correctly stores metadata."""
+def test_register_env_decorator_defaults():
+    """Test that decorator uses function name and docstring as defaults."""
 
-    @registry.register_env(
-        name="test-decorator-metadata",
-        description="Custom description for testing metadata",
-        num_tasks=999,
-    )
-    def create_test_env(
+    @registry.register_env(num_tasks=42)
+    def my_test_environment(
         *,
         selector: registry.TaskSelector,
         container_factory: containers.ContainerFactory,
         tracker: stat_tracker.StatTracker | None = None,
-    ) -> None:
-        """Test environment factory."""
-        del selector, container_factory, tracker  # Unused in test
-        return None
+    ) -> dict[str, Any]:
+        """A test environment for validating defaults."""
+        return {
+            "selector": selector,
+            "container_factory": container_factory,
+            "tracker": tracker,
+        }
 
-    # Get the registered spec and verify metadata
-    spec = registry._REGISTRY["test-decorator-metadata"]
+    # Verify preset is registered with function name
+    assert "my_test_environment" in registry._list_presets()
+
+    # Verify info uses function name and docstring
+    spec = registry._REGISTRY["my_test_environment"]
     env_info = spec.get_info()
 
-    assert env_info.name == "test-decorator-metadata"
-    assert env_info.description == "Custom description for testing metadata"
-    assert env_info.num_tasks == 999
+    assert env_info.name == "my_test_environment"
+    assert env_info.description == "A test environment for validating defaults."
+    assert env_info.num_tasks == 42
 
     # Clean up
-    registry.unregister_preset("test-decorator-metadata")
+    registry.unregister_preset("my_test_environment")
