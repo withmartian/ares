@@ -116,6 +116,32 @@ async def test_mock_container_download_files():
     assert container.downloaded_files[1] == ("/remote/output.log", pathlib.Path("/local/output.log"))
 
 
+@pytest.mark.asyncio
+async def test_mock_container_upload_file_inherited():
+    """Test that upload_file (inherited from Container) works correctly."""
+    container = mock_container.MockContainer()
+
+    # upload_file is a concrete method inherited from Container protocol
+    # It should internally call upload_files with a single-element list
+    await container.upload_file(pathlib.Path("/local/config.json"), "/remote/config.json")
+
+    assert len(container.uploaded_files) == 1
+    assert container.uploaded_files[0] == (pathlib.Path("/local/config.json"), "/remote/config.json")
+
+
+@pytest.mark.asyncio
+async def test_mock_container_download_file_inherited():
+    """Test that download_file (inherited from Container) works correctly."""
+    container = mock_container.MockContainer()
+
+    # download_file is a concrete method inherited from Container protocol
+    # It should internally call download_files with a single-element list
+    await container.download_file("/remote/result.json", pathlib.Path("/local/result.json"))
+
+    assert len(container.downloaded_files) == 1
+    assert container.downloaded_files[0] == ("/remote/result.json", pathlib.Path("/local/result.json"))
+
+
 def test_mock_container_stop_and_remove():
     """Test synchronous stop_and_remove method."""
     container = mock_container.MockContainer()

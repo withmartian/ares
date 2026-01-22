@@ -8,7 +8,7 @@ from ares.containers import containers
 
 
 @dataclasses.dataclass
-class MockContainer:
+class MockContainer(containers.Container):
     """Mock container for testing without real container backends.
 
     This mock allows tests to verify container interactions without requiring
