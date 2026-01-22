@@ -38,6 +38,7 @@ dependencies = [
 
 [project.optional-dependencies]
 tensorboard = ["tensorboard>=2.20.0", "torch>=2.9.1"]
+llamacpp = ["llama-cpp-python>=0.3.16"]
 
 [project.urls]
 Homepage = "https://github.com/withmartian/ares"
