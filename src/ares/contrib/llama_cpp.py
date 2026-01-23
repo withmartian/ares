@@ -50,7 +50,7 @@ class LlamaCppLLMClient(llm_clients.LLMClient):
     for building your own local inference clients.
 
     Attributes:
-        model_path: Model name, i.e. huggingface ID. E.g. "Qwen/Qwen2.5-3B-Instruct"
+        model_name: huggingface ID. E.g. "Qwen/Qwen2.5-3B-Instruct"
         n_ctx: Context window size (default: 2048)
         n_threads: Number of CPU threads to use (default: None, uses all available)
         temperature: Default temperature for generation (default: 0.7)
