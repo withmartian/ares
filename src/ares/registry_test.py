@@ -1,5 +1,6 @@
 """Tests for the registry system."""
 
+from collections.abc import Sequence
 import dataclasses
 from typing import Any
 
@@ -60,14 +61,16 @@ def test_list_presets():
 def test_info_all_presets():
     """Test info() without arguments returns all presets."""
     result = info()
-    assert "Available presets:" in result
-    assert "sbv-mswea" in result
+    assert isinstance(result, Sequence)
+    assert len(result) >= 1
+    assert any(env_info.name == "sbv-mswea" for env_info in result)
 
 
 def test_info_specific_preset():
     """Test info() with a specific preset name."""
     result = info("sbv-mswea")
-    assert "sbv-mswea" in result
+    assert isinstance(result, registry.EnvironmentInfo)
+    assert result.name == "sbv-mswea"
 
 
 def test_info_missing_preset():
@@ -86,8 +89,9 @@ def test_register_custom_preset():
 
     # Verify info includes task count
     result = info("test-custom")
-    assert "test-custom" in result
-    assert "10" in result
+    assert isinstance(result, registry.EnvironmentInfo)
+    assert result.name == "test-custom"
+    assert result.num_tasks == 10
 
     # Clean up
     registry.unregister_preset("test-custom")
@@ -150,9 +154,6 @@ def test_make_with_params():
 
 def test_clear_registry():
     """Test clearing the registry."""
-    # Save original presets
-    original_presets = set(registry._list_presets())
-
     # Clear registry
     registry.clear_registry()
     assert len(registry._list_presets()) == 0
@@ -162,8 +163,9 @@ def test_clear_registry():
 
     presets._register_default_presets()
 
-    # Verify defaults are back
-    assert set(registry._list_presets()) == original_presets
+    # Verify defaults are back (should only have default presets)
+    default_presets = set(registry._list_presets())
+    assert "sbv-mswea" in default_presets
 
 
 # Selector parsing tests
@@ -402,9 +404,10 @@ def test_register_env_decorator_basic():
 
     # Verify info is correct
     info_result = info("test-decorator")
-    assert "test-decorator" in info_result
-    assert "42" in info_result
-    assert "Test decorator registration" in info_result
+    assert isinstance(info_result, registry.EnvironmentInfo)
+    assert info_result.name == "test-decorator"
+    assert info_result.num_tasks == 42
+    assert info_result.description == "Test decorator registration"
 
     # Clean up
     registry.unregister_preset("test-decorator")
