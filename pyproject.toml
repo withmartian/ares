@@ -38,6 +38,9 @@ dependencies = [
 
 [project.optional-dependencies]
 tensorboard = ["tensorboard>=2.20.0", "torch>=2.9.1"]
+mech-interp = [
+    "transformer-lens>=2.10.0",
+]
 
 [project.urls]
 Homepage = "https://github.com/withmartian/ares"
@@ -50,16 +53,6 @@ dev = [
     "pytest>=8.0.0",
     "hatchling>=1.28.0",
     "twine>=6.2.0",
-]
-
-# Mechanistic interpretability with TransformerLens
-# For examples/03_mech_interp_hooked_transformer.py and src/ares/contrib/mech_interp/
-contrib-mi = [
-    "transformer-lens>=2.10.0",
-]
-
-examples = [
-    {include-group = "contrib-mi"},
 ]
 
 [tool.pytest.ini_options]

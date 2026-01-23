@@ -126,7 +126,7 @@ class ActivationCapture:
         from ares.contrib.mech_interp import ActivationCapture, HookedTransformerLLMClient
 
         model = HookedTransformer.from_pretrained("gpt2-small")
-        client = HookedTransformerLLMClient(model=model, model_name="gpt2-small")
+        client = HookedTransformerLLMClient(model=model)
 
         # Capture activations during episode
         with ActivationCapture(model) as capture:
@@ -158,14 +158,13 @@ class ActivationCapture:
             hook_filter: Optional function to filter which hooks to capture.
                 If None, captures all hooks. Example: lambda name: "attn" in name
         """
+        # TODO: Should we store logits and loss as well? By default or via flag?
         self.model = model
         self.hook_filter = hook_filter
         self.step_activations: list[ActivationCache] = []
         self.step_metadata: list[dict[str, Any]] = []
-        # TODO: What is the purpose of hook_handles? Prob should remove
         self._hook_handles: list[Any] = []
 
-    # TODO: Does this need to be a context manager??
     def __enter__(self) -> "ActivationCapture":
         """Enter context manager and start capturing activations."""
         # Register hooks to capture activations
@@ -254,7 +253,7 @@ def automatic_activation_capture(model: HookedTransformer) -> ActivationCapture:
         model = HookedTransformer.from_pretrained("gpt2-small")
 
         with automatic_activation_capture(model) as capture:
-            client = HookedTransformerLLMClient(model=model, model_name="gpt2-small")
+            client = HookedTransformerLLMClient(model=model)
             # Now activations are captured automatically during client calls
             async with env:
                 ts = await env.reset()

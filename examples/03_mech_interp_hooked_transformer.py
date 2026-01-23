@@ -41,7 +41,6 @@ async def main():
     # gpt2-small has max context of 1024 tokens, so we need to be conservative
     client = HookedTransformerLLMClient(
         model=model,
-        model_name="gpt2-small",
         max_new_tokens=128,  # Keep this small to avoid context overflow
     )
 
