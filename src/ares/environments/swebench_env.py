@@ -17,6 +17,7 @@ from typing import Any, cast
 import datasets
 import pydantic
 import swebench.harness.constants
+from swebench.harness.constants import DOCKER_WORKDIR
 from swebench.harness.constants import FAIL_TO_PASS
 from swebench.harness.constants import MAP_REPO_VERSION_TO_SPECS
 from swebench.harness.constants import PASS_TO_PASS
@@ -79,16 +80,39 @@ def swebench_verified_tasks() -> tuple[SwebenchTask, ...]:
 async def _reset_test_files(container: containers.Container, ts: test_spec.TestSpec) -> None:
     """Reset the test files to the original state.
 
+    This function uses git checkout to restore test files to their state at the
+    base commit. This ensures tests are run against the original test suite,
+    not any modifications the agent may have made.
+
     Args:
         container: The container to reset the test files in.
-        ts: The test specification.
+        ts: The test specification containing test file paths.
+
+    Raises:
+        AssertionError: If the git checkout command fails.
     """
-    # TODO: Implement this.
-    # test_files = ts.PASS_TO_PASS + ts.FAIL_TO_PASS
-    # test_files_str = " ".join(test_files)
-    # test_reset_script = f"git checkout {ts.instance_id} -- {test_files_str}"
-    # result = await container.exec_run(test_reset_script, workdir=DOCKER_WORKDIR)
-    # assert result.exit_code == 0
+    test_files = ts.PASS_TO_PASS + ts.FAIL_TO_PASS
+
+    if not test_files:
+        _LOGGER.debug("[%d] No test files to reset.", id(container))
+        return
+
+    test_files_str = " ".join(test_files)
+    test_reset_script = f"git checkout {ts.instance_id} -- {test_files_str}"
+
+    _LOGGER.debug("[%d] Resetting test files: %s", id(container), test_files_str)
+    result = await container.exec_run(test_reset_script, workdir=DOCKER_WORKDIR)
+
+    if result.exit_code != 0:
+        _LOGGER.error(
+            "[%d] Failed to reset test files. Exit code: %d, Output: %s",
+            id(container),
+            result.exit_code,
+            result.output,
+        )
+        raise RuntimeError(f"Failed to reset test files. Exit code: {result.exit_code}")
+
+    _LOGGER.debug("[%d] Test files reset successfully.", id(container))
 
 
 async def _execute_tests(
