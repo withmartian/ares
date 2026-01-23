@@ -23,7 +23,7 @@ import openai.types.completion_usage
 
 from ares.code_agents import mini_swe_agent
 from ares.containers import docker
-from ares.environments import harbor_env
+from ares.environments import swebench_env
 from ares.llms import llm_clients
 
 
@@ -98,11 +98,11 @@ async def main():
     mock_llm = MockLLM()
 
     # Load SWE-bench tasks (we'll just use one for this demo)
-    all_tasks = harbor_env.load_harbor_dataset(name="swebench-verified", version="1.0")
+    all_tasks = swebench_env.swebench_verified_tasks()
     tasks = [all_tasks[204]]  # Just one task
 
-    print(f"Running on task: {tasks[0].name}")
-    print(f"Instruction: {tasks[0].instruction}")
+    print(f"Running on task: {tasks[0].instance_id}")
+    print(f"Repository: {tasks[0].repo}")
     print("-" * 80)
     print()
 
@@ -112,7 +112,7 @@ async def main():
     code_agent_factory = mini_swe_agent.MiniSWECodeAgent
     container_factory = docker.DockerContainer
 
-    async with harbor_env.HarborEnv(
+    async with swebench_env.SweBenchEnv(
         tasks=tasks,
         code_agent_factory=code_agent_factory,
         container_factory=container_factory,
