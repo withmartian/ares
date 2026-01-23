@@ -64,43 +64,50 @@ class HarborEnv(base.CodeBaseEnv[harbor_task.Task]):
         _LOGGER.debug("[%d] Selected task %s.", id(self), self._current_task.name)
 
     async def _start_container(self) -> None:
-        _LOGGER.info("[%d] Setting up container for task %s.", id(self), self._current_task.name)
+        task = self._require_task()
+        _LOGGER.info("[%d] Setting up container for task %s.", id(self), task.name)
         with self._tracker.timeit("harbor_env/create_container"):
             self._container = await base.create_container(
                 container_factory=self._container_factory,
                 container_prefix=self._prefix,
-                image_name=self._current_task.config.environment.docker_image,  # NOTE: May be None
+                image_name=task.config.environment.docker_image,  # NOTE: May be None
                 # TODO: This is pulled from current Harbor implementation for all
                 #       supported environments, track changes in future
-                dockerfile_path=self._current_task.paths.environment_dir / "Dockerfile",
+                dockerfile_path=task.paths.environment_dir / "Dockerfile",
                 resources=containers.Resources(
-                    cpu=self._current_task.config.environment.cpus,
-                    memory=self._current_task.config.environment.memory_mb // 1024,
-                    disk=self._current_task.config.environment.storage_mb // 1024,
+                    cpu=task.config.environment.cpus,
+                    memory=task.config.environment.memory_mb // 1024,
+                    disk=task.config.environment.storage_mb // 1024,
                 ),
             )
             await self._container.start()
         _LOGGER.debug("[%d] Container setup complete.", id(self))
 
     async def _start_code_agent(self) -> None:
+        container = self._require_container()
+        task = self._require_task()
+
         _LOGGER.debug("[%d] Starting code agent.", id(self))
-        self._code_agent = self._code_agent_factory(container=self._container, llm_client=self._llm_client)
-        self._code_agent_task = asyncio.create_task(self._code_agent.run(self._current_task.instruction))
+        self._code_agent = self._code_agent_factory(container=container, llm_client=self._llm_client)
+        self._code_agent_task = asyncio.create_task(self._code_agent.run(task.instruction))
         _LOGGER.debug("[%d] Code agent started.", id(self))
 
     async def _compute_reward(self) -> float:
+        container = self._require_container()
+        task = self._require_task()
+
         _LOGGER.debug("[%d] Uploading tests to container.", id(self))
-        await self._container.upload_dir(
-            local_path=self._current_task.paths.tests_dir,
+        await container.upload_dir(
+            local_path=task.paths.tests_dir,
             remote_path="/tests",
         )
 
         _LOGGER.debug("[%d] Running tests and evaluating.", id(self))
         test_path = str(
-            pathlib.Path("/tests") / self._current_task.paths.test_path.relative_to(self._current_task.paths.tests_dir)
+            pathlib.Path("/tests") / task.paths.test_path.relative_to(task.paths.tests_dir)
         )
         # TODO: Log the output of the test execution somewhere that makes sense
-        test_result = await self._container.exec_run(command=f"bash {test_path}")
+        test_result = await container.exec_run(command=f"bash {test_path}")
         _LOGGER.debug("[%d] Test result: %s.", id(self), test_result.output)
 
         # Try to read reward from both
@@ -118,12 +125,13 @@ class HarborEnv(base.CodeBaseEnv[harbor_task.Task]):
                 _LOGGER.warning("Error parsing reward file %s: %s", reward_path, e)
                 pass
 
-        raise ValueError(f"[{id(self)}] No reward found for task {self._current_task.name}")
+        raise ValueError(f"[{id(self)}] No reward found for task {task.name}")
 
     async def _parse_reward_file(self, remote_path: pathlib.Path | str) -> float | None:
         """Helper to parse a reward from a text or json file in the container."""
+        container = self._require_container()
         remote_path = str(remote_path)
-        cat_result = await self._container.exec_run(command=f"cat {remote_path}")
+        cat_result = await container.exec_run(command=f"cat {remote_path}")
         if cat_result.exit_code != 0:
             # File doesn't exist
             return None
