@@ -294,6 +294,32 @@ class CodeBaseEnv[TaskType](Environment[llm_clients.LLMResponse, llm_clients.LLM
         # Register for cleanup on exit.
         _ENVIRONMENT_JANITOR.register_for_cleanup(self)
 
+    def _require_container(self) -> containers.Container:
+        """Ensure container has been created and return it.
+
+        Returns:
+            The active container instance.
+
+        Raises:
+            RuntimeError: If container has not been created yet.
+        """
+        if self._container is None:
+            raise RuntimeError("Container has not been created yet.")
+        return self._container
+
+    def _require_task(self) -> TaskType:
+        """Ensure task has been selected and return it.
+
+        Returns:
+            The current task instance.
+
+        Raises:
+            RuntimeError: If task has not been selected yet.
+        """
+        if self._current_task is None:
+            raise RuntimeError("Task has not been selected yet.")
+        return self._current_task
+
     async def reset(self) -> base.TimeStep[llm_clients.LLMRequest, float, float]:
         # Require the environment to be used as a context manager.
         reset_start_time = time.time()

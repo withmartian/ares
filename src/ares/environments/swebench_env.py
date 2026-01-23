@@ -228,22 +228,17 @@ class SweBenchEnv(base.CodeBaseEnv[SwebenchTask]):
 
     async def _start_code_agent(self) -> None:
         # Start the code agent, and await its response.
-        # TODO: These duplicate checks can be made into a helper function.
-        if self._container is None:
-            raise RuntimeError("Container has not been created before starting the code agent.")
-        if self._current_task is None:
-            raise RuntimeError("Task has not been selected before starting the code agent.")
+        container = self._require_container()
+        task = self._require_task()
 
         _LOGGER.debug("[%d] Starting code agent.", id(self))
-        self._code_agent = self._code_agent_factory(container=self._container, llm_client=self._llm_client)
-        self._code_agent_task = asyncio.create_task(self._code_agent.run(self._current_task.problem_statement))
+        self._code_agent = self._code_agent_factory(container=container, llm_client=self._llm_client)
+        self._code_agent_task = asyncio.create_task(self._code_agent.run(task.problem_statement))
         _LOGGER.debug("[%d] Code agent started.", id(self))
 
     async def _compute_reward(self) -> float:
-        if self._container is None:
-            raise RuntimeError("Container has not been created before computing reward.")
-        if self._current_task is None:
-            raise RuntimeError("Task has not been selected before computing reward.")
+        container = self._require_container()
+        task = self._require_task()
 
-        test_result = await _run_tests_and_evaluate(self._container, self._current_task, self._test_spec)
+        test_result = await _run_tests_and_evaluate(container, task, self._test_spec)
         return 1.0 if test_result["resolved"] else 0.0
