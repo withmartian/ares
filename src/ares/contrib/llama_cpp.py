@@ -29,6 +29,7 @@ Note: Download GGUF models from HuggingFace. For example:
     huggingface-cli download TheBloke/Llama-2-7B-Chat-GGUF llama-2-7b-chat.Q4_K_M.gguf
 """
 
+import asyncio
 import dataclasses
 import functools
 import logging
@@ -87,7 +88,7 @@ class LlamaCppLLMClient(llm_clients.LLMClient):
         completion_kwargs.setdefault("temperature", 1.0)
 
         # Generate completion using llama.cpp's chat completion API
-        chat_completion = self._llm.create_chat_completion(**completion_kwargs)
+        chat_completion = await asyncio.to_thread(self._llm.create_chat_completion, **completion_kwargs)
         chat_completion = openai.types.chat.chat_completion.ChatCompletion.model_validate(chat_completion)
 
         _LOGGER.debug("[%d] LLM response received.", id(self))

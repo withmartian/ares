@@ -39,6 +39,7 @@ async def main():
         # Reset the environment to get the first timestep
         ts = await env.reset()
         step_count = 0
+        total_reward = 0.0
 
         while not ts.last():
             # The agent processes the observation and returns an action (LLM response)
@@ -50,8 +51,11 @@ async def main():
             # Step the environment with the action
             ts = await env.step(action)
 
-            # We only run for 5 steps; this model isn't strong enough to solve the task.
+            assert ts.reward is not None
+            total_reward += ts.reward
             step_count += 1
+
+            # We only run for 5 steps; this model isn't strong enough to solve the task.
             if step_count >= 5:
                 break
 
@@ -59,13 +63,13 @@ async def main():
         print()
         print("=" * 80)
         print(f"Episode truncated after {step_count} steps")
-        print(f"Final reward: {ts.reward}")
+        print(f"Total reward: {total_reward}")
         print()
         print("🎉 You've seen ARES in action!")
         print()
         print("Next steps:")
-        print("  - Try example 01_minimal_loop.py with a real LLM")
-        print("  - Try example 02_local_llm.py with a local model")
+        print("  - Try example 02_sequential_eval_with_api.py for a more powerful LLM")
+        print("  - Try example 03_parallel_eval_with_api.py to evaluate an entire suite of tasks")
         print("  - Read the docs to learn more about ARES")
         print("=" * 80)
 

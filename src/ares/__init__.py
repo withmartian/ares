@@ -18,8 +18,11 @@ Override container factory or add tracking:
 
 To see available presets:
 
-    >>> print(ares.info())  # List all presets
-    >>> print(ares.info("sbv-mswea"))  # Get info about a specific preset
+    >>> all_presets = ares.info()  # Get list of all presets
+    >>> for preset in all_presets:
+    ...     print(f"{preset.name}: {preset.num_tasks} tasks")
+    >>> preset_info = ares.info("sbv-mswea")  # Get info about a specific preset
+    >>> print(f"Tasks available: {preset_info.num_tasks}")
 
 For advanced usage, register custom presets:
 

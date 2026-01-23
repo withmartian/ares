@@ -472,9 +472,10 @@ def info(name: str | None = None) -> EnvironmentInfo | Sequence[EnvironmentInfo]
         name: Optional preset name to get info for. If None, returns info for all presets.
 
     Returns:
-        A formatted string describing the preset(s). For a specific preset, includes
-        the name, description, and number of tasks. For all presets, includes a summary
-        table with key information.
+        If name is provided: An EnvironmentInfo object containing the preset's name,
+            description, and number of tasks.
+        If name is None: A sequence of EnvironmentInfo objects for all registered presets,
+            or an empty sequence if no presets are registered.
 
     Raises:
         KeyError: If a specific name is provided but not found in the registry.
@@ -482,13 +483,16 @@ def info(name: str | None = None) -> EnvironmentInfo | Sequence[EnvironmentInfo]
     Examples:
         Get info for all presets:
 
-        >>> print(info())
-        Available presets:
-          - sbv-mswea (500 tasks): SWE-bench Verified with mini-swe-agent
+        >>> all_presets = info()
+        >>> print(all_presets[0])
+        sbv-mswea (500 tasks): SWE-bench Verified with mini-swe-agent
 
         Get info for a specific preset:
 
-        >>> print(info("sbv-mswea"))
+        >>> preset_info = info("sbv-mswea")
+        >>> print(preset_info.num_tasks)
+        500
+        >>> print(preset_info)
         sbv-mswea (500 tasks): SWE-bench Verified with mini-swe-agent
     """
     if name is not None:
