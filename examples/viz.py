@@ -14,6 +14,7 @@ from io import StringIO
 import logging
 import sys
 import time
+from typing import ClassVar
 
 from textual import app
 from textual import containers
@@ -159,33 +160,47 @@ class EvaluationDashboard(app.App):
     This dashboard uses Textual to display:
     - Summary statistics (running, completed, errors, success rate, avg return, total cost)
     - Scrollable task status table (showing all tasks with details)
+    - Task detail pane (shows error messages when you select an errored task)
     - Histogram of current agent steps
     - Scrollable logs for captured output
 
     Keyboard shortcuts:
-    - Arrow keys: Scroll through tasks and logs
+    - Arrow keys: Scroll through tasks and logs, select task rows
+    - p: Pause/resume rendering
     - q: Quit the dashboard
     """
+
+    BINDINGS: ClassVar = [("p", "toggle_pause", "Pause/Resume")]
 
     CSS = """
     #summary {
         height: 10;
-        border: solid $primary;
+        border: solid #4a9eff;
+        background: #0a1628;
     }
 
     #tasks-container {
-        height: 1fr;
-        border: solid $primary;
+        height: 2fr;
+        border: solid #4a9eff;
+        background: #0a1628;
+    }
+
+    #task-detail {
+        height: 8;
+        border: solid #e76f51;
+        background: #0a1628;
     }
 
     #histogram {
         height: 18;
-        border: solid $primary;
+        border: solid #4a9eff;
+        background: #0a1628;
     }
 
     #logs {
         height: 1fr;
-        border: solid $primary;
+        border: solid #4a9eff;
+        background: #0a1628;
     }
 
     .left-panel {
@@ -194,6 +209,19 @@ class EvaluationDashboard(app.App):
 
     .right-panel {
         width: 1fr;
+    }
+
+    DataTable {
+        background: #0a1628;
+    }
+
+    DataTable > .datatable--header {
+        background: #1a2844;
+        color: #4a9eff;
+    }
+
+    DataTable > .datatable--cursor {
+        background: #1a3a5f;
     }
     """
 
@@ -231,6 +259,15 @@ class EvaluationDashboard(app.App):
         # App task for background execution
         self._app_task: asyncio.Task[None] | None = None
 
+        # Track if table has been initialized
+        self._table_initialized = False
+
+        # Track if rendering is paused
+        self._paused = False
+
+        # Track selected task for detail view
+        self._selected_task_id: int | None = None
+
     def compose(self) -> app.ComposeResult:
         """Compose the dashboard layout."""
         yield widgets.Header()
@@ -239,6 +276,7 @@ class EvaluationDashboard(app.App):
                 yield widgets.Static(id="summary")
                 with containers.Container(id="tasks-container"):
                     yield widgets.DataTable(id="tasks")
+                yield widgets.Static(id="task-detail")
             with containers.Vertical(classes="right-panel"):
                 yield widgets.Static(id="histogram")
                 yield containers.ScrollableContainer(widgets.Static(id="logs-content"), id="logs")
@@ -248,12 +286,12 @@ class EvaluationDashboard(app.App):
         """Initialize the dashboard when mounted."""
         # Set up the task table columns
         table = self.query_one("#tasks", widgets.DataTable)
-        table.add_column("ID", key="id")
-        table.add_column("Status", key="status")
-        table.add_column("Step", key="step")
-        table.add_column("Reward", key="reward")
-        table.add_column("Cost", key="cost")
-        table.add_column("Duration", key="duration")
+        table.add_column("ID", key="id", width=6)
+        table.add_column("Status", key="status", width=15)
+        table.add_column("Step", key="step", width=6)
+        table.add_column("Reward", key="reward", width=8)
+        table.add_column("Cost", key="cost", width=8)
+        table.add_column("Duration", key="duration", width=10)
         table.cursor_type = "row"
 
         # Set up periodic refresh (4 times per second)
@@ -268,17 +306,71 @@ class EvaluationDashboard(app.App):
             title_parts.append(f"Max Parallel: {self.max_parallel}")
         header.tall = False
         self.title = " | ".join(title_parts)
-        self.sub_title = "Press q to quit"
+        self.sub_title = "Press q to quit | p to pause/resume"
+
+        # Initialize task detail widget
+        self._update_task_detail()
 
         # Now that Textual is mounted, redirect stdout/stderr to prevent interference
         self._redirect_output()
 
+    def action_toggle_pause(self) -> None:
+        """Toggle pause state for rendering."""
+        self._paused = not self._paused
+        if self._paused:
+            self.sub_title = "PAUSED - Press p to resume | q to quit"
+        else:
+            self.sub_title = "Press q to quit | p to pause/resume"
+        # Trigger immediate refresh to update the pause indicator
+        self._update_summary()
+
+    def on_data_table_row_selected(self, event: widgets.DataTable.RowSelected) -> None:
+        """Handle task row selection."""
+        # Extract task ID from the row key
+        if event.row_key.value is not None:
+            task_id = int(event.row_key.value)
+            self._selected_task_id = task_id
+            self._update_task_detail()
+
+    def _update_task_detail(self) -> None:
+        """Update the task detail widget."""
+        detail_widget = self.query_one("#task-detail", widgets.Static)
+
+        if self._selected_task_id is None:
+            detail_widget.update("[dim]Select a task to view details[/dim]")
+            return
+
+        task = self.tasks.get(self._selected_task_id)
+        if task is None:
+            detail_widget.update("[dim]Task not found[/dim]")
+            return
+
+        # Build detail text
+        detail_lines = [f"[bold #4a9eff]Task {task.task_id} Details[/bold #4a9eff]"]
+
+        if task.status == TaskStatus.ERROR and task.error:
+            detail_lines.append(f"[bold #e76f51]Error:[/bold #e76f51] {task.error}")
+        elif task.status == TaskStatus.COMPLETED:
+            detail_lines.append(f"[#2a9d8f]Completed successfully[/#2a9d8f] - Reward: {task.reward}")
+        elif task.status == TaskStatus.RUNNING:
+            detail_lines.append(f"[#f4a261]Running[/#f4a261] - Step: {task.current_step}")
+        else:
+            detail_lines.append("[dim]Waiting to start[/dim]")
+
+        detail_widget.update("\n".join(detail_lines))
+
     def _refresh_display(self) -> None:
         """Refresh all dashboard widgets."""
+        # Always update summary to show pause status
         self._update_summary()
+
+        if self._paused:
+            return
+
         self._update_task_table()
         self._update_histogram()
         self._update_logs()
+        self._update_task_detail()
 
     def _update_summary(self) -> None:
         """Update the summary statistics widget."""
@@ -315,15 +407,16 @@ class EvaluationDashboard(app.App):
         elapsed = time.time() - self.start_time
 
         # Build summary text
+        pause_indicator = " [bold #f4a261]⏸ PAUSED[/bold #f4a261]" if self._paused else ""
         summary_lines = [
-            f"[bold cyan]Summary[/bold cyan] (Elapsed: {elapsed:.1f}s)",
+            f"[bold #4a9eff]Summary[/bold #4a9eff] [dim](Elapsed: {elapsed:.1f}s)[/dim]{pause_indicator}",
             "",
-            f"Running: [yellow]{running}[/yellow]",
-            f"Completed: [green]{completed}[/green] / {self.total_tasks}",
-            f"Errors: [red]{errors}[/red]",
-            f"Success Rate: [cyan]{success_rate:.1f}%[/cyan] ({success_count}/{completed})",
-            f"Avg Return: [cyan]{avg_return:.4f}[/cyan]",
-            f"Total Cost: [magenta]${total_cost:.4f}[/magenta]",
+            f"Running: [#f4a261]{running}[/#f4a261]",
+            f"Completed: [#2a9d8f]{completed}[/#2a9d8f] / {self.total_tasks}",
+            f"Errors: [#e76f51]{errors}[/#e76f51]",
+            f"Success Rate: [#4a9eff]{success_rate:.1f}%[/#4a9eff] [dim]({success_count}/{completed})[/dim]",
+            f"Avg Return: [#4a9eff]{avg_return:.4f}[/#4a9eff]",
+            f"Total Cost: [#bc6ff1]${total_cost:.4f}[/#bc6ff1]",
         ]
         if eta is not None:
             summary_lines.append(f"ETA: [dim]{eta:.1f}s[/dim]")
@@ -338,45 +431,57 @@ class EvaluationDashboard(app.App):
         # Sort tasks by ID
         sorted_tasks = sorted(self.tasks.values(), key=lambda t: t.task_id)
 
-        # Clear and rebuild table rows
-        table.clear()
+        # If first time, add all rows with keys
+        if not self._table_initialized:
+            for task in sorted_tasks:
+                table.add_row(
+                    f"[dim]{task.task_id}[/dim]",
+                    "[dim]-[/dim]",
+                    "[dim]-[/dim]",
+                    "[dim]-[/dim]",
+                    "[dim]-[/dim]",
+                    "[dim]-[/dim]",
+                    key=str(task.task_id),
+                )
+            self._table_initialized = True
 
+        # Update existing rows
         for task in sorted_tasks:
+            row_key = str(task.task_id)
+
             # Status with color
             status_map = {
-                TaskStatus.WAITING: ("⏳", "dim"),
-                TaskStatus.RUNNING: ("🔄", "yellow"),
-                TaskStatus.COMPLETED: ("✓", "green"),
-                TaskStatus.ERROR: ("✗", "red"),
+                TaskStatus.WAITING: ("⏳", "#6c757d"),
+                TaskStatus.RUNNING: ("🔄", "#f4a261"),
+                TaskStatus.COMPLETED: ("✓", "#2a9d8f"),
+                TaskStatus.ERROR: ("✗", "#e76f51"),
             }
-            status_icon, status_style = status_map[task.status]
-            status_str = f"[{status_style}]{status_icon} {task.status.value}[/{status_style}]"
+            status_icon, status_color = status_map[task.status]
+            status_str = f"[{status_color}]{status_icon} {task.status.value}[/{status_color}]"
 
             # Step
-            step_str = str(task.current_step) if task.current_step > 0 else "-"
+            step_str = str(task.current_step) if task.current_step > 0 else "[dim]-[/dim]"
 
             # Reward
             if task.reward is not None:
                 reward_float = float(task.reward)  # type: ignore
-                reward_style = "green" if reward_float > 0 else "red"
-                reward_str = f"[{reward_style}]{reward_float:.2f}[/{reward_style}]"
+                reward_color = "#2a9d8f" if reward_float > 0 else "#e76f51"
+                reward_str = f"[{reward_color}]{reward_float:.2f}[/{reward_color}]"
             else:
-                reward_str = "-"
+                reward_str = "[dim]-[/dim]"
 
             # Cost
-            cost_str = f"${task.cost:.3f}" if task.cost > 0 else "-"
+            cost_str = f"[#bc6ff1]${task.cost:.2f}[/#bc6ff1]" if task.cost > 0 else "[dim]-[/dim]"
 
             # Duration
-            duration_str = f"{task.duration:.1f}s" if task.duration is not None else "-"
+            duration_str = f"[dim]{task.duration:.1f}s[/dim]" if task.duration is not None else "[dim]-[/dim]"
 
-            table.add_row(
-                str(task.task_id),
-                status_str,
-                step_str,
-                reward_str,
-                cost_str,
-                duration_str,
-            )
+            # Update all cells in this row
+            table.update_cell(row_key, "status", status_str)
+            table.update_cell(row_key, "step", step_str)
+            table.update_cell(row_key, "reward", reward_str)
+            table.update_cell(row_key, "cost", cost_str)
+            table.update_cell(row_key, "duration", duration_str)
 
     def _update_histogram(self) -> None:
         """Update the histogram widget."""
@@ -404,7 +509,10 @@ class EvaluationDashboard(app.App):
         max_count = max(buckets.values()) if buckets else 1
 
         # Build histogram text
-        histogram_lines = [f"[bold cyan]Step Distribution[/bold cyan] ({len(running_tasks)} running)", ""]
+        histogram_lines = [
+            f"[bold #4a9eff]Step Distribution[/bold #4a9eff] [dim]({len(running_tasks)} running)[/dim]",
+            "",
+        ]
 
         for i in range(num_buckets):
             start = i * bucket_size
@@ -415,13 +523,13 @@ class EvaluationDashboard(app.App):
                 # Skip empty trailing buckets
                 break
 
-            # Create bar
+            # Create bar with gradient effect
             bar_width = 20
             filled = int((count / max_count) * bar_width) if max_count > 0 else 0
-            bar = "█" * filled + "░" * (bar_width - filled)
+            bar = f"[#4a9eff]{'█' * filled}[/#4a9eff][dim]{'░' * (bar_width - filled)}[/dim]"
 
             range_str = f"{start:3d}-{end:3d}"
-            histogram_lines.append(f"[cyan]{range_str}[/cyan] {bar} [bold]{count}[/bold]")
+            histogram_lines.append(f"[dim]{range_str}[/dim] {bar} [bold #f4a261]{count}[/bold #f4a261]")
 
         histogram_widget.update("\n".join(histogram_lines))
 
@@ -430,21 +538,20 @@ class EvaluationDashboard(app.App):
         # Get captured logging output and parse it
         log_content = self._log_capture.getvalue()
         if log_content and log_content not in self._log_lines:
-            # Parse new log lines
+            # Parse new log lines - only WARNING and worse
             for line in log_content.strip().split("\n"):
                 if line.strip() and line not in self._log_lines:
-                    # Color code by log level
-                    if "ERROR" in line:
-                        self._log_lines.append(f"[red]{line}[/red]")
+                    # Only include WARNING, ERROR, CRITICAL logs
+                    if "ERROR" in line or "CRITICAL" in line:
+                        self._log_lines.append(f"[#e76f51]{line}[/#e76f51]")
                     elif "WARNING" in line:
-                        self._log_lines.append(f"[yellow]{line}[/yellow]")
-                    else:
-                        self._log_lines.append(f"[dim]{line}[/dim]")
+                        self._log_lines.append(f"[#f4a261]{line}[/#f4a261]")
+                    # Skip INFO and DEBUG logs
 
         # Add task error logs
         for task in self.tasks.values():
             if task.status == TaskStatus.ERROR and task.error:
-                error_line = f"[red bold][Task {task.task_id} ERROR][/red bold] {task.error}"
+                error_line = f"[bold #e76f51][Task {task.task_id} ERROR][/bold #e76f51] {task.error}"
                 if error_line not in self._log_lines:
                     self._log_lines.append(error_line)
 
@@ -452,7 +559,7 @@ class EvaluationDashboard(app.App):
         if len(self._log_lines) > 1000:
             self._log_lines = self._log_lines[-1000:]
 
-        log_text = "[dim]No logs yet[/dim]" if not self._log_lines else "\n".join(self._log_lines)
+        log_text = "[dim]No warnings or errors yet[/dim]" if not self._log_lines else "\n".join(self._log_lines)
 
         logs_widget = self.query_one("#logs-content", widgets.Static)
         logs_widget.update(log_text)
@@ -479,6 +586,11 @@ class EvaluationDashboard(app.App):
         log_handler.setFormatter(logging.Formatter("%(levelname)s - %(name)s - %(message)s"))
         root_logger.addHandler(log_handler)
         root_logger.setLevel(logging.INFO)
+
+        # Suppress noisy loggers
+        logging.getLogger("httpx").setLevel(logging.WARNING)
+        logging.getLogger("openai").setLevel(logging.WARNING)
+        logging.getLogger("httpcore").setLevel(logging.WARNING)
 
     def _restore_output(self) -> None:
         """Restore stdout, stderr, and logging."""
