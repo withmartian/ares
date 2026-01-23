@@ -6,8 +6,11 @@ import functools
 import io
 import pathlib
 import tarfile
+from typing import cast
 
 import docker
+import docker.errors
+import docker.models.containers
 
 from ares.containers import containers
 
@@ -19,10 +22,14 @@ class DockerContainer(containers.Container):
     name: str | None = None
     # TODO: Figure out a way to set resources for docker containers.
     resources: containers.Resources | None = None
+    _container: docker.models.containers.Container | None = dataclasses.field(default=None, init=False)
 
     @functools.cached_property
     def _client(self) -> docker.DockerClient:
-        return docker.from_env()
+        try:
+            return docker.from_env()
+        except docker.errors.DockerException as e:
+            raise RuntimeError("Failed to connect to Docker daemon; is docker running?") from e
 
     async def start(self, env: dict[str, str] | None = None) -> None:
         """Start the container."""
@@ -37,20 +44,26 @@ class DockerContainer(containers.Container):
             )
             self.image = image_obj.id
 
-        self._container = await asyncio.to_thread(
-            self._client.containers.run,
-            image=self.image,
-            name=self.name,
-            # Ensure the container stays running.
-            command="tail -f /dev/null",
-            detach=True,
-            environment=env,
+        # TODO: Work out why this cast is necessary.
+        self._container = cast(
+            docker.models.containers.Container,
+            await asyncio.to_thread(
+                self._client.containers.run,
+                image=self.image,
+                name=self.name,
+                # Ensure the container stays running.
+                command="tail -f /dev/null",
+                detach=True,
+                environment=env,
+            ),
         )
 
     async def stop(self) -> None:
         """Stop the container."""
-        await asyncio.to_thread(self._container.stop)
-        await asyncio.to_thread(self._container.remove, force=True)
+        if self._container is not None:
+            await asyncio.to_thread(self._container.stop)
+            await asyncio.to_thread(self._container.remove, force=True)
+            self._container = None
 
     async def exec_run(
         self,
@@ -75,8 +88,10 @@ class DockerContainer(containers.Container):
 
     def stop_and_remove(self) -> None:
         """Stop and remove the container."""
-        self._container.stop()
-        self._container.remove(force=True)
+        if self._container is not None:
+            self._container.stop()
+            self._container.remove(force=True)
+            self._container = None
 
     async def upload_files(self, local_paths: list[pathlib.Path], remote_paths: list[str]) -> None:
         """Upload files to the container."""

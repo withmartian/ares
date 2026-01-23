@@ -54,6 +54,7 @@ dev = [
 ]
 examples = [
     "transformers>=4.57.3",
+    "llama-cpp-python>=0.3.16",
 ]
 
 [tool.pytest.ini_options]

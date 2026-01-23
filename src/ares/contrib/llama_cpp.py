@@ -7,7 +7,9 @@ WARNING: This is not a core ARES component. The interface may change without not
 For production use, consider implementing your own LLM client following the LLMClient protocol.
 
 Required dependency group:
-    uv sync --group contrib-llamacpp
+    uv add withmartian-ares[llamacpp]
+    OR
+    uv sync --group llamacpp
 
 Example usage:
     from ares.contrib import llama_cpp
@@ -15,9 +17,8 @@ Example usage:
 
     # Initialize with a local GGUF model file
     client = llama_cpp.LlamaCppLLMClient(
-        model_path="/path/to/model.gguf",
-        n_ctx=2048,  # Context window size
-        n_threads=4,  # CPU threads to use
+        model_name="Qwen/Qwen2-0.5B-Instruct-GGUF",
+        filename="*q8_0.gguf",
     )
 
     # Use like any other LLM client
@@ -29,21 +30,19 @@ Note: Download GGUF models from HuggingFace. For example:
 """
 
 import dataclasses
+import functools
 import logging
-import time
-import uuid
+from typing import cast
 
 import llama_cpp
 import openai.types.chat.chat_completion
-import openai.types.chat.chat_completion_message
-import openai.types.completion_usage
 
 from ares.llms import llm_clients
 
 _LOGGER = logging.getLogger(__name__)
 
 
-@dataclasses.dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True, kw_only=True)
 class LlamaCppLLMClient(llm_clients.LLMClient):
     """Simple LLM client for local CPU inference using llama.cpp.
 
@@ -51,7 +50,7 @@ class LlamaCppLLMClient(llm_clients.LLMClient):
     for building your own local inference clients.
 
     Attributes:
-        model_path: Path to the GGUF model file
+        model_path: Model name, i.e. huggingface ID. E.g. "Qwen/Qwen2.5-3B-Instruct"
         n_ctx: Context window size (default: 2048)
         n_threads: Number of CPU threads to use (default: None, uses all available)
         temperature: Default temperature for generation (default: 0.7)
@@ -59,31 +58,18 @@ class LlamaCppLLMClient(llm_clients.LLMClient):
         verbose: Enable llama.cpp verbose logging (default: False)
     """
 
-    model_path: str
-    n_ctx: int = 2048
-    n_threads: int | None = None
-    temperature: float = 0.7
-    max_tokens: int = 512
-    verbose: bool = False
+    model_name: str
+    filename: str
+    n_ctx: int = 2_048
 
-    def __post_init__(self):
-        """Initialize lazy loading placeholder."""
-        # Use object.__setattr__ because the dataclass is frozen
-        object.__setattr__(self, "_llm", None)
-
-    def _get_llm(self) -> llama_cpp.Llama:
-        """Get or create the llama.cpp model instance (lazy loading)."""
-        if self._llm is None:
-            _LOGGER.info("Loading llama.cpp model from %s", self.model_path)
-            llm = llama_cpp.Llama(
-                model_path=self.model_path,
-                n_ctx=self.n_ctx,
-                n_threads=self.n_threads,
-                verbose=self.verbose,
-            )
-            object.__setattr__(self, "_llm", llm)
-            _LOGGER.info("Model loaded successfully")
-        return self._llm
+    @functools.cached_property
+    def _llm(self) -> llama_cpp.Llama:
+        return llama_cpp.Llama.from_pretrained(
+            self.model_name,
+            filename=self.filename,
+            verbose=False,
+            n_ctx=self.n_ctx,
+        )
 
     async def __call__(self, request: llm_clients.LLMRequest) -> llm_clients.LLMResponse:
         """Generate a response using llama.cpp.
@@ -96,46 +82,20 @@ class LlamaCppLLMClient(llm_clients.LLMClient):
         """
         _LOGGER.debug("[%d] Requesting LLM.", id(self))
 
-        llm = self._get_llm()
-
-        # Use request temperature if provided, otherwise use instance default
-        temperature = request.temperature if request.temperature is not None else self.temperature
-
-        # Convert messages to llama.cpp format
-        messages = list(request.messages)
+        completion_kwargs = request.as_kwargs()
+        # Since llama-cpp-python sets default temperature to 0.2, we explicitly
+        # override it to 1.0 if it's not provided by the request.
+        completion_kwargs.setdefault("temperature", 1.0)
 
         # Generate completion using llama.cpp's chat completion API
-        # llama-cpp-python returns OpenAI-compatible dict
-        response_dict = llm.create_chat_completion(
-            messages=messages,
-            temperature=temperature,
-            max_tokens=self.max_tokens,
-        )
+        chat_completion = self._llm.create_chat_completion(**completion_kwargs)
+        chat_completion = openai.types.chat.chat_completion.ChatCompletion.model_validate(chat_completion)
 
         _LOGGER.debug("[%d] LLM response received.", id(self))
 
-        # Convert to OpenAI ChatCompletion type
-        chat_completion = openai.types.chat.chat_completion.ChatCompletion(
-            id=response_dict.get("id", str(uuid.uuid4())),
-            choices=[
-                openai.types.chat.chat_completion.Choice(
-                    message=openai.types.chat.chat_completion_message.ChatCompletionMessage(
-                        content=response_dict["choices"][0]["message"]["content"],
-                        role=response_dict["choices"][0]["message"]["role"],
-                    ),
-                    finish_reason=response_dict["choices"][0].get("finish_reason", "stop"),
-                    index=0,
-                )
-            ],
-            created=response_dict.get("created", int(time.time())),
-            model=response_dict.get("model", self.model_path),
-            object="chat.completion",
-            usage=openai.types.completion_usage.CompletionUsage(
-                prompt_tokens=response_dict["usage"]["prompt_tokens"],
-                completion_tokens=response_dict["usage"]["completion_tokens"],
-                total_tokens=response_dict["usage"]["total_tokens"],
-            ),
-        )
-
-        # Local inference has zero cost
         return llm_clients.LLMResponse(chat_completion_response=chat_completion, cost=0.0)
+
+
+create_qwen2_0_5b_instruct_llama_cpp_client = functools.partial(
+    LlamaCppLLMClient, model_name="Qwen/Qwen2-0.5B-Instruct-GGUF", filename="*q8_0.gguf"
+)

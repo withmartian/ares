@@ -15,7 +15,7 @@ from collections.abc import Sequence
 import dataclasses
 import logging
 import re
-from typing import Protocol
+from typing import Protocol, overload
 
 from ares.containers import containers
 from ares.containers import docker
@@ -457,7 +457,15 @@ def _list_presets() -> Sequence[str]:
     return tuple(sorted(_REGISTRY.keys()))
 
 
-def info(name: str | None = None) -> str:
+@overload
+def info(name: str) -> EnvironmentInfo: ...
+
+
+@overload
+def info(name: None) -> Sequence[EnvironmentInfo]: ...
+
+
+def info(name: str | None = None) -> EnvironmentInfo | Sequence[EnvironmentInfo]:
     """Get information about registered presets.
 
     Args:
@@ -488,19 +496,19 @@ def info(name: str | None = None) -> str:
             raise KeyError(f"Preset '{name}' not found. Available presets: {', '.join(_list_presets())}")
 
         spec = _REGISTRY[name]
-        return str(spec.get_info())
+        return spec.get_info()
 
     # List all presets with summary information
     presets = _list_presets()
     if not presets:
-        return "No presets registered."
+        return []
 
-    lines = ["Available presets:"]
+    spec_infos: list[EnvironmentInfo] = []
     for preset_id in presets:
         spec = _REGISTRY[preset_id]
-        lines.append(f"  - {spec.get_info()}")
+        spec_infos.append(spec.get_info())
 
-    return "\n".join(lines)
+    return spec_infos
 
 
 def make(
