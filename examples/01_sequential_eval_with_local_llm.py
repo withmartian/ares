@@ -40,8 +40,7 @@ async def main():
         ts = await env.reset()
         step_count = 0
 
-        # We only run for 5 steps; this model isn't strong enough to solve the task.
-        for _ in range(5):
+        while not ts.last():
             # The agent processes the observation and returns an action (LLM response)
             action = await agent(ts.observation)
 
@@ -51,7 +50,10 @@ async def main():
             # Step the environment with the action
             ts = await env.step(action)
 
+            # We only run for 5 steps; this model isn't strong enough to solve the task.
             step_count += 1
+            if step_count >= 5:
+                break
 
         # Episode complete!
         print()

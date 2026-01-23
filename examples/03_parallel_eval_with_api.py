@@ -42,9 +42,6 @@ async def evaluate_task(
     agent: chat_completions_compatible.ChatCompletionCompatibleLLMClient,
     container_factory: containers.ContainerFactory,
 ) -> base.TimeStep[Any, float, float]:
-    # Create an LLM client using the ChatCompletionCompatibleLLMClient
-    agent = chat_completions_compatible.ChatCompletionCompatibleLLMClient(model="openai/gpt-5-mini")
-
     async with ares.make(f"{preset_name}:{task_idx}", container_factory=container_factory) as env:
         # Reset the environment to get the first timestep
         ts = await env.reset()
