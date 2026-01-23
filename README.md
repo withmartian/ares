@@ -1,4 +1,8 @@
-# ARES
+# ARES: Agentic Research & Evaluation Suite
+
+<p align="center">
+  <img margin="auto" width="auto" height="312" alt="image" src="https://github.com/user-attachments/assets/ae34ab36-b78f-48de-93c9-01d611a547e3" />
+</p>
 
 ARES (Agentic Research and Evaluation Suite) is an RL-first framework for training and evaluating agents.
 
