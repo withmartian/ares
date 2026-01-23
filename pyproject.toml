@@ -48,6 +48,7 @@ dev = [
     "pyright>=1.1.406",
     "ruff>=0.14.1",
     "pytest>=8.0.0",
+    "pytest-asyncio>=0.25.2",
     "hatchling>=1.28.0",
     "twine>=6.2.0",
 ]
