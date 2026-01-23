@@ -1,136 +1,257 @@
-# ARES
+<p align="center">
+  <img src="ares_logo.png" width="100" alt="Ares Logo"/>
+</p>
 
-ARES (Agentic Research and Evaluation Suite) is an RL-first framework for training and evaluating agents.
+<h1 align="center">Ares</h1>
+
+<p align="center">
+  🚀 A high-performance, modern framework for training and evaluating code agents with reinforcement learning
+</p>
+
+<p align="center">
+  <a href="https://github.com/withmartian/ares/stargazers">
+    <img src="https://img.shields.io/github/stars/withmartian/ares?style=social" alt="GitHub stars"/>
+  </a>
+  <a href="https://github.com/withmartian/ares/issues">
+    <img src="https://img.shields.io/github/issues/withmartian/ares" alt="GitHub issues"/>
+  </a>
+</p>
+
+---
+
+ARES (Agentic Research and Evaluation Suite) is an RL-first framework for training and evaluating agents. ARES environments use an async version of the [dm_env](https://github.com/google-deepmind/dm_env) spec, making it easy to build and evaluate code agents using reinforcement learning.
 
 ## Quick Start
 
-Get ARES running in minutes - no API keys required!
+Get started in minutes with local Docker containers and a local LLM - no accounts or API keys needed.
 
 ### Prerequisites
 
 - **Python 3.12 or higher**
-- **[Docker](https://docs.docker.com/get-docker/)** - For running code agents in containers
 - **[uv](https://docs.astral.sh/uv/)** - Fast Python package installer and resolver
-
-To install `uv`, follow the instructions at https://docs.astral.sh/uv/getting-started/installation/
+- **Docker** - For running local containers (install from [docker.com](https://www.docker.com/get-started))
 
 ### Installation
 
-For now, we recommend running ARES locally from this directory:
+1. **Clone the repository:**
+   ```bash
+   git clone https://github.com/withmartian/ares.git
+   cd ares
+   ```
+
+2. **Install dependencies:**
+   ```bash
+   uv sync --all-groups
+   ```
+   
+   This installs all dependencies including example dependencies needed for the quick start.
+
+3. **Run your first example (no API keys needed!):**
+   ```bash
+   uv run -m examples.02_local_llm
+   ```
+
+   This example uses:
+   - **Local Docker containers** (no cloud account needed)
+   - **Local LLM** (Qwen2.5-3B-Instruct, downloaded automatically, no API keys needed)
+   - **No `.env` file required** - works out of the box!
+
+   The example will download the model on first run (~6GB), then run a SWE-bench task in a local Docker container.
+
+## Installation Methods
+
+### Local Development (Recommended for Getting Started)
+
+Run ARES directly from the cloned repository:
 
 ```bash
 uv sync --all-groups
 ```
 
-and you're ready to get started.
+This installs:
+- Main dependencies
+- Development tools (pytest, ruff, pyright)
+- Example dependencies (transformers for local LLM support)
 
-### Your First ARES "Agent"
-No API keys needed!
+### As a Dependency
 
-Run the Hello World example to see the RL loop in action:
+You can also include ARES as a dependency in your own project's `pyproject.toml` using a relative path:
 
-```bash
-uv run -m examples.00_hello_world
+```toml
+[project]
+dependencies = [
+    "ares @ {path = "../ares", develop = true}",
+]
 ```
 
-This example uses:
-- ✓ Local Docker containers (no cloud account needed)
-- ✓ A mock LLM (no API keys needed)
-
-You'll see how ARES treats code agent interactions as a reinforcement learning problem, with LLM requests as observations and LLM responses as actions.
+**Note:** PyPI installation will be available soon.
 
 ## Examples
 
-ARES includes several examples that demonstrate different usage patterns:
+ARES comes with two example scripts to help you get started:
 
-### 1. Minimal Loop (Local Docker + Real LLM)
-**File:** `examples/01_minimal_loop.py`
-**What you'll need:** Docker, Martian API key
-
-```bash
-# Set up your API key first (see Cloud Setup below)
-uv run -m examples.01_minimal_loop
-```
-
-Shows the RL loop with a real LLM (via Martian API) and local Docker containers.
-
-### 2. Local LLM (Fully Local)
-**File:** `examples/02_local_llm.py`
-**What you'll need:** Docker
+### Example 1: Local LLM (No API Keys Required) ⭐ Recommended for First Use
 
 ```bash
 uv run -m examples.02_local_llm
 ```
 
-Demonstrates running ARES completely locally using a local LLM (Qwen2.5-3B-Instruct). No cloud services required.
+**What it does:**
+- Uses local Docker containers (no cloud services)
+- Uses a local LLM model (Qwen2.5-3B-Instruct)
+- Runs a SWE-bench task
+- **No accounts or API keys needed!**
 
-## Cloud Setup (Optional)
+**Requirements:**
+- Docker installed and running
+- ~6GB disk space for the model (downloaded automatically)
 
-For production use or larger-scale experiments, you can use cloud containers and API-based LLMs.
+### Example 2: Cloud LLM with Local Docker
 
-### Option 1: Using Martian API for LLM Inference
+```bash
+uv run -m examples.01_minimal_loop
+```
 
-1. Create an account at [https://app.withmartian.com](https://app.withmartian.com)
-2. Copy the example environment file: `cp .env.example .env`
-3. Add your Martian API key: `CHAT_COMPLETION_API_KEY=your_key_here`
+**What it does:**
+- Uses local Docker containers (no Daytona account needed)
+- Uses a cloud LLM API (requires API key)
 
-### Option 2: Using Daytona for Cloud Containers
+**Requirements:**
+- Docker installed and running
+- API key for LLM service (see [Configuration](#configuration) below)
+- **Note:** This example requires a `.env` file with `CHAT_COMPLETION_API_KEY` set
 
-By default, ARES uses Daytona for container management. To set this up:
+## Configuration
 
-1. Create a Daytona account at [https://www.daytona.io](https://www.daytona.io/)
-2. Copy the example environment file: `cp .env.example .env`
-3. Add your Daytona credentials:
-   - `DAYTONA_API_KEY=your_key_here`
-   - `DAYTONA_API_URL=your_url_here`
+### Using Cloud Services (Optional)
 
-See `.env.example` for all available configuration options.
+ARES supports cloud services for containers and LLM inference. These are **optional** - you can use ARES entirely with local Docker and local LLMs.
 
-## API Usage
+#### Using Cloud LLM APIs
 
-ARES environments use an async version of the [dm_env](https://github.com/google-deepmind/dm_env) spec. Here's a complete example:
+If you want to use cloud LLM APIs (like Martian, OpenAI, etc.) instead of local models, you'll need to set up API keys:
+
+1. **Create a `.env` file** in the repository root:
+   ```bash
+   touch .env
+   ```
+
+2. **Add your API key** (required for `ChatCompletionCompatibleLLMClient`):
+   ```bash
+   CHAT_COMPLETION_API_KEY=your_api_key_here
+   ```
+
+3. **Optionally customize the API base URL** (defaults to Martian):
+   ```bash
+   CHAT_COMPLETION_API_BASE_URL=https://api.withmartian.com/v1
+   ```
+
+**Important:** The local LLM example (`examples/02_local_llm.py`) does **not** require this configuration and works without any `.env` file or API keys.
+
+#### Using Daytona for Cloud Containers (Optional)
+
+By default, ARES uses local Docker containers. If you want to use Daytona cloud containers instead:
+
+1. **Create a Daytona account** at [https://www.daytona.io](https://www.daytona.io/)
+
+2. **Generate an API key** from your Daytona account
+
+3. **Add to your `.env` file:**
+   ```bash
+   DAYTONA_API_KEY=your_daytona_api_key
+   DAYTONA_API_URL=your_daytona_api_url
+   ```
+
+4. **Use Daytona containers** in your code:
+   ```python
+   from ares.containers import daytona
+   from ares.environments import swebench_env
+   
+   async with swebench_env.SweBenchEnv(
+       tasks=tasks,
+       container_factory=daytona.DaytonaContainer,  # Use Daytona instead of Docker
+   ) as env:
+       # ... your code
+   ```
+
+## Usage
+
+### Basic Example with Local Docker
+
+Here's a minimal example using local Docker containers (no cloud services needed):
 
 ```python
 import asyncio
-
 from ares.code_agents import mini_swe_agent
-from ares.containers import docker  # Use local Docker, or import daytona for cloud
+from ares.containers import docker
 from ares.environments import swebench_env
 from ares.llms import chat_completions_compatible
 
-
 async def main():
-    # Create an LLM client (requires CHAT_COMPLETION_API_KEY in .env)
-    llm_client = chat_completions_compatible.ChatCompletionCompatibleLLMClient(
-        model="openai/gpt-4o-mini"
+    # Create an LLM client (requires API key for cloud LLMs)
+    # For local LLMs, see examples/02_local_llm.py
+    agent = chat_completions_compatible.ChatCompletionCompatibleLLMClient(
+        model="openai/gpt-5-mini"
     )
-
+    
     # Load SWE-bench tasks
     all_tasks = swebench_env.swebench_verified_tasks()
-    tasks = [all_tasks[0]]  # Run on only one task for now
-
-    # Create environment with local Docker and MiniSWE agent
+    tasks = [all_tasks[0]]  # Run on one task
+    
+    # Use local Docker containers (no cloud account needed)
     async with swebench_env.SweBenchEnv(
         tasks=tasks,
         container_factory=docker.DockerContainer,  # Use local Docker
         code_agent_factory=mini_swe_agent.MiniSWECodeAgent,
     ) as env:
-        # The RL loop
         ts = await env.reset()
+        
         while not ts.last():
-            # Environment sends observation (LLM request) to agent
-            action = await llm_client(ts.observation)
-
-            # Environment processes action (LLM response) and returns next state
+            # Agent processes observation and returns action
+            action = await agent(ts.observation)
+            
+            # Environment steps with action
             ts = await env.step(action)
-            print(f"Step complete. Reward: {ts.reward}")
-
+            
+            print(f"Step reward: {ts.reward}")
 
 if __name__ == "__main__":
     asyncio.run(main())
 ```
 
-This example uses:
-- **Container backend:** Local Docker (change to `daytona.DaytonaContainer` for cloud)
-- **LLM backend:** Martian API (or any OpenAI-compatible API)
-- **Code agent:** MiniSWE agent from the mini-swe-agent library
+### Using Local LLMs
+
+For a complete example using local LLMs (no API keys), see `examples/02_local_llm.py`. This example:
+- Downloads and runs a local model (Qwen2.5-3B-Instruct)
+- Uses local Docker containers
+- Requires no external accounts or API keys
+
+## Architecture
+
+ARES provides a clean RL abstraction for code agents:
+
+- **Environments**: Async dm_env-like environments (SWE-bench, Harbor, etc.)
+- **Containers**: Pluggable container backends (Docker, Daytona)
+- **LLM Clients**: Flexible LLM interfaces (local models, OpenAI-compatible APIs)
+- **Code Agents**: Agents that interact with codebases in containers
+
+The framework uses a queue-mediated LLM client pattern that allows agents to be written naturally (making direct LLM calls) while the environment controls the RL loop.
+
+## Requirements Summary
+
+| Feature | Local Setup | Cloud Setup |
+|---------|------------|-------------|
+| **Containers** | Docker (local) | Daytona account + API key |
+| **LLM** | Local model (transformers) | API key (Martian, OpenAI, etc.) |
+| **Accounts** | None | Daytona + LLM provider |
+| **Setup Time** | ~5 minutes | ~10-15 minutes |
+
+**Recommendation:** Start with the local setup (Docker + local LLM) to get familiar with ARES, then optionally add cloud services as needed.
+
+## Development
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, testing, and contribution guidelines.
+
+## License
+
+See [LICENSE](LICENSE) for details.
