@@ -12,8 +12,9 @@ Traditional mechanistic interpretability focuses on static, single-step analysis
 ARES enables **trajectory-level mechanistic interpretability** by:
 1. Capturing activations across entire agent episodes
 2. Studying how internal representations evolve during multi-step reasoning
-3. Identifying critical moments where interventions significantly alter outcomes
-4. Analyzing information flow across dozens of inference steps
+3. Identifying critical moments where interventions significantly alter episode-level outcomes
+4. Seeing how activations differ across different agent frameworks for the same task
+5. You tell us!
 
 ## Quick Start
 
@@ -21,7 +22,9 @@ ARES enables **trajectory-level mechanistic interpretability** by:
 
 ```bash
 # Install ARES with mech_interp group (includes TransformerLens)
-uv sync --group mech_interp
+uv add ares[mech-interp]
+# or with pip
+pip install ares[mech-interp]
 ```
 
 ### Basic Example
@@ -35,7 +38,7 @@ from ares.environments import swebench_env
 async def main():
     # Load model
     model = HookedTransformer.from_pretrained("gpt2-small")
-    client = HookedTransformerLLMClient(model=model, model_name="gpt2-small")
+    client = HookedTransformerLLMClient(model=model)
 
     # Run agent and capture activations
     tasks = swebench_env.swebench_verified_tasks()[:1]
@@ -70,7 +73,6 @@ from ares.contrib.mech_interp import HookedTransformerLLMClient
 model = HookedTransformer.from_pretrained("gpt2-medium")
 client = HookedTransformerLLMClient(
     model=model,
-    model_name="gpt2-medium",
     max_new_tokens=1024,
     generation_kwargs={"temperature": 0.7}
 )
@@ -88,7 +90,6 @@ model = HookedTransformer.from_pretrained("Qwen/Qwen2.5-3B-Instruct")
 client = create_hooked_transformer_client_with_chat_template(
     model=model,
     tokenizer=tokenizer,
-    model_name="Qwen/Qwen2.5-3B-Instruct",
     max_new_tokens=2048,
 )
 ```
@@ -150,36 +151,51 @@ with automatic_activation_capture(model) as capture:
 
 ### 3. InterventionManager
 
+TODO: This needs to rework, can just use step nums with better identifying of interesting behavior
+
 Apply causal interventions during agent execution to study model behavior.
 
 ```python
+from transformer_lens import HookedTransformer
 from ares.contrib.mech_interp import (
-    InterventionManager,
-    create_zero_ablation_hook,
-    create_path_patching_hook,
+    HookedTransformerLLMClient,
+    FullyObservableState,
 )
 
-manager = InterventionManager(model)
+async def has_readme(state: FullyObservableState) -> str | None:
+    # Function to only runs hooks when the environment contains a README
+    cmd_output = await state.container.exec_run("ls", workdir="/path/to/app")
+    if "README.md" in cmd_output.output and state.step_num > 1:
+        return "blocks.1.attn.hook_pattern"
+    else:
+        return None
 
-# Ablate attention heads
-manager.add_intervention(
-    hook_name="blocks.0.attn.hook_result",
-    hook_fn=create_zero_ablation_hook(heads=[0, 1, 2]),
-    description="Ablate heads 0-2 in layer 0",
-    apply_at_steps=[5, 6, 7]  # Optional: only at specific steps
+model = HookedTransformer.from_pretrained("gpt2-medium")
+client = HookedTransformerLLMClient(
+    model=model,
+    fwd_hooks=[
+        # The mean ablation hook is defined exactly the same as classic transformer_lens
+        ("blocks.1.attn.hook_pattern@step2", mean_ablation_hook),
+    ],
+    max_new_tokens=1024,
+    generation_kwargs={"temperature": 0.7}
 )
+
 
 # Run with interventions
-with manager:
-    async with env:
-        ts = await env.reset()
-        step_count = 0
-        while not ts.last():
-            action = await client(ts.observation)
-            ts = await env.step(action)
+async with env:
+    ts = await env.reset()
 
-            step_count += 1
-            manager.increment_step()  # Track which step we're on
+    while not ts.last():
+        action = await client(
+            ts.observation,
+            # Should also include the env and timestep here so that
+            # we can reference the env in the has_readme function.
+            # Do not need to pass if hooks do not depend on state
+            env=env,
+            timestep=ts,
+        )
+        ts = await env.step(action)
 ```
 
 ### 4. Hook Utilities
@@ -341,7 +357,7 @@ models = [
 
 trajectories = []
 for model in models:
-    client = HookedTransformerLLMClient(model=model, model_name=model.cfg.model_name)
+    client = HookedTransformerLLMClient(model=model)
 
     with ActivationCapture(model) as capture:
         # Run same task
@@ -364,7 +380,7 @@ from ares.environments import swebench_env
 
 async def find_code_understanding_circuits():
     model = HookedTransformer.from_pretrained("gpt2-medium")
-    client = HookedTransformerLLMClient(model=model, model_name="gpt2-medium")
+    client = HookedTransformerLLMClient(model=model)
 
     # 1. Collect baseline trajectory on a task
     tasks = swebench_env.swebench_verified_tasks()
@@ -417,25 +433,14 @@ async def find_code_understanding_circuits():
                 attn_pattern = baseline_trajectory.get_activation(step, f"blocks.{layer}.attn.hook_pattern")
                 visualize_attention(attn_pattern[:, head, :, :])
 
-# Run analysis
-asyncio.run(find_code_understanding_circuits())
 ```
-
-## Best Practices
-
-1. **Start Small**: Use small models (gpt2-small, gpt2-medium) for initial exploration
-2. **Limit Steps**: Use `max_steps` during development to avoid long-running experiments
-3. **Save Often**: Save trajectories immediately after capture for later analysis
-4. **Filter Hooks**: Use `hook_filter` in ActivationCapture to reduce memory usage
-5. **GPU Management**: Move activations to CPU after capture: `.detach().cpu()`
-6. **Batch Analysis**: Process multiple trajectories in batch when possible
 
 ## Performance Tips
 
 **Memory Optimization:**
 ```python
-# Only capture specific hooks
-capture = ActivationCapture(
+# Only capture specific activations
+ActivationCapture(
     model,
     hook_filter=lambda name: "attn.hook_pattern" in name or "hook_resid" in name
 )
@@ -454,28 +459,13 @@ model = HookedTransformer.from_pretrained("gpt2-small", device="cuda")
 
 # Reduce max_new_tokens during ablation studies
 client = HookedTransformerLLMClient(model=model, max_new_tokens=256)
-
-# Use torch.no_grad() (already done in client, but good to remember)
-with torch.no_grad():
-    ...
 ```
-
-## Comparison to Traditional MI
-
-| Traditional MI | ARES + Mech Interp |
-|----------------|---------------------|
-| Single prompts | Multi-step trajectories (50-100+ steps) |
-| Static analysis | Dynamic, evolving state |
-| Local causality | Long-horizon dependencies |
-| Fixed context | Context grows with episode |
-| Immediate outcomes | Delayed rewards |
 
 ## Resources
 
 - [TransformerLens Documentation](https://neelnanda-io.github.io/TransformerLens/)
-- [Anthropic's Circuits Thread](https://transformer-circuits.pub/)
-- [Example Notebook: Trajectory-Level Analysis](./notebooks/trajectory_analysis.ipynb) *(coming soon)*
-- [Blog Post: Beyond Static MI](https://withmartian.com/post/beyond-static-mechanistic-interpretability-agentic-long-horizon-tasks-as-the-next-frontier)
+- Example Notebook: Trajectory-Level Analysis *(coming soon)*
+- [Blog Post: Beyond Static Mechanistic Interpretability](https://withmartian.com/post/beyond-static-mechanistic-interpretability-agentic-long-horizon-tasks-as-the-next-frontier)
 
 ## Citation
 
@@ -486,6 +476,6 @@ If you use this module in your research, please cite:
   title = {ARES Mechanistic Interpretability Module},
   author = {Martian},
   year = {2025},
-  url = {https://github.com/anthropics/ares}
+  url = {https://github.com/withmartian/ares}
 }
 ```
