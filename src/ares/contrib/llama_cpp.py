@@ -32,7 +32,6 @@ Note: Download GGUF models from HuggingFace. For example:
 import dataclasses
 import functools
 import logging
-from typing import cast
 
 import llama_cpp
 import openai.types.chat.chat_completion
