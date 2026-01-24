@@ -191,7 +191,7 @@ Available Agents
 Implementing your own CodeAgent
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-To bring in your own CodeAgent implementation, the main blocker is typically rewriting around any LLM calls and comand execution that your agent makes.
+To bring in your own CodeAgent implementation, the main blocker is typically rewriting around any LLM calls and command execution that your agent makes.
 This can look like:
 
 .. code-block:: python
@@ -221,7 +221,7 @@ Which you will need to rewrite into something like:
 .. code-block:: python
 
     class MyARESCodeAgent:
-        def __init__(self, container: Container, llm_client, QueueMediatedLLMClient):
+        def __init__(self, container: Container, llm_client: QueueMediatedLLMClient):
             self.llm_client = llm_client
             self.container = container
             # Replace other init setup
