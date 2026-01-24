@@ -6,6 +6,7 @@ import dataclasses
 import functools
 import logging
 import pathlib
+import shlex
 
 import daytona
 import daytona.common.errors
@@ -124,7 +125,8 @@ class DaytonaContainer(containers.Container):
         # If we get a Timeout, it gets re-raised.
         result = await _exec_with_retry(
             self._sbx,
-            command,
+            # NOTE: Many code agents expect things like `.bashrc` to be loaded, so we use `bash -lc` here
+            f"bash -lc {shlex.quote(command)}",
             workdir=workdir,
             env=env,
             timeout_s=timeout_s,

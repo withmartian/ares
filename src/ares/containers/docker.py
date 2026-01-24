@@ -27,15 +27,19 @@ class DockerContainer(containers.Container):
     async def start(self, env: dict[str, str] | None = None) -> None:
         """Start the container."""
         if self.image is None:
-            assert self.dockerfile_path is not None, "Must specify one of image or dockerfile_path"
+            if self.dockerfile_path is None:
+                raise ValueError("Must specify one of image or dockerfile_path")
+
+            dockerfile_path = pathlib.Path(self.dockerfile_path)
             # TODO: Some kind of cache for dockerfile directory to avoid
             #       rebuilding same image over and over again?
             image_obj, _ = await asyncio.to_thread(
                 self._client.images.build,
-                path=self.dockerfile_path.parent,
+                path=dockerfile_path.parent.as_posix(),
                 tag=self.name,
             )
             self.image = image_obj.id
+            assert self.image is not None, f"Image ID is None for container {self.name}"
 
         self._container = await asyncio.to_thread(
             self._client.containers.run,
@@ -64,7 +68,9 @@ class DockerContainer(containers.Container):
         result = await asyncio.wait_for(
             asyncio.to_thread(
                 self._container.exec_run,
-                ["sh", "-c", command],
+                # TODO: Consolidate this implementation into some container base class/helper fn
+                # NOTE: Many code agents expect things like `.bashrc` to be loaded, so we use `bash -lc` here
+                ["bash", "-lc", command],
                 workdir=workdir,
                 environment=env,
             ),
@@ -92,6 +98,12 @@ class DockerContainer(containers.Container):
 
             # Determine the destination directory
             remote_dir = str(pathlib.Path(remote_path).parent)
+
+            # Create dirs if they don't exist (since otherwise Docker complains)
+            await asyncio.to_thread(
+                self._container.exec_run,
+                cmd=f"mkdir -p {remote_dir}",
+            )
 
             # Upload the tar archive to the container
             await asyncio.to_thread(
