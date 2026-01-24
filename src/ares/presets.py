@@ -87,7 +87,7 @@ class SwebenchVerifiedMiniSWEHarborSpec:
             tasks=selected_tasks,
             container_factory=container_factory,
             code_agent_factory=mini_swe_agent.MiniSWECodeAgent,
-            step_limit=100,
+            step_limit=250,  # Same as MiniSWEAgent default.
             tracker=tracker,
         )
 

@@ -47,7 +47,7 @@ class HarborEnv(base.CodeBaseEnv[harbor_task.Task]):
         *,
         container_factory: containers.ContainerFactory = ares_daytona.DaytonaContainer,
         code_agent_factory: code_agent_base.CodeAgentFactory = mini_swe_agent.MiniSWECodeAgent,
-        step_limit: int = 100,
+        step_limit: int = 250,  # Same as MiniSWEAgent default.
         prefix: str = "harbor_env",
         tracker: stat_tracker.StatTracker | None = None,
     ):
