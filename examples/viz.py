@@ -16,6 +16,7 @@ import sys
 import time
 from typing import ClassVar
 
+from rich.markup import escape
 from textual import app
 from textual import containers
 from textual import widgets
@@ -249,6 +250,8 @@ class EvaluationDashboard(app.App):
         self._original_log_handlers: list[logging.Handler] = []
         self._log_capture = StringIO()
         self._log_lines: list[str] = []
+        self._log_position = 0  # Track how much of log_capture we've processed
+        self._seen_task_errors: set[int] = set()  # Track which task errors we've logged
 
         # For stdout/stderr redirection
         self._original_stdout = sys.stdout
@@ -349,7 +352,7 @@ class EvaluationDashboard(app.App):
         detail_lines = [f"[bold #4a9eff]Task {task.task_id} Details[/bold #4a9eff]"]
 
         if task.status == TaskStatus.ERROR and task.error:
-            detail_lines.append(f"[bold #e76f51]Error:[/bold #e76f51] {task.error}")
+            detail_lines.append(f"[bold #e76f51]Error:[/bold #e76f51] {escape(task.error)}")
         elif task.status == TaskStatus.COMPLETED:
             detail_lines.append(f"[#2a9d8f]Completed successfully[/#2a9d8f] - Reward: {task.reward}")
         elif task.status == TaskStatus.RUNNING:
@@ -535,34 +538,50 @@ class EvaluationDashboard(app.App):
 
     def _update_logs(self) -> None:
         """Update the logs widget."""
-        # Get captured logging output and parse it
+        # Get only new log content since last position
         log_content = self._log_capture.getvalue()
-        if log_content and log_content not in self._log_lines:
-            # Parse new log lines - only WARNING and worse
-            for line in log_content.strip().split("\n"):
-                if line.strip() and line not in self._log_lines:
-                    # Only include WARNING, ERROR, CRITICAL logs
-                    if "ERROR" in line or "CRITICAL" in line:
-                        self._log_lines.append(f"[#e76f51]{line}[/#e76f51]")
-                    elif "WARNING" in line:
-                        self._log_lines.append(f"[#f4a261]{line}[/#f4a261]")
-                    # Skip INFO and DEBUG logs
+        new_content = log_content[self._log_position :]
+        self._log_position = len(log_content)
 
-        # Add task error logs
+        # Parse new log lines - only WARNING and worse
+        if new_content:
+            for line in new_content.strip().split("\n"):
+                line = line.strip()
+                if not line:
+                    continue
+                # Only include WARNING, ERROR, CRITICAL logs
+                if "ERROR" in line or "CRITICAL" in line:
+                    self._log_lines.append(f"[#e76f51]{escape(line)}[/#e76f51]")
+                elif "WARNING" in line:
+                    self._log_lines.append(f"[#f4a261]{escape(line)}[/#f4a261]")
+                # Skip INFO and DEBUG logs
+
+        # Add task error logs (only new ones)
         for task in self.tasks.values():
-            if task.status == TaskStatus.ERROR and task.error:
-                error_line = f"[bold #e76f51][Task {task.task_id} ERROR][/bold #e76f51] {task.error}"
-                if error_line not in self._log_lines:
-                    self._log_lines.append(error_line)
+            if task.status == TaskStatus.ERROR and task.error and task.task_id not in self._seen_task_errors:
+                # Ensure task.error is a string and escape it
+                error_msg = str(task.error) if task.error else "Unknown error"
+                # Use parentheses instead of square brackets to avoid markup conflicts
+                error_line = f"[bold #e76f51]Task {task.task_id} ERROR:[/bold #e76f51] {escape(error_msg)}"
+                self._log_lines.append(error_line)
+                self._seen_task_errors.add(task.task_id)
 
         # Keep only the last 1000 lines to avoid memory issues
         if len(self._log_lines) > 1000:
             self._log_lines = self._log_lines[-1000:]
 
-        log_text = "[dim]No warnings or errors yet[/dim]" if not self._log_lines else "\n".join(self._log_lines)
+        if not self._log_lines:
+            log_text = "[dim]No warnings or errors yet[/dim]"
+        else:
+            # Join already-escaped log lines (they already have color markup)
+            log_text = "\n".join(self._log_lines)
 
         logs_widget = self.query_one("#logs-content", widgets.Static)
         logs_widget.update(log_text)
+
+        # Auto-scroll to bottom to show latest logs
+        logs_container = self.query_one("#logs", containers.ScrollableContainer)
+        logs_container.scroll_end(animate=False)
 
     def _redirect_output(self) -> None:
         """Redirect stdout, stderr, and logging to prevent interference with Textual.
@@ -689,7 +708,7 @@ class EvaluationDashboard(app.App):
 
         return self
 
-    async def __aexit__(self, _exc_type, _exc_val, _exc_tb):
+    async def __aexit__(self, *_args):
         """Async context manager exit - stops the dashboard."""
         # Request the app to exit
         self.exit()

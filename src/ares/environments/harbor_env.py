@@ -31,6 +31,7 @@ def _get_harbor_dataset_client() -> harbor_dataset_client.BaseRegistryClient:
     return harbor_dataset_client.RegistryClientFactory.create()
 
 
+@functools.lru_cache(maxsize=250)
 def load_harbor_dataset(name: str, version: str) -> list[harbor_task.Task]:
     client = _get_harbor_dataset_client()
     return [

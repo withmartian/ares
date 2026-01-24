@@ -77,7 +77,7 @@ async def evaluate_task(
 
 async def main():
     # Create an LLM client using the ChatCompletionCompatibleLLMClient
-    agent = chat_completions_compatible.ChatCompletionCompatibleLLMClient(model="openai/gpt-5-mini")
+    agent = chat_completions_compatible.ChatCompletionCompatibleLLMClient(model="moonshotai/kimi-k2-thinking")
 
     # We want to run our tasks on daytona because we can get much better throughput.
     container_factory = daytona.DaytonaContainer
@@ -86,7 +86,8 @@ async def main():
     # We can find out how many tasks are available by looking at the preset info.
     # We will make a distinct environment with a single task; this ensures that when we reset
     # the environment we get one specific task.
-    preset_name = "sbv-mswea"
+    # preset_name = "sbv-mswea"
+    preset_name = "sbv-mswea-harbor"
     num_tasks = ares.info(preset_name).num_tasks
 
     # For testing, you can limit the number of tasks

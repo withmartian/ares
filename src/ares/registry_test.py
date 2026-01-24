@@ -54,8 +54,9 @@ class _MockEnvSpec:
 def test_list_presets():
     """Test that default presets are registered."""
     presets = registry._list_presets()
-    assert len(presets) == 1
+    assert len(presets) == 2
     assert "sbv-mswea" in presets
+    assert "sbv-mswea-harbor" in presets
 
 
 def test_info_all_presets():

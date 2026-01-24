@@ -15,6 +15,7 @@ from ares import registry
 from ares.code_agents import mini_swe_agent
 from ares.containers import containers
 from ares.environments import base
+from ares.environments import harbor_env
 from ares.environments import swebench_env
 from ares.experiment_tracking import stat_tracker
 
@@ -56,6 +57,41 @@ class SwebenchVerifiedMiniSWESpec:
         )
 
 
+@dataclasses.dataclass(frozen=True)
+class SwebenchVerifiedMiniSWEHarborSpec:
+    """Environment spec for SWE-bench Verified with mini-swe-agent via Harbor."""
+
+    def get_info(self) -> registry.EnvironmentInfo:
+        """Return metadata about SWE-bench Verified via Harbor."""
+        return registry.EnvironmentInfo(
+            name="sbv-mswea-harbor",
+            description="SWE-bench Verified with mini-swe-agent via Harbor",
+            num_tasks=500,
+        )
+
+    def get_env(
+        self,
+        *,
+        selector: registry.TaskSelector,
+        container_factory: containers.ContainerFactory,
+        tracker: stat_tracker.StatTracker | None = None,
+    ) -> base.Environment:
+        """Create SWE-bench Verified Harbor environment with mini-swe-agent."""
+        all_tasks = harbor_env.load_harbor_dataset(name="swebench-verified", version="1.0")
+        selected_tasks = selector(all_tasks)
+
+        if not selected_tasks:
+            raise ValueError("Task selector produced no tasks.")
+
+        return harbor_env.HarborEnv(
+            tasks=selected_tasks,
+            container_factory=container_factory,
+            code_agent_factory=mini_swe_agent.MiniSWECodeAgent,
+            step_limit=100,
+            tracker=tracker,
+        )
+
+
 def _register_default_presets() -> None:
     """Register all default ARES environment presets.
 
@@ -63,6 +99,7 @@ def _register_default_presets() -> None:
     ensuring built-in presets are always available.
     """
     registry.register_preset("sbv-mswea", SwebenchVerifiedMiniSWESpec())
+    registry.register_preset("sbv-mswea-harbor", SwebenchVerifiedMiniSWEHarborSpec())
     _LOGGER.debug("Registered %d default presets", len(registry._list_presets()))
 
 
