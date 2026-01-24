@@ -16,13 +16,26 @@ import sys
 import time
 from typing import ClassVar
 
-from rich.markup import escape
+from rich.markup import escape as rich_escape
 from textual import app
 from textual import containers
 from textual import widgets
 
 from ares.environments import base
 from ares.llms import llm_clients
+
+
+def escape(text: str) -> str:
+    """Escape text for Rich markup, handling all problematic characters.
+
+    This wraps rich.markup.escape and adds additional safety for edge cases.
+    """
+    # First apply Rich's built-in escape
+    text = rich_escape(text)
+    # Additionally escape any remaining angle brackets that might confuse the parser
+    # in combination with other characters
+    text = text.replace("<", "\\<").replace(">", "\\>")
+    return text
 
 
 class TaskStatus(Enum):

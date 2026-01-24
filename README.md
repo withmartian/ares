@@ -99,7 +99,7 @@ import asyncio
 
 from ares.code_agents import mini_swe_agent
 from ares.containers import docker  # Use local Docker, or import daytona for cloud
-from ares.environments import swebench_env
+from ares.environments import harbor_env
 from ares.llms import chat_completions_compatible
 
 
@@ -109,12 +109,12 @@ async def main():
         model="openai/gpt-4o-mini"
     )
 
-    # Load SWE-bench tasks
-    all_tasks = swebench_env.swebench_verified_tasks()
+    # Load SWE-bench tasks via Harbor
+    all_tasks = harbor_env.load_harbor_dataset(name="swebench-verified", version="1.0")
     tasks = [all_tasks[0]]  # Run on only one task for now
 
     # Create environment with local Docker and MiniSWE agent
-    async with swebench_env.SweBenchEnv(
+    async with harbor_env.HarborEnv(
         tasks=tasks,
         container_factory=docker.DockerContainer,  # Use local Docker
         code_agent_factory=mini_swe_agent.MiniSWECodeAgent,
