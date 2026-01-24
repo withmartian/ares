@@ -10,12 +10,6 @@ ARES (Agentic Research and Evaluation Suite) is an RL-first framework for traini
 
 📚 **[Read the full documentation](https://ares.readthedocs.io/)** to learn about ARES's core concepts and architecture.
 
-For local development, build the docs with:
-```bash
-uv sync --group docs
-cd docs && uv run --group docs make html
-```
-
 ## Quick Start
 
 ### Pre-requisites
