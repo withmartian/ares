@@ -1,7 +1,17 @@
 Core Concepts
 =============
 
-ARES provides a reinforcement learning framework for code agents, treating LLM interactions as observations and actions within a standard RL loop. This page explains the key abstractions that make this possible.
+ARES provides a reinforcement learning framework that enables training policies (agents) to produce better LLM responses for code agents. Unlike traditional frameworks that treat the entire code agent as the optimization target, ARES trains the **LLM within the agent** by treating LLM interactions as observations and actions within a standard RL loop.
+
+**Key Distinction**
+
+It's important to understand two different concepts in ARES:
+
+* Code Agent (Static)
+    The orchestration logic that uses a Container and LLM to solve tasks (e.g., MiniSWECodeAgent). This is **part of the environment** and remains fixed during training. Think of it as the scaffold that defines how an LLM interacts with code.
+
+* Agent/Policy (Trained)
+    The component you're actually training - a function that maps ``LLMRequest → LLMResponse``. This could be a fine-tuned LLM, a prompt optimizer, or any policy that produces better responses. This is what improves through reinforcement learning.
 
 System Architecture
 -------------------
@@ -14,7 +24,7 @@ Here's how the components fit together:
     ═════════════════                     ════════════════
 
     ┌────────────────────────┐
-    │  Your RL Policy        │            ┌──────────────────────────────────────┐
+    │  Your RL Policy/Agent  │            ┌──────────────────────────────────────┐
     │  (e.g. Fine-tuned LLM) │            │         CodeBaseEnv                  │
     │  receives request,     |            |                                      |
     |  generates response    |            │                                      │
@@ -68,14 +78,16 @@ Key Properties
 Environment
 -----------
 
-An **Environment** orchestrates the complete RL loop for code agent training and evaluation. ARES implements an async version of `DeepMind's dm_env specification <https://github.com/google-deepmind/dm_env>`_.
+An **Environment** encapsulates the task, container, and code agent as a single RL environment. ARES implements an async version of `DeepMind's dm_env specification <https://github.com/google-deepmind/dm_env>`_.
 
 The key abstraction is ``CodeBaseEnv``, which:
 
-* **Manages a Container** - Provides an isolated execution environment for the agent
-* **Manages a CodeAgent** - Runs the agent logic that attempts to solve tasks
-* **Exposes LLM requests as observations** - Intercepts LLM calls from the agent
-* **Treats LLM responses as actions** - Your policy/model provides responses to drive the agent forward
+* **Manages a Container** - Provides an isolated execution environment
+* **Manages a CodeAgent** - Runs the orchestration logic for solving the task
+* **Exposes LLM requests as observations** - Intercepts calls from the code agent
+* **Treats LLM responses as actions** - Your trainable agent/policy provides responses
+
+Crucially, the **CodeAgent is part of the environment**, not what you're training. Your training loop optimizes an agent/policy that produces better ``LLMResponse`` outputs given ``LLMRequest`` observations.
 
 Standard RL Loop
 ~~~~~~~~~~~~~~~~
@@ -162,7 +174,7 @@ Connection to the RL Loop
 
 Here's the key insight: **The agent doesn't know it's part of an RL loop.**
 
-When the agent calls ``await self._llm_client(request)``, it blocks and waits for a response. But the ``LLMClient`` is actually a ``QueueMediatedLLMClient`` (see :doc:`queue-mediated-client`), which:
+When the agent calls ``await self._llm_client(request)``, it blocks and waits for a response. But the ``LLMClient`` is actually a ``QueueMediatedLLMClient`` (see :doc:`how-it-works`), which:
 
 1. Puts the request into a queue
 2. Waits for someone to provide a response
@@ -204,7 +216,9 @@ This can look like:
                 cmd_output = await self.run_command(command)
                 ...
 
-# Which you will need to rewrite into something like:
+Which you will need to rewrite into something like:
+
+.. code-block:: python
 
     class MyARESCodeAgent:
         def __init__(self, container: Container, llm_client, QueueMediatedLLMClient):
@@ -312,7 +326,7 @@ Available Implementations
     Makes real API calls to OpenAI-compatible endpoints (OpenAI, Martian, etc.). Includes retry logic, cost tracking, and configurable base URLs.
 
 **QueueMediatedLLMClient** (``ares.llms.queue_mediated_client``)
-    The critical piece that enables the RL abstraction. See :doc:`queue-mediated-client` for details.
+    The critical piece that enables the RL abstraction. See :doc:`how-it-works` for details.
 
 **MockLLMClient** (``ares.llms.mock_llm_client``)
     Returns pre-defined responses for testing and debugging.
@@ -320,5 +334,5 @@ Available Implementations
 Next Steps
 ----------
 
-* Learn about the :doc:`queue-mediated-client` pattern that makes the RL abstraction possible
+* Learn about the QueueMediatedLLMClient pattern that makes the RL abstraction possible - :doc:`how-it-works`
 * See the `README <https://github.com/withmartian/ares>`_ for usage examples

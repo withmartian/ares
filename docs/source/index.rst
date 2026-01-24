@@ -10,7 +10,7 @@ Unlike traditional frameworks that treat the entire code agent as the optimizati
    :caption: Contents:
 
    core-concepts
-   queue-mediated-client
+   how-it-works
 
 Getting Started
 ---------------
