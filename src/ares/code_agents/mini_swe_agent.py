@@ -1,3 +1,9 @@
+# Original code: https://github.com/SWE-agent/mini-swe-agent/blob/main/src/minisweagent/agents/default.py
+# Copyright (c) 2025 Kilian A. Lieret and Carlos E. Jimenez
+# Licensed under the MIT License.
+#
+# Modifications Copyright (c) 2026 Martian
+
 """A Code Agent wrapping the mini-swe-agent.
 
 Last checked: Nov 15, 2025

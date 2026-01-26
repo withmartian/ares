@@ -11,6 +11,7 @@ import json
 import logging
 import pathlib
 import random
+from typing import Literal
 
 from harbor.models.task import task as harbor_task
 from harbor.models.trial import paths as harbor_paths
@@ -27,8 +28,8 @@ _LOGGER = logging.getLogger(__name__)
 
 
 @functools.lru_cache(maxsize=1)
-def _get_harbor_dataset_client() -> harbor_dataset_client.RegistryClient:
-    return harbor_dataset_client.RegistryClient()
+def _get_harbor_dataset_client() -> harbor_dataset_client.BaseRegistryClient:
+    return harbor_dataset_client.RegistryClientFactory.create()
 
 
 def load_harbor_dataset(name: str, version: str) -> list[harbor_task.Task]:
@@ -102,10 +103,12 @@ class HarborEnv(base.CodeBaseEnv[harbor_task.Task]):
             remote_path="/tests",
         )
 
+        _LOGGER.debug("[%d] Creating verifier directory", id(self))
+        verifier_dir = str(harbor_paths.EnvironmentPaths.verifier_dir)
+        await container.exec_run(command=f"mkdir -p {verifier_dir}")
+
         _LOGGER.debug("[%d] Running tests and evaluating.", id(self))
-        test_path = str(
-            pathlib.Path("/tests") / task.paths.test_path.relative_to(task.paths.tests_dir)
-        )
+        test_path = str(pathlib.Path("/tests") / task.paths.test_path.relative_to(task.paths.tests_dir))
         # TODO: Log the output of the test execution somewhere that makes sense
         test_result = await container.exec_run(command=f"bash {test_path}")
         _LOGGER.debug("[%d] Test result: %s.", id(self), test_result.output)
@@ -152,3 +155,65 @@ class HarborEnv(base.CodeBaseEnv[harbor_task.Task]):
 
         else:
             raise ValueError(f"Unsupported reward file type: {remote_path}")
+
+    def _get_task_type(self) -> Literal["swebench", "harbor"]:
+        """Return task type for snapshotting."""
+        return "harbor"
+
+    def _serialize_task(self, task: harbor_task.Task) -> dict:
+        """Serialize Harbor task (just save task directory path)."""
+        return {"task_dir": str(task.task_dir)}
+
+    @classmethod
+    def _deserialize_task(cls, task_data: dict, task_type: str) -> harbor_task.Task:
+        """Deserialize Harbor task (reload from directory)."""
+        del task_type  # Unused - validated by caller
+        return harbor_task.Task(task_dir=pathlib.Path(task_data["task_dir"]))
+
+    @classmethod
+    async def load_from_state(
+        cls,
+        snapshot_path: "base.snapshot.EnvironmentSnapshot | pathlib.Path",
+        *,
+        container_factory: containers.ContainerFactory | None = None,
+        code_agent_factory: code_agent_base.CodeAgentFactory | None = None,
+        tracker: stat_tracker.StatTracker | None = None,
+    ) -> "HarborEnv":
+        """Restore HarborEnv from snapshot.
+
+        Args:
+            snapshot_path: EnvironmentSnapshot or path to snapshot.json
+            container_factory: Override factory (uses snapshot metadata if None)
+            code_agent_factory: Override factory (uses default if None)
+            tracker: Optional stat tracker
+
+        Returns:
+            Restored environment (NOT active, use async with)
+        """
+        from ares.environments import snapshot as snapshot_module
+
+        # Load snapshot if path provided
+        if isinstance(snapshot_path, pathlib.Path):
+            snap = snapshot_module.EnvironmentSnapshot.load_from_file(snapshot_path)
+        else:
+            snap = snapshot_path
+
+        # Deserialize task
+        task = cls._deserialize_task(snap.task_data, snap.task_type)
+
+        # Create environment instance with tasks argument
+        container_factory = container_factory or base.ares_daytona.DaytonaContainer
+        code_agent_factory = code_agent_factory or mini_swe_agent.MiniSWECodeAgent
+
+        env = cls(
+            tasks=[task],
+            container_factory=container_factory,
+            code_agent_factory=code_agent_factory,
+            step_limit=snap.step_limit,
+            tracker=tracker,
+        )
+
+        # Restore state using base helper
+        await env._restore_from_snapshot(snap)
+
+        return env
