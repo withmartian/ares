@@ -23,7 +23,7 @@ To install `uv`, follow the instructions at https://docs.astral.sh/uv/getting-st
 For now, we recommend running ARES locally from this directory:
 
 ```bash
-uv sync --all-groups
+uv sync --all-groups --all-extras
 ```
 
 and you're ready to get started.
