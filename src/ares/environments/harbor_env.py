@@ -11,6 +11,7 @@ import json
 import logging
 import pathlib
 import random
+from typing import Literal
 
 from harbor.models.task import task as harbor_task
 from harbor.models.trial import paths as harbor_paths
@@ -164,3 +165,17 @@ class HarborEnv(base.CodeBaseEnv[harbor_task.Task]):
 
         else:
             raise ValueError(f"Unsupported reward file type: {remote_path}")
+
+    def _get_task_type(self) -> Literal["swebench", "harbor"]:
+        """Return task type for snapshotting."""
+        return "harbor"
+
+    def _serialize_task(self, task: harbor_task.Task) -> dict:
+        """Serialize Harbor task (just save task directory path)."""
+        return {"task_dir": str(task.task_dir)}
+
+    @classmethod
+    def _deserialize_task(cls, task_data: dict, task_type: str) -> harbor_task.Task:
+        """Deserialize Harbor task (reload from directory)."""
+        del task_type  # Unused - validated by caller
+        return harbor_task.Task(task_dir=pathlib.Path(task_data["task_dir"]))

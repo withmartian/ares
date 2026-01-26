@@ -12,7 +12,7 @@ import json
 import logging
 import random
 import time
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 import datasets
 import pydantic
@@ -247,3 +247,22 @@ class SweBenchEnv(base.CodeBaseEnv[SwebenchTask]):
 
         test_result = await _run_tests_and_evaluate(self._container, self._current_task, self._test_spec)
         return 1.0 if test_result["resolved"] else 0.0
+
+    def _get_task_type(self) -> Literal["swebench", "harbor"]:
+        """Return task type for snapshotting."""
+        return "swebench"
+
+    def _serialize_task(self, task: SwebenchTask) -> dict:
+        """Serialize SwebenchTask using Pydantic."""
+        data = task.model_dump()
+        # Convert lists back to JSON strings for field validators
+        data["FAIL_TO_PASS"] = json.dumps(data["FAIL_TO_PASS"])
+        data["PASS_TO_PASS"] = json.dumps(data["PASS_TO_PASS"])
+        return data
+
+    @classmethod
+    def _deserialize_task(cls, task_data: dict, task_type: str) -> SwebenchTask:
+        """Deserialize SwebenchTask using Pydantic."""
+        del task_type  # Unused - validated by caller
+        # The field validators will convert JSON strings to lists
+        return SwebenchTask.model_validate(task_data)

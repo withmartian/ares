@@ -5,13 +5,15 @@ SWE dm_env Environment implementation.
 import abc
 import asyncio
 import atexit
+import dataclasses
+import datetime
 import functools
 import logging
 import os
 import pathlib
 import time
 from types import TracebackType
-from typing import Literal, NamedTuple, Protocol, Self
+from typing import Any, Literal, NamedTuple, Protocol, Self
 import uuid
 
 from numpy.typing import NDArray
@@ -21,6 +23,7 @@ from ares.code_agents import mini_swe_agent
 from ares.containers import containers
 from ares.containers import daytona as ares_daytona
 from ares.environments import base
+from ares.environments import snapshot
 from ares.experiment_tracking import stat_tracker
 from ares.llms import llm_clients
 from ares.llms import queue_mediated_client
@@ -287,9 +290,11 @@ class CodeBaseEnv[TaskType](Environment[llm_clients.LLMResponse, llm_clients.LLM
         self._is_active = False
         self._container: containers.Container | None = None
         self._current_task: TaskType | None = None
+        self._code_agent: code_agent_base.CodeAgent | None = None
         self._code_agent_task: asyncio.Task[None] | None = None
         self._step_count = 0
-        self._is_active = False
+        self._requires_reset = False
+        self._saved_agent_messages: list[dict] = []
 
         # Register for cleanup on exit.
         _ENVIRONMENT_JANITOR.register_for_cleanup(self)
@@ -429,6 +434,197 @@ class CodeBaseEnv[TaskType](Environment[llm_clients.LLMResponse, llm_clients.LLM
     def _assert_active(self) -> None:
         if not self._is_active:
             raise RuntimeError("Environment is not active.")
+
+    def _require_container(self) -> containers.Container:
+        """Get container or raise if not available."""
+        if self._container is None:
+            raise RuntimeError("Container is not available.")
+        return self._container
+
+    def _require_task(self) -> TaskType:
+        """Get current task or raise if not available."""
+        if self._current_task is None:
+            raise RuntimeError("No current task set.")
+        return self._current_task
+
+    def _validate_snapshot_allowed(self) -> None:
+        """Raise error if snapshot not allowed (mid-episode)."""
+        if self._code_agent_task is not None and not self._code_agent_task.done():
+            raise RuntimeError(
+                "Cannot snapshot during active episode. Call export_state() after reset() or after final step()."
+            )
+
+    def _get_task_type(self) -> Literal["swebench", "harbor"]:
+        """Return 'swebench' or 'harbor'. Override in subclasses if needed."""
+        # This will be overridden in subclasses if needed
+        raise NotImplementedError("Override _get_task_type in subclass")
+
+    def _get_container_type(self, container: containers.Container) -> Literal["daytona", "docker"]:
+        """Return 'daytona' or 'docker'."""
+        from ares.containers.daytona import DaytonaContainer
+
+        return "daytona" if isinstance(container, DaytonaContainer) else "docker"
+
+    def _get_agent_messages(self) -> list[dict]:
+        """Get agent message history if available."""
+        if self._code_agent is not None and hasattr(self._code_agent, "_messages"):
+            return list(self._code_agent._messages)
+        return []
+
+    async def _restore_container(self, snap: snapshot.EnvironmentSnapshot) -> containers.Container:
+        """Restore container from filesystem snapshot."""
+        # Create new container from original image/dockerfile
+        if snap.container_image:
+            container = self._container_factory.from_image(
+                image=snap.container_image,
+                resources=containers.Resources(**snap.container_resources) if snap.container_resources else None,
+            )
+        elif snap.container_dockerfile_path:
+            container = self._container_factory.from_dockerfile(
+                dockerfile_path=pathlib.Path(snap.container_dockerfile_path),
+                resources=containers.Resources(**snap.container_resources) if snap.container_resources else None,
+            )
+        else:
+            raise ValueError("Snapshot must have either image or dockerfile_path")
+
+        # Start container
+        await container.start()
+
+        # Restore filesystem from tarball
+        fs_path = snap.snapshot_dir / "container_fs.tar.gz"
+        if fs_path.exists():
+            await container.upload_dir(fs_path, "/")
+
+        return container
+
+    @classmethod
+    def _default_container_factory(cls, snap: snapshot.EnvironmentSnapshot) -> containers.ContainerFactory:
+        """Create default container factory from snapshot metadata."""
+        del snap  # Unused - could be used in future to select factory based on container_type
+        # Default to Daytona
+        return ares_daytona.DaytonaContainer
+
+    async def export_state(
+        self,
+        output_dir: pathlib.Path,
+        *,
+        snapshot_id: str | None = None,
+    ) -> snapshot.EnvironmentSnapshot:
+        """Export environment state to snapshot.
+
+        Args:
+            output_dir: Directory to save snapshot files (tarballs, metadata)
+            snapshot_id: Optional ID (defaults to UUID)
+
+        Returns:
+            EnvironmentSnapshot with metadata
+
+        Raises:
+            RuntimeError: If called during active episode (running code agent)
+        """
+        # Validate episode boundary
+        self._validate_snapshot_allowed()
+
+        snapshot_id = snapshot_id or str(uuid.uuid4())
+        snapshot_dir = output_dir / snapshot_id
+        snapshot_dir.mkdir(parents=True, exist_ok=True)
+
+        # 1. Download container filesystem
+        container = self._require_container()
+        fs_path = snapshot_dir / "container_fs.tar.gz"
+        await container.download_dir("/", fs_path)
+
+        # 2. Serialize task
+        task = self._require_task()
+        task_data = self._serialize_task(task)
+
+        # 3. Get agent messages (if agent exists)
+        agent_messages = self._get_agent_messages()
+
+        # 4. Create snapshot metadata
+        snap = snapshot.EnvironmentSnapshot(
+            snapshot_id=snapshot_id,
+            created_at=datetime.datetime.now().isoformat(),
+            snapshot_dir=snapshot_dir,
+            step_count=self._step_count,
+            step_limit=self._step_limit,
+            requires_reset=self._requires_reset,
+            task_type=self._get_task_type(),
+            task_data=task_data,
+            container_type=self._get_container_type(container),
+            container_image=getattr(container, "image", None),
+            container_dockerfile_path=(
+                str(getattr(container, "dockerfile_path", None)) if hasattr(container, "dockerfile_path") else None
+            ),
+            container_resources=dataclasses.asdict(container.resources) if container.resources else None,
+            agent_messages=agent_messages,
+        )
+
+        # Save metadata JSON
+        snap.save_to_file(snapshot_dir / "snapshot.json")
+
+        return snap
+
+    @classmethod
+    async def load_from_state(
+        cls,
+        snapshot_path: snapshot.EnvironmentSnapshot | pathlib.Path,
+        *,
+        container_factory: containers.ContainerFactory | None = None,
+        code_agent_factory: code_agent_base.CodeAgentFactory | None = None,
+    ) -> "CodeBaseEnv":
+        """Restore environment from snapshot.
+
+        Args:
+            snapshot_path: EnvironmentSnapshot or path to snapshot.json
+            container_factory: Override factory (uses snapshot metadata if None)
+            code_agent_factory: Override factory (uses default if None)
+
+        Returns:
+            Restored environment (NOT active, use async with)
+        """
+        # Load snapshot if path provided
+        if isinstance(snapshot_path, pathlib.Path):
+            snap = snapshot.EnvironmentSnapshot.load_from_file(snapshot_path)
+        else:
+            snap = snapshot_path
+
+        # Deserialize task
+        task = cls._deserialize_task(snap.task_data, snap.task_type)
+
+        # Create environment instance
+        container_factory = container_factory or cls._default_container_factory(snap)
+        code_agent_factory = code_agent_factory or mini_swe_agent.MiniSWECodeAgent
+
+        # Note: This creates a base CodeBaseEnv which is abstract
+        # In practice, this should be called on SweBenchEnv or HarborEnv subclasses
+        env = cls(
+            container_factory=container_factory,
+            code_agent_factory=code_agent_factory,
+            step_limit=snap.step_limit,
+        )
+
+        # Restore container
+        env._container = await env._restore_container(snap)
+        env._current_task = task
+        env._step_count = snap.step_count
+        env._requires_reset = snap.requires_reset
+
+        # Store messages for later restoration
+        env._saved_agent_messages = snap.agent_messages
+
+        return env
+
+    @abc.abstractmethod
+    def _serialize_task(self, task: TaskType) -> dict:
+        """Serialize task to dict. Override in subclasses."""
+        pass
+
+    @classmethod
+    @abc.abstractmethod
+    def _deserialize_task(cls, task_data: dict, task_type: str) -> Any:
+        """Deserialize task from dict. Override in subclasses."""
+        pass
 
     @abc.abstractmethod
     async def _reset_task(self) -> None:
