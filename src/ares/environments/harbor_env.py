@@ -11,6 +11,7 @@ import json
 import logging
 import pathlib
 import random
+from typing import Literal
 
 from harbor.models.task import task as harbor_task
 from harbor.models.trial import paths as harbor_paths
@@ -64,60 +65,52 @@ class HarborEnv(base.CodeBaseEnv[harbor_task.Task]):
         _LOGGER.debug("[%d] Selected task %s.", id(self), self._current_task.name)
 
     async def _start_container(self) -> None:
-        if self._current_task is None:
-            raise RuntimeError("Task has not been selected before starting the container.")
-
-        _LOGGER.info("[%d] Setting up container for task %s.", id(self), self._current_task.name)
+        task = self._require_task()
+        _LOGGER.info("[%d] Setting up container for task %s.", id(self), task.name)
         with self._tracker.timeit("harbor_env/create_container"):
             self._container = await base.create_container(
                 container_factory=self._container_factory,
                 container_prefix=self._prefix,
-                image_name=self._current_task.config.environment.docker_image,  # NOTE: May be None
+                image_name=task.config.environment.docker_image,  # NOTE: May be None
                 # TODO: This is pulled from current Harbor implementation for all
                 #       supported environments, track changes in future
-                dockerfile_path=self._current_task.paths.environment_dir / "Dockerfile",
+                dockerfile_path=task.paths.environment_dir / "Dockerfile",
                 resources=containers.Resources(
-                    cpu=self._current_task.config.environment.cpus,
-                    memory=self._current_task.config.environment.memory_mb // 1024,
-                    disk=self._current_task.config.environment.storage_mb // 1024,
+                    cpu=task.config.environment.cpus,
+                    memory=task.config.environment.memory_mb // 1024,
+                    disk=task.config.environment.storage_mb // 1024,
                 ),
             )
             await self._container.start()
         _LOGGER.debug("[%d] Container setup complete.", id(self))
 
     async def _start_code_agent(self) -> None:
-        if self._container is None:
-            raise RuntimeError("Container has not been created before starting the code agent.")
-        if self._current_task is None:
-            raise RuntimeError("Task has not been selected before starting the code agent.")
+        container = self._require_container()
+        task = self._require_task()
 
         _LOGGER.debug("[%d] Starting code agent.", id(self))
-        self._code_agent = self._code_agent_factory(container=self._container, llm_client=self._llm_client)
-        self._code_agent_task = asyncio.create_task(self._code_agent.run(self._current_task.instruction))
+        self._code_agent = self._code_agent_factory(container=container, llm_client=self._llm_client)
+        self._code_agent_task = asyncio.create_task(self._code_agent.run(task.instruction))
         _LOGGER.debug("[%d] Code agent started.", id(self))
 
     async def _compute_reward(self) -> float:
-        if self._container is None:
-            raise RuntimeError("Container has not been created before computing reward.")
-        if self._current_task is None:
-            raise RuntimeError("Task has not been selected before computing reward.")
+        container = self._require_container()
+        task = self._require_task()
 
         _LOGGER.debug("[%d] Uploading tests to container.", id(self))
-        await self._container.upload_dir(
-            local_path=self._current_task.paths.tests_dir,
+        await container.upload_dir(
+            local_path=task.paths.tests_dir,
             remote_path="/tests",
         )
 
         _LOGGER.debug("[%d] Creating verifier directory", id(self))
         verifier_dir = str(harbor_paths.EnvironmentPaths.verifier_dir)
-        await self._container.exec_run(command=f"mkdir -p {verifier_dir}")
+        await container.exec_run(command=f"mkdir -p {verifier_dir}")
 
         _LOGGER.debug("[%d] Running tests and evaluating.", id(self))
-        test_path = str(
-            pathlib.Path("/tests") / self._current_task.paths.test_path.relative_to(self._current_task.paths.tests_dir)
-        )
+        test_path = str(pathlib.Path("/tests") / task.paths.test_path.relative_to(task.paths.tests_dir))
         # TODO: Log the output of the test execution somewhere that makes sense
-        test_result = await self._container.exec_run(command=f"bash {test_path}")
+        test_result = await container.exec_run(command=f"bash {test_path}")
         _LOGGER.debug("[%d] Test result: %s.", id(self), test_result.output)
 
         # Try to read reward from both
@@ -135,15 +128,13 @@ class HarborEnv(base.CodeBaseEnv[harbor_task.Task]):
                 _LOGGER.warning("Error parsing reward file %s: %s", reward_path, e)
                 pass
 
-        raise ValueError(f"[{id(self)}] No reward found for task {self._current_task.name}")
+        raise ValueError(f"[{id(self)}] No reward found for task {task.name}")
 
     async def _parse_reward_file(self, remote_path: pathlib.Path | str) -> float | None:
         """Helper to parse a reward from a text or json file in the container."""
-        if self._container is None:
-            raise RuntimeError("Container has not been created before parsing reward file.")
-
+        container = self._require_container()
         remote_path = str(remote_path)
-        cat_result = await self._container.exec_run(command=f"cat {remote_path}")
+        cat_result = await container.exec_run(command=f"cat {remote_path}")
         if cat_result.exit_code != 0:
             # File doesn't exist
             return None
@@ -164,3 +155,65 @@ class HarborEnv(base.CodeBaseEnv[harbor_task.Task]):
 
         else:
             raise ValueError(f"Unsupported reward file type: {remote_path}")
+
+    def _get_task_type(self) -> Literal["swebench", "harbor"]:
+        """Return task type for snapshotting."""
+        return "harbor"
+
+    def _serialize_task(self, task: harbor_task.Task) -> dict:
+        """Serialize Harbor task (just save task directory path)."""
+        return {"task_dir": str(task.task_dir)}
+
+    @classmethod
+    def _deserialize_task(cls, task_data: dict, task_type: str) -> harbor_task.Task:
+        """Deserialize Harbor task (reload from directory)."""
+        del task_type  # Unused - validated by caller
+        return harbor_task.Task(task_dir=pathlib.Path(task_data["task_dir"]))
+
+    @classmethod
+    async def load_from_state(
+        cls,
+        snapshot_path: "base.snapshot.EnvironmentSnapshot | pathlib.Path",
+        *,
+        container_factory: containers.ContainerFactory | None = None,
+        code_agent_factory: code_agent_base.CodeAgentFactory | None = None,
+        tracker: stat_tracker.StatTracker | None = None,
+    ) -> "HarborEnv":
+        """Restore HarborEnv from snapshot.
+
+        Args:
+            snapshot_path: EnvironmentSnapshot or path to snapshot.json
+            container_factory: Override factory (uses snapshot metadata if None)
+            code_agent_factory: Override factory (uses default if None)
+            tracker: Optional stat tracker
+
+        Returns:
+            Restored environment (NOT active, use async with)
+        """
+        from ares.environments import snapshot as snapshot_module
+
+        # Load snapshot if path provided
+        if isinstance(snapshot_path, pathlib.Path):
+            snap = snapshot_module.EnvironmentSnapshot.load_from_file(snapshot_path)
+        else:
+            snap = snapshot_path
+
+        # Deserialize task
+        task = cls._deserialize_task(snap.task_data, snap.task_type)
+
+        # Create environment instance with tasks argument
+        container_factory = container_factory or base.ares_daytona.DaytonaContainer
+        code_agent_factory = code_agent_factory or mini_swe_agent.MiniSWECodeAgent
+
+        env = cls(
+            tasks=[task],
+            container_factory=container_factory,
+            code_agent_factory=code_agent_factory,
+            step_limit=snap.step_limit,
+            tracker=tracker,
+        )
+
+        # Restore state using base helper
+        await env._restore_from_snapshot(snap)
+
+        return env
