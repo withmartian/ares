@@ -1,0 +1,8 @@
+# Override isort configuration for examples directory
+# Treat ares as third-party here since examples demonstrate usage from a user perspective
+
+extend = "../ruff.toml"
+
+[lint.isort]
+# Empty known-first-party list - don't auto-detect ares as first-party
+known-first-party = []

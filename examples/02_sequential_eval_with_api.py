@@ -35,6 +35,7 @@ async def main():
         # Reset the environment to get the first timestep
         ts = await env.reset()
         step_count = 0
+        total_reward = 0.0
 
         # Continue until the episode is done
         while not ts.last():
@@ -47,12 +48,14 @@ async def main():
             # Step the environment with the action
             ts = await env.step(action)
 
+            assert ts.reward is not None
+            total_reward += ts.reward
             step_count += 1
 
         # Display final results
         print(f"\n{'=' * 80}")
         print(f"Episode completed after {step_count} steps")
-        print(f"Final reward: {ts.reward}")
+        print(f"Total reward: {total_reward}")
         print(f"{'=' * 80}")
 
 

@@ -5,10 +5,9 @@ from collections.abc import Awaitable
 import logging
 from typing import Any
 
-import tqdm
-
 from ares.environments import base
 from ares.llms import llm_clients
+import tqdm
 
 _LOGGER = logging.getLogger(__name__)
 
