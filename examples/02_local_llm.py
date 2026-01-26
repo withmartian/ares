@@ -9,12 +9,7 @@ Example usage:
 """
 
 import asyncio
-import time
-import uuid
 
-import openai.types.chat.chat_completion
-import openai.types.chat.chat_completion_message
-import openai.types.completion_usage
 import transformers
 
 from ares.environments import swebench_env
@@ -65,30 +60,12 @@ async def main():
             # We remove special tokens, such as the end of turn token.
             output_text = tokenizer.decode(outputs[0][num_input_tokens:], skip_special_tokens=True)
 
-            # Since an action is a chat completion response, we have to build one here.
-            action = llm_clients.LLMResponse(
-                chat_completion_response=openai.types.chat.chat_completion.ChatCompletion(
-                    id=str(uuid.uuid4()),
-                    choices=[
-                        openai.types.chat.chat_completion.Choice(
-                            message=openai.types.chat.chat_completion_message.ChatCompletionMessage(
-                                content=output_text,
-                                role="assistant",
-                            ),
-                            finish_reason="stop",
-                            index=0,
-                        )
-                    ],
-                    created=int(time.time()),
-                    model="Qwen/Qwen2.5-3B-Instruct",
-                    object="chat.completion",
-                    usage=openai.types.completion_usage.CompletionUsage(
-                        prompt_tokens=num_input_tokens,
-                        completion_tokens=num_output_tokens,
-                        total_tokens=num_input_tokens + num_output_tokens,
-                    ),
-                ),
-                cost=0.0,
+            # Build an LLMResponse using the helper function.
+            action = llm_clients.build_openai_compatible_llm_response(
+                output_text=output_text,
+                num_input_tokens=num_input_tokens,
+                num_output_tokens=num_output_tokens,
+                model="Qwen/Qwen2.5-3B-Instruct",
             )
 
             # Print the observation and action.
