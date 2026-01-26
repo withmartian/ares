@@ -16,6 +16,7 @@ import sys
 import time
 from typing import ClassVar
 
+import rich.text
 from rich.markup import escape as rich_escape
 from textual import app
 from textual import containers
@@ -28,14 +29,10 @@ from ares.llms import llm_clients
 def escape(text: str) -> str:
     """Escape text for Rich markup, handling all problematic characters.
 
-    This wraps rich.markup.escape and adds additional safety for edge cases.
+    This wraps rich.markup.escape which already handles all necessary escaping.
     """
-    # First apply Rich's built-in escape
-    text = rich_escape(text)
-    # Additionally escape any remaining angle brackets that might confuse the parser
-    # in combination with other characters
-    text = text.replace("<", "\\<").replace(">", "\\>")
-    return text
+    # rich_escape() already handles <, >, [, ], and other markup characters properly
+    return rich_escape(text)
 
 
 class TaskStatus(Enum):
@@ -262,7 +259,7 @@ class EvaluationDashboard(app.App):
         # For capturing logs
         self._original_log_handlers: list[logging.Handler] = []
         self._log_capture = StringIO()
-        self._log_lines: list[str] = []
+        self._log_lines: list[rich.text.Text] = []
         self._log_position = 0  # Track how much of log_capture we've processed
         self._seen_task_errors: set[int] = set()  # Track which task errors we've logged
 
@@ -295,7 +292,7 @@ class EvaluationDashboard(app.App):
                 yield widgets.Static(id="task-detail")
             with containers.Vertical(classes="right-panel"):
                 yield widgets.Static(id="histogram")
-                yield containers.ScrollableContainer(widgets.Static(id="logs-content"), id="logs")
+                yield containers.ScrollableContainer(widgets.Static(id="logs-content", markup=False), id="logs")
         yield widgets.Footer()
 
     def on_mount(self) -> None:
@@ -563,20 +560,25 @@ class EvaluationDashboard(app.App):
                 if not line:
                     continue
                 # Only include WARNING, ERROR, CRITICAL logs
+                # Use Text objects to safely add color without markup parsing issues
                 if "ERROR" in line or "CRITICAL" in line:
-                    self._log_lines.append(f"[#e76f51]{escape(line)}[/#e76f51]")
+                    text = rich.text.Text(line, style="#e76f51")
+                    self._log_lines.append(text)
                 elif "WARNING" in line:
-                    self._log_lines.append(f"[#f4a261]{escape(line)}[/#f4a261]")
+                    text = rich.text.Text(line, style="#f4a261")
+                    self._log_lines.append(text)
                 # Skip INFO and DEBUG logs
 
         # Add task error logs (only new ones)
         for task in self.tasks.values():
             if task.status == TaskStatus.ERROR and task.error and task.task_id not in self._seen_task_errors:
-                # Ensure task.error is a string and escape it
+                # Ensure task.error is a string
                 error_msg = str(task.error) if task.error else "Unknown error"
-                # Use parentheses instead of square brackets to avoid markup conflicts
-                error_line = f"[bold #e76f51]Task {task.task_id} ERROR:[/bold #e76f51] {escape(error_msg)}"
-                self._log_lines.append(error_line)
+                # Create styled Text object
+                text = rich.text.Text()
+                text.append(f"Task {task.task_id} ERROR: ", style="bold #e76f51")
+                text.append(error_msg, style="#e76f51")
+                self._log_lines.append(text)
                 self._seen_task_errors.add(task.task_id)
 
         # Keep only the last 1000 lines to avoid memory issues
@@ -584,10 +586,14 @@ class EvaluationDashboard(app.App):
             self._log_lines = self._log_lines[-1000:]
 
         if not self._log_lines:
-            log_text = "[dim]No warnings or errors yet[/dim]"
+            log_text = rich.text.Text("No warnings or errors yet", style="dim")
         else:
-            # Join already-escaped log lines (they already have color markup)
-            log_text = "\n".join(self._log_lines)
+            # Assemble Text objects with newlines between them
+            log_text = rich.text.Text()
+            for i, line in enumerate(self._log_lines):
+                if i > 0:
+                    log_text.append("\n")
+                log_text.append_text(line)
 
         logs_widget = self.query_one("#logs-content", widgets.Static)
         logs_widget.update(log_text)
