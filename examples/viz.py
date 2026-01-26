@@ -16,23 +16,14 @@ import sys
 import time
 from typing import ClassVar
 
+import rich.markup
 import rich.text
-from rich.markup import escape as rich_escape
 from textual import app
 from textual import containers
 from textual import widgets
 
 from ares.environments import base
 from ares.llms import llm_clients
-
-
-def escape(text: str) -> str:
-    """Escape text for Rich markup, handling all problematic characters.
-
-    This wraps rich.markup.escape which already handles all necessary escaping.
-    """
-    # rich_escape() already handles <, >, [, ], and other markup characters properly
-    return rich_escape(text)
 
 
 class TaskStatus(Enum):
@@ -362,7 +353,7 @@ class EvaluationDashboard(app.App):
         detail_lines = [f"[bold #4a9eff]Task {task.task_id} Details[/bold #4a9eff]"]
 
         if task.status == TaskStatus.ERROR and task.error:
-            detail_lines.append(f"[bold #e76f51]Error:[/bold #e76f51] {escape(task.error)}")
+            detail_lines.append(f"[bold #e76f51]Error:[/bold #e76f51] {rich.markup.escape(task.error)}")
         elif task.status == TaskStatus.COMPLETED:
             detail_lines.append(f"[#2a9d8f]Completed successfully[/#2a9d8f] - Reward: {task.reward}")
         elif task.status == TaskStatus.RUNNING:
