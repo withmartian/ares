@@ -27,8 +27,8 @@ _LOGGER = logging.getLogger(__name__)
 
 
 @functools.lru_cache(maxsize=1)
-def _get_harbor_dataset_client() -> harbor_dataset_client.RegistryClient:
-    return harbor_dataset_client.RegistryClient()
+def _get_harbor_dataset_client() -> harbor_dataset_client.BaseRegistryClient:
+    return harbor_dataset_client.RegistryClientFactory.create()
 
 
 def load_harbor_dataset(name: str, version: str) -> list[harbor_task.Task]:
@@ -64,6 +64,9 @@ class HarborEnv(base.CodeBaseEnv[harbor_task.Task]):
         _LOGGER.debug("[%d] Selected task %s.", id(self), self._current_task.name)
 
     async def _start_container(self) -> None:
+        if self._current_task is None:
+            raise RuntimeError("Task has not been selected before starting the container.")
+
         _LOGGER.info("[%d] Setting up container for task %s.", id(self), self._current_task.name)
         with self._tracker.timeit("harbor_env/create_container"):
             self._container = await base.create_container(
@@ -83,17 +86,31 @@ class HarborEnv(base.CodeBaseEnv[harbor_task.Task]):
         _LOGGER.debug("[%d] Container setup complete.", id(self))
 
     async def _start_code_agent(self) -> None:
+        if self._container is None:
+            raise RuntimeError("Container has not been created before starting the code agent.")
+        if self._current_task is None:
+            raise RuntimeError("Task has not been selected before starting the code agent.")
+
         _LOGGER.debug("[%d] Starting code agent.", id(self))
         self._code_agent = self._code_agent_factory(container=self._container, llm_client=self._llm_client)
         self._code_agent_task = asyncio.create_task(self._code_agent.run(self._current_task.instruction))
         _LOGGER.debug("[%d] Code agent started.", id(self))
 
     async def _compute_reward(self) -> float:
+        if self._container is None:
+            raise RuntimeError("Container has not been created before computing reward.")
+        if self._current_task is None:
+            raise RuntimeError("Task has not been selected before computing reward.")
+
         _LOGGER.debug("[%d] Uploading tests to container.", id(self))
         await self._container.upload_dir(
             local_path=self._current_task.paths.tests_dir,
             remote_path="/tests",
         )
+
+        _LOGGER.debug("[%d] Creating verifier directory", id(self))
+        verifier_dir = str(harbor_paths.EnvironmentPaths.verifier_dir)
+        await self._container.exec_run(command=f"mkdir -p {verifier_dir}")
 
         _LOGGER.debug("[%d] Running tests and evaluating.", id(self))
         test_path = str(
@@ -122,6 +139,9 @@ class HarborEnv(base.CodeBaseEnv[harbor_task.Task]):
 
     async def _parse_reward_file(self, remote_path: pathlib.Path | str) -> float | None:
         """Helper to parse a reward from a text or json file in the container."""
+        if self._container is None:
+            raise RuntimeError("Container has not been created before parsing reward file.")
+
         remote_path = str(remote_path)
         cat_result = await self._container.exec_run(command=f"cat {remote_path}")
         if cat_result.exit_code != 0:
