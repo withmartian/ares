@@ -334,3 +334,65 @@ async def test_export_state_raises_if_no_task():
 
     with tempfile.TemporaryDirectory() as tmp_dir, pytest.raises(RuntimeError, match="No current task set"):
         await env.export_state(pathlib.Path(tmp_dir))
+
+
+@pytest.mark.asyncio
+async def test_load_from_state_creates_valid_env(tmp_path: pathlib.Path):
+    """Test load_from_state creates a properly initialized environment."""
+
+    # Create a mock container with download_dir and upload_dir support
+    class MockContainerWithDirOps(mock_container.MockContainer):
+        def __init__(self):
+            super().__init__()
+            self.resources = None
+            self.image = "python:3.12"  # Add image attribute for snapshot
+
+        async def download_dir(self, remote_path: str, local_path: pathlib.Path):
+            del remote_path  # Unused in mock
+            local_path.parent.mkdir(parents=True, exist_ok=True)
+            local_path.write_text("mock tarball")
+
+        async def upload_dir(self, local_path: pathlib.Path, remote_path: str):
+            """Mock upload_dir for container restoration."""
+            del local_path, remote_path  # Unused in mock
+
+    # Create and export state
+    env = swebench_env.SweBenchEnv(
+        tasks=[_MOCK_SWEBENCH_TASK],
+        container_factory=mock_container.MockContainerFactory,
+        step_limit=42,
+    )
+
+    container = MockContainerWithDirOps()
+    await container.start()
+    env._container = container
+    env._current_task = _MOCK_SWEBENCH_TASK
+    env._step_count = 7
+    env._requires_reset = False
+    env._code_agent_task = None
+
+    snap = await env.export_state(tmp_path, snapshot_id="test-load")
+
+    # Load from snapshot
+    class MockContainerFactory:
+        @classmethod
+        def from_image(cls, *, image: str, name: str | None = None, resources=None):
+            del image, name, resources
+            return MockContainerWithDirOps()
+
+        @classmethod
+        def from_dockerfile(cls, *, dockerfile_path, name: str | None = None, resources=None):
+            del dockerfile_path, name, resources
+            return MockContainerWithDirOps()
+
+    restored_env = await swebench_env.SweBenchEnv.load_from_state(snap, container_factory=MockContainerFactory)
+
+    # Verify restoration
+    assert restored_env._step_count == 7
+    assert restored_env._step_limit == 42
+    assert restored_env._requires_reset is False
+    assert restored_env._current_task.instance_id == _MOCK_SWEBENCH_TASK.instance_id
+    assert restored_env._container is not None
+
+    # Cleanup
+    await restored_env.close()

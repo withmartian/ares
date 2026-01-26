@@ -565,55 +565,27 @@ class CodeBaseEnv[TaskType](Environment[llm_clients.LLMResponse, llm_clients.LLM
 
         return snap
 
-    @classmethod
-    async def load_from_state(
-        cls,
-        snapshot_path: snapshot.EnvironmentSnapshot | pathlib.Path,
-        *,
-        container_factory: containers.ContainerFactory | None = None,
-        code_agent_factory: code_agent_base.CodeAgentFactory | None = None,
-    ) -> "CodeBaseEnv":
-        """Restore environment from snapshot.
+    async def _restore_from_snapshot(self, snap: snapshot.EnvironmentSnapshot) -> None:
+        """Internal helper to restore state from snapshot.
+
+        Called by subclass load_from_state implementations after creating the environment.
 
         Args:
-            snapshot_path: EnvironmentSnapshot or path to snapshot.json
-            container_factory: Override factory (uses snapshot metadata if None)
-            code_agent_factory: Override factory (uses default if None)
-
-        Returns:
-            Restored environment (NOT active, use async with)
+            snap: The snapshot to restore from
         """
-        # Load snapshot if path provided
-        if isinstance(snapshot_path, pathlib.Path):
-            snap = snapshot.EnvironmentSnapshot.load_from_file(snapshot_path)
-        else:
-            snap = snapshot_path
-
-        # Deserialize task
-        task = cls._deserialize_task(snap.task_data, snap.task_type)
-
-        # Create environment instance
-        container_factory = container_factory or cls._default_container_factory(snap)
-        code_agent_factory = code_agent_factory or mini_swe_agent.MiniSWECodeAgent
-
-        # Note: This creates a base CodeBaseEnv which is abstract
-        # In practice, this should be called on SweBenchEnv or HarborEnv subclasses
-        env = cls(
-            container_factory=container_factory,
-            code_agent_factory=code_agent_factory,
-            step_limit=snap.step_limit,
-        )
-
         # Restore container
-        env._container = await env._restore_container(snap)
-        env._current_task = task
-        env._step_count = snap.step_count
-        env._requires_reset = snap.requires_reset
+        self._container = await self._restore_container(snap)
+
+        # Deserialize and set task
+        task = self._deserialize_task(snap.task_data, snap.task_type)
+        self._current_task = task
+
+        # Restore state
+        self._step_count = snap.step_count
+        self._requires_reset = snap.requires_reset
 
         # Store messages for later restoration
-        env._saved_agent_messages = snap.agent_messages
-
-        return env
+        self._saved_agent_messages = snap.agent_messages
 
     @abc.abstractmethod
     def _serialize_task(self, task: TaskType) -> dict:
