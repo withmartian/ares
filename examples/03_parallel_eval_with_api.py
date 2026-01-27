@@ -33,10 +33,9 @@ from typing import Any
 import ares
 from ares.containers import containers
 from ares.containers import daytona
+from ares.contrib import eval_visualizer
 from ares.environments import base
 from ares.llms import chat_completions_compatible
-
-from . import viz
 
 
 async def evaluate_task(
@@ -44,7 +43,7 @@ async def evaluate_task(
     task_idx: int,
     agent: chat_completions_compatible.ChatCompletionCompatibleLLMClient,
     container_factory: containers.ContainerFactory,
-    dashboard: viz.EvaluationDashboard,
+    dashboard: eval_visualizer.EvaluationDashboard,
 ) -> base.TimeStep[Any, float, float]:
     """Evaluate a single task and report progress to the dashboard.
 
@@ -97,7 +96,7 @@ async def main():
     sem = asyncio.Semaphore(num_parallel_workers)
 
     # Create the dashboard
-    dashboard = viz.EvaluationDashboard(
+    dashboard = eval_visualizer.EvaluationDashboard(
         total_tasks=num_tasks,
         preset_name=preset_name,
         max_parallel=num_parallel_workers,

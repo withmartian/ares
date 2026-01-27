@@ -1,7 +1,17 @@
 """Textual TUI visualization for parallel task evaluation.
 
+EXPERIMENTAL: This module is mostly vibe-coded and experimental, but included in case
+it's useful for other eval scripts. The API may change without notice.
+
 This module provides a terminal-based UI for monitoring parallel task execution
 with real-time statistics, logs, and progress tracking.
+
+Dependencies:
+    This module requires optional dependencies from the 'eval-viz' group:
+    Working from source:
+        uv sync --group eval-viz
+    or externally:
+        uv add martian-ares[eval-viz]
 """
 
 import asyncio
