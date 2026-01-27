@@ -85,15 +85,15 @@ ARES treats code agent interactions as a reinforcement learning problem:
 - `create_container()` helper for creating containers from images or Dockerfiles
 - `Janitor` class for emergency cleanup of containers on abnormal termination
 
-**Implementation (`harbor_env.py`):**
-- `HarborEnv` - Concrete environment for Harbor-compatible datasets (including SWE-bench)
+**Implementation (`code_env.py`):**
+- `CodeEnvironment` - Concrete environment for Harbor-compatible datasets (including SWE-bench)
 - Orchestrates the entire RL loop: manages container lifecycle, code agent execution, and LLM request interception
 - Builds containers from Dockerfiles with configurable resources (CPU, memory, disk)
 - Reads reward from `/reward.txt` or `/reward.json` in the container
 - Uses async context manager pattern (`async with env:`) for guaranteed cleanup
 
 **Episode Termination:**
-- Step limit reached (default: 250 steps for HarborEnv)
+- Step limit reached (default: 250 steps for CodeEnvironment)
 - Agent explicitly submits (signals completion)
 - Container or agent error
 
@@ -198,7 +198,7 @@ Most dataclasses use `frozen=True` to ensure thread-safety in async contexts.
 Async queues bridge linear agent code with the RL environment, enabling "interception" of LLM calls without agents being aware of the RL loop.
 
 ### YAGNI (You Aren't Gonna Need It)
-Prefer concrete implementations over abstractions. For example, `HarborEnv` implements the `Environment` protocol directly without base classes, since Harbor is designed to handle all code agent benchmarks. Abstractions are added only when needed.
+Prefer concrete implementations over abstractions. For example, `CodeEnvironment` implements the `Environment` protocol directly without base classes, since Harbor is designed to handle all code agent benchmarks. Abstractions are added only when needed.
 
 ## Code Conventions
 

@@ -15,7 +15,7 @@ from ares import registry
 from ares.code_agents import mini_swe_agent
 from ares.containers import containers
 from ares.environments import base
-from ares.environments import harbor_env
+from ares.environments import code_env
 from ares.experiment_tracking import stat_tracker
 
 _LOGGER = logging.getLogger(__name__)
@@ -41,13 +41,13 @@ class SwebenchVerifiedMiniSWESpec:
         tracker: stat_tracker.StatTracker | None = None,
     ) -> base.Environment:
         """Create SWE-bench Verified environment with mini-swe-agent."""
-        all_tasks = harbor_env.load_harbor_dataset(name="swebench-verified", version="1.0")
+        all_tasks = code_env.load_harbor_dataset(name="swebench-verified", version="1.0")
         selected_tasks = selector(all_tasks)
 
         if not selected_tasks:
             raise ValueError("Task selector produced no tasks.")
 
-        return harbor_env.HarborEnv(
+        return code_env.CodeEnvironment(
             tasks=selected_tasks,
             container_factory=container_factory,
             code_agent_factory=mini_swe_agent.MiniSWECodeAgent,

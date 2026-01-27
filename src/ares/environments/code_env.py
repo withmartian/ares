@@ -46,8 +46,8 @@ def load_harbor_dataset(name: str, version: str) -> list[harbor_task.Task]:
     ]
 
 
-class HarborEnv(base.Environment[llm_clients.LLMResponse, llm_clients.LLMRequest | None, float, float]):
-    """Environment for Harbor-compatible datasets that computes reward at the end of an episode."""
+class CodeEnvironment(base.Environment[llm_clients.LLMResponse, llm_clients.LLMRequest | None, float, float]):
+    """Environment for code agent datasets that computes reward at the end of an episode."""
 
     def __init__(
         self,
@@ -332,18 +332,18 @@ class _Janitor:
 
     def __init__(self):
         # We use the in-memory ID since the environment isn't hashable.
-        self._environment_by_id: dict[int, HarborEnv] = {}
+        self._environment_by_id: dict[int, CodeEnvironment] = {}
         atexit.register(self._sync_cleanup)
 
-    def register_for_cleanup(self, env: HarborEnv):
+    def register_for_cleanup(self, env: CodeEnvironment):
         """Register an environment for emergency cleanup."""
         self._environment_by_id[id(env)] = env
 
-    def unregister_for_cleanup(self, env: HarborEnv):
+    def unregister_for_cleanup(self, env: CodeEnvironment):
         """Unregister an environment from emergency cleanup."""
         del self._environment_by_id[id(env)]
 
-    def _cleanup_environment(self, env: HarborEnv) -> None:
+    def _cleanup_environment(self, env: CodeEnvironment) -> None:
         """Clean up a single environment's container."""
         # Access the _container attribute if it exists
         container = getattr(env, "_container", None)
