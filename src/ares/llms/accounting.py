@@ -2,15 +2,13 @@
 
 import decimal
 import functools
-import os
 
 import frozendict
 import httpx
 from openai.types.chat import chat_completion as chat_completion_types
 import pydantic
 
-# TODO: Put this in a config, rather than using a raw env var.
-_MARTIAN_API_URL = os.getenv("MARTIAN_API_URL", "https://api.withmartian.com")
+from ares import config
 
 
 class ModelPricing(pydantic.BaseModel, frozen=True):
@@ -57,7 +55,7 @@ def martian_cost_list(
         client = httpx.Client()
 
     with client:
-        models_response = client.get(f"{_MARTIAN_API_URL}/v1/models")
+        models_response = client.get(f"{config.CONFIG.chat_completion_api_base_url}/models")
         models_response.raise_for_status()
 
     # Parse the response using Pydantic

@@ -58,7 +58,6 @@ async def evaluate_task(
     Returns:
         The final timestep of the episode.
     """
-    # Wrap the environment with dashboard tracking - no manual instrumentation needed!
     async with dashboard.wrap(
         task_idx, ares.make(f"{preset_name}:{task_idx}", container_factory=container_factory)
     ) as env:

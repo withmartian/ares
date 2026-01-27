@@ -8,6 +8,57 @@ ARES (Agentic Research and Evaluation Suite) is an RL-first framework for traini
 
 ## Quick Start
 
+### Pre-requisites
+
+- Python >= 3.12
+
+### Getting Started
+
+We highly recommend using uv to install ARES:
+
+```
+uv add martian-ares
+```
+
+However you could also use pip:
+
+```
+pip install martian-ares
+```
+
+Once ARES is installed you can see which presets are available to run:
+
+```
+"import ares; print('\n'.join([str(x) for x in ares.info()]))"
+```
+
+<!-- TODO: Add clear instructions for getting an API key -->
+And then run them with this minimal loop. Note: to run `gpt-5-mini` you will need a Martian API key.
+
+```
+import asyncio
+
+import ares
+from ares.code_agents import llms
+
+async def main():
+    agent = llms.ChatCompletionCompatibleLLMClient(model="openai/gpt-5-mini")
+
+    async with ares.make("sbv-mswea") as env:
+        ts = await env.reset()
+        while not ts.last():
+            action = await agent(ts.observation)   # observation = LLM request
+            ts = await env.step(action)            # action = LLM response
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+For more usage patterns, see the [examples](https://github.com/withmartian/ares/tree/main/examples).
+
+<!-- TODO: rework this section -->
+## ARES development instructions
+
 Get ARES running in minutes - no API keys required!
 
 ### Prerequisites
