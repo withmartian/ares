@@ -5,6 +5,7 @@ This environment will use a new container for each instance at every reset.
 """
 
 import asyncio
+import atexit
 from collections.abc import Sequence
 import functools
 import json
@@ -80,7 +81,7 @@ class HarborEnv(base.Environment[llm_clients.LLMResponse, llm_clients.LLMRequest
         self._requires_reset = False
 
         # Register for cleanup on exit.
-        base._ENVIRONMENT_JANITOR.register_for_cleanup(self)
+        _ENVIRONMENT_JANITOR.register_for_cleanup(self)
 
     async def reset(self) -> base.TimeStep[llm_clients.LLMRequest, float, float]:
         reset_start_time = time.time()
@@ -195,7 +196,7 @@ class HarborEnv(base.Environment[llm_clients.LLMResponse, llm_clients.LLMRequest
 
     async def __aenter__(self) -> Self:
         self._is_active = True
-        base._ENVIRONMENT_JANITOR.register_for_cleanup(self)
+        _ENVIRONMENT_JANITOR.register_for_cleanup(self)
         return self
 
     async def __aexit__(
@@ -206,7 +207,7 @@ class HarborEnv(base.Environment[llm_clients.LLMResponse, llm_clients.LLMRequest
         self._is_active = False
         await self.close()
 
-        base._ENVIRONMENT_JANITOR.unregister_for_cleanup(self)
+        _ENVIRONMENT_JANITOR.unregister_for_cleanup(self)
 
     def _assert_active(self) -> None:
         if not self._is_active:
@@ -321,3 +322,47 @@ class HarborEnv(base.Environment[llm_clients.LLMResponse, llm_clients.LLMRequest
 
         else:
             raise ValueError(f"Unsupported reward file type: {remote_path}")
+
+
+class _Janitor:
+    """Emergency cleanup handler for environments.
+
+    Ensures containers are cleaned up even on abnormal termination.
+    """
+
+    def __init__(self):
+        # We use the in-memory ID since the environment isn't hashable.
+        self._environment_by_id: dict[int, HarborEnv] = {}
+        atexit.register(self._sync_cleanup)
+
+    def register_for_cleanup(self, env: HarborEnv):
+        """Register an environment for emergency cleanup."""
+        self._environment_by_id[id(env)] = env
+
+    def unregister_for_cleanup(self, env: HarborEnv):
+        """Unregister an environment from emergency cleanup."""
+        del self._environment_by_id[id(env)]
+
+    def _cleanup_environment(self, env: HarborEnv) -> None:
+        """Clean up a single environment's container."""
+        # Access the _container attribute if it exists
+        container = getattr(env, "_container", None)
+        if container is not None:
+            _LOGGER.info("Stopping and removing container %s.", container)
+            container.stop_and_remove()
+
+    def _sync_cleanup(self):
+        """Cleanup all registered environments at exit."""
+        if self._environment_by_id:
+            _LOGGER.info("Cleaning up %d environments iteratively...", len(self._environment_by_id))
+        # Copy keys so we can modify the dictionary during iteration.
+        keys = list(self._environment_by_id.keys())
+        for key in keys:
+            env = self._environment_by_id[key]
+            self._cleanup_environment(env)
+            del self._environment_by_id[key]
+
+
+# We don't need to do it this way, but it feels slightly more elegant to have a single
+# function registered for cleanup than to register an atexit fn for every single environment.
+_ENVIRONMENT_JANITOR = _Janitor()

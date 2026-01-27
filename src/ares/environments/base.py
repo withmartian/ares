@@ -2,7 +2,6 @@
 dm_env Environment protocol and utilities for ARES.
 """
 
-import atexit
 import functools
 import logging
 import os
@@ -189,47 +188,3 @@ async def create_container(
     container = create_fn(name=container_name, resources=resources)
 
     return container
-
-
-class Janitor:
-    """Emergency cleanup handler for environments.
-
-    Ensures containers are cleaned up even on abnormal termination.
-    """
-
-    def __init__(self):
-        # We use the in-memory ID since the environment isn't hashable.
-        self._environment_by_id: dict[int, object] = {}
-        atexit.register(self._sync_cleanup)
-
-    def register_for_cleanup(self, env: object):
-        """Register an environment for emergency cleanup."""
-        self._environment_by_id[id(env)] = env
-
-    def unregister_for_cleanup(self, env: object):
-        """Unregister an environment from emergency cleanup."""
-        del self._environment_by_id[id(env)]
-
-    def _cleanup_environment(self, env: object) -> None:
-        """Clean up a single environment's container."""
-        # Access the _container attribute if it exists
-        container = getattr(env, "_container", None)
-        if container is not None:
-            _LOGGER.info("Stopping and removing container %s.", container)
-            container.stop_and_remove()
-
-    def _sync_cleanup(self):
-        """Cleanup all registered environments at exit."""
-        if self._environment_by_id:
-            _LOGGER.info("Cleaning up %d environments iteratively...", len(self._environment_by_id))
-        # Copy keys so we can modify the dictionary during iteration.
-        keys = list(self._environment_by_id.keys())
-        for key in keys:
-            env = self._environment_by_id[key]
-            self._cleanup_environment(env)
-            del self._environment_by_id[key]
-
-
-# We don't need to do it this way, but it feels slightly more elegant to have a single
-# function registered for cleanup than to register an atexit fn for every single environment.
-_ENVIRONMENT_JANITOR = Janitor()
