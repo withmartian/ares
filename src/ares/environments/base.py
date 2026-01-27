@@ -114,47 +114,6 @@ class Environment[ActionType, ObservationType, RewardType: Scalar, DiscountType:
         """
         ...
 
-    # TODO: adapt the dm_env specs for ARES.
-    # def reward_spec(self):
-    #     """Describes the reward returned by the environment.
-    #
-    #     By default this is assumed to be a single float.
-    #
-    #     Returns:
-    #       An `Array` spec, or a nested dict, list or tuple of `Array` specs.
-    #     """
-    #     return specs.Array(shape=(), dtype=float, name="reward")
-
-    # def discount_spec(self) -> specs.Array:
-    #     """Describes the discount returned by the environment.
-    #
-    #     By default this is assumed to be a single float between 0 and 1.
-    #
-    #     Returns:
-    #       An `Array` spec, or a nested dict, list or tuple of `Array` specs.
-    #     """
-    #     return specs.BoundedArray(shape=(), dtype=float, minimum=0.0, maximum=1.0, name="discount")
-
-    # def observation_spec(self):
-    #     """Defines the observations provided by the environment.
-    #
-    #     May use a subclass of `specs.Array` that specifies additional properties
-    #     such as min and max bounds on the values.
-    #
-    #     Returns:
-    #       An `Array` spec, or a nested dict, list or tuple of `Array` specs.
-    #     """
-
-    # def action_spec(self):
-    #     """Defines the actions that should be provided to `step`.
-    #
-    #     May use a subclass of `specs.Array` that specifies additional properties
-    #     such as min and max bounds on the values.
-    #
-    #     Returns:
-    #       An `Array` spec, or a nested dict, list or tuple of `Array` specs.
-    #     """
-
     async def close(self) -> None:
         """Frees any resources used by the environment.
 
