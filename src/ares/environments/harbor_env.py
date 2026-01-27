@@ -11,6 +11,7 @@ import json
 import logging
 import pathlib
 import random
+from typing import Literal
 
 from harbor.models.task import task as harbor_task
 from harbor.models.trial import paths as harbor_paths
@@ -164,3 +165,65 @@ class HarborEnv(base.CodeBaseEnv[harbor_task.Task]):
 
         else:
             raise ValueError(f"Unsupported reward file type: {remote_path}")
+
+    def _get_task_type(self) -> Literal["swebench", "harbor"]:
+        """Return task type for snapshotting."""
+        return "harbor"
+
+    def _serialize_task(self, task: harbor_task.Task) -> dict:
+        """Serialize Harbor task (just save task directory path)."""
+        return {"task_dir": str(task.task_dir)}
+
+    @classmethod
+    def _deserialize_task(cls, task_data: dict, task_type: str) -> harbor_task.Task:
+        """Deserialize Harbor task (reload from directory)."""
+        del task_type  # Unused - validated by caller
+        return harbor_task.Task(task_dir=pathlib.Path(task_data["task_dir"]))
+
+    @classmethod
+    async def load_from_state(
+        cls,
+        snapshot_path: "base.snapshot.EnvironmentSnapshot | pathlib.Path",
+        *,
+        container_factory: containers.ContainerFactory | None = None,
+        code_agent_factory: code_agent_base.CodeAgentFactory | None = None,
+        tracker: stat_tracker.StatTracker | None = None,
+    ) -> "HarborEnv":
+        """Restore HarborEnv from snapshot.
+
+        Args:
+            snapshot_path: EnvironmentSnapshot or path to snapshot.json
+            container_factory: Override factory (uses snapshot metadata if None)
+            code_agent_factory: Override factory (uses default if None)
+            tracker: Optional stat tracker
+
+        Returns:
+            Restored environment (NOT active, use async with)
+        """
+        from ares.environments import snapshot as snapshot_module
+
+        # Load snapshot if path provided
+        if isinstance(snapshot_path, pathlib.Path):
+            snap = snapshot_module.EnvironmentSnapshot.load_from_file(snapshot_path)
+        else:
+            snap = snapshot_path
+
+        # Deserialize task
+        task = cls._deserialize_task(snap.task_data, snap.task_type)
+
+        # Create environment instance with tasks argument
+        container_factory = container_factory or base.ares_daytona.DaytonaContainer
+        code_agent_factory = code_agent_factory or mini_swe_agent.MiniSWECodeAgent
+
+        env = cls(
+            tasks=[task],
+            container_factory=container_factory,
+            code_agent_factory=code_agent_factory,
+            step_limit=snap.step_limit,
+            tracker=tracker,
+        )
+
+        # Restore state using base helper
+        await env._restore_from_snapshot(snap)
+
+        return env

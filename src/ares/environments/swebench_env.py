@@ -10,9 +10,10 @@ from collections.abc import Sequence
 import functools
 import json
 import logging
+import pathlib
 import random
 import time
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 import datasets
 import pydantic
@@ -247,3 +248,72 @@ class SweBenchEnv(base.CodeBaseEnv[SwebenchTask]):
 
         test_result = await _run_tests_and_evaluate(self._container, self._current_task, self._test_spec)
         return 1.0 if test_result["resolved"] else 0.0
+
+    def _get_task_type(self) -> Literal["swebench", "harbor"]:
+        """Return task type for snapshotting."""
+        return "swebench"
+
+    def _serialize_task(self, task: SwebenchTask) -> dict:
+        """Serialize SwebenchTask using Pydantic."""
+        data = task.model_dump()
+        # Convert lists back to JSON strings for field validators
+        data["FAIL_TO_PASS"] = json.dumps(data["FAIL_TO_PASS"])
+        data["PASS_TO_PASS"] = json.dumps(data["PASS_TO_PASS"])
+        return data
+
+    @classmethod
+    def _deserialize_task(cls, task_data: dict, task_type: str) -> SwebenchTask:
+        """Deserialize SwebenchTask using Pydantic."""
+        del task_type  # Unused - validated by caller
+        # The field validators will convert JSON strings to lists
+        return SwebenchTask.model_validate(task_data)
+
+    @classmethod
+    async def load_from_state(
+        cls,
+        snapshot_path: "base.snapshot.EnvironmentSnapshot | pathlib.Path",
+        *,
+        container_factory: containers.ContainerFactory | None = None,
+        code_agent_factory: code_agent_base.CodeAgentFactory | None = None,
+        tracker: stat_tracker.StatTracker | None = None,
+    ) -> "SweBenchEnv":
+        """Restore SweBenchEnv from snapshot.
+
+        Args:
+            snapshot_path: EnvironmentSnapshot or path to snapshot.json
+            container_factory: Override factory (uses snapshot metadata if None)
+            code_agent_factory: Override factory (uses default if None)
+            tracker: Optional stat tracker
+
+        Returns:
+            Restored environment (NOT active, use async with)
+        """
+        import pathlib as pathlib_module
+
+        from ares.environments import snapshot as snapshot_module
+
+        # Load snapshot if path provided
+        if isinstance(snapshot_path, pathlib_module.Path):
+            snap = snapshot_module.EnvironmentSnapshot.load_from_file(snapshot_path)
+        else:
+            snap = snapshot_path
+
+        # Deserialize task
+        task = cls._deserialize_task(snap.task_data, snap.task_type)
+
+        # Create environment instance with tasks argument
+        container_factory = container_factory or base.ares_daytona.DaytonaContainer
+        code_agent_factory = code_agent_factory or mini_swe_agent.MiniSWECodeAgent
+
+        env = cls(
+            tasks=[task],
+            container_factory=container_factory,
+            code_agent_factory=code_agent_factory,
+            step_limit=snap.step_limit,
+            tracker=tracker,
+        )
+
+        # Restore state using base helper
+        await env._restore_from_snapshot(snap)
+
+        return env
