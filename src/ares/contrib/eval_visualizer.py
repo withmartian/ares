@@ -359,19 +359,24 @@ class EvaluationDashboard(app.App):
             detail_widget.update("[dim]Task not found[/dim]")
             return
 
-        # Build detail text
-        detail_lines = [f"[bold #4a9eff]Task {task.task_id} Details[/bold #4a9eff]"]
+        # Build detail text using Text objects to avoid markup parsing issues
+        detail_text = rich.text.Text()
+        detail_text.append(f"Task {task.task_id} Details", style="bold #4a9eff")
+        detail_text.append("\n")
 
         if task.status == TaskStatus.ERROR and task.error:
-            detail_lines.append(f"[bold #e76f51]Error:[/bold #e76f51] {rich.markup.escape(task.error)}")
+            detail_text.append("Error: ", style="bold #e76f51")
+            detail_text.append(str(task.error), style="#e76f51")
         elif task.status == TaskStatus.COMPLETED:
-            detail_lines.append(f"[#2a9d8f]Completed successfully[/#2a9d8f] - Reward: {task.reward}")
+            detail_text.append("Completed successfully", style="#2a9d8f")
+            detail_text.append(f" - Reward: {task.reward}")
         elif task.status == TaskStatus.RUNNING:
-            detail_lines.append(f"[#f4a261]Running[/#f4a261] - Step: {task.current_step}")
+            detail_text.append("Running", style="#f4a261")
+            detail_text.append(f" - Step: {task.current_step}")
         else:
-            detail_lines.append("[dim]Waiting to start[/dim]")
+            detail_text.append("Waiting to start", style="dim")
 
-        detail_widget.update("\n".join(detail_lines))
+        detail_widget.update(detail_text)
 
     def _refresh_display(self) -> None:
         """Refresh all dashboard widgets."""
