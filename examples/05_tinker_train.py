@@ -42,11 +42,11 @@ import asyncio
 from collections.abc import Sequence
 from datetime import datetime
 import functools
-import frozendict
 import logging
 from typing import Any, Literal
 
 import chz
+import frozendict
 import numpy as np
 import tinker
 from tinker_cookbook import cli_utils, model_info, renderers, tokenizer_utils
@@ -59,17 +59,14 @@ from ares.environments import base
 from ares.llms import llm_clients
 from ares import registry
 
-_ALL_ENVS: list[base.Environment] = []
-
 _LOGGER = logging.getLogger(__name__)
+
+CONTEXT_LEN_BUFFER = 10
+# I can't find how to programmatically access this anywhere, def varies by model
+DEFAULT_MAX_CONTEXT_LEN = 32768
 
 
 # === Utility Functions ===
-
-
-def _close_all_envs() -> None:
-    """Tinker Env does not have a close pattern, so we have to make sure everything closed gracefully after running"""
-    asyncio.gather(*[env.close() for env in _ALL_ENVS])
 
 
 def _get_text_content(message: renderers.Message) -> str:
@@ -84,13 +81,13 @@ def _get_text_content(message: renderers.Message) -> str:
     return "".join(p["text"] for p in content if p["type"] == "text")  # type: ignore
 
 
-def _middle_truncate(model_input: tinker.ModelInput, max_tokens: int) -> tinker.ModelInput:
+def _middle_truncate(model_input: tinker.ModelInput, max_context_len: int) -> tinker.ModelInput:
     """Truncate model input from the middle when exceeding max context length.
 
     This preserves both the beginning (task context) and end (recent history)
     of the conversation while removing middle content.
     """
-    num_tokens_to_truncate = model_input.length - max_tokens + 10
+    num_tokens_to_truncate = model_input.length - max_context_len + CONTEXT_LEN_BUFFER
     if num_tokens_to_truncate <= 0:
         return model_input
 
@@ -123,24 +120,27 @@ class TinkerCompatibleEnv(tinker_types.Env):
         env: base.Environment[llm_clients.LLMResponse, llm_clients.LLMRequest, float, float],
         renderer: renderers.Renderer,
         convo_prefix: list[renderers.Message] | None,
+        max_tokens: int,
     ):
         self.env = env
         self.renderer = renderer
-        self.convo_prefix = convo_prefix
+        self.convo_prefix = convo_prefix or []
+        self.max_tokens = max_tokens
 
     def _get_tinker_observation(self, ts: base.TimeStep[llm_clients.LLMRequest | None, float, float]) -> tinker_types.Observation:
         if ts.observation is None:
             return tinker.ModelInput.empty()
 
-        messages = [
+        messages = self.convo_prefix + [
             renderers.Message(role=message["role"], content=message["content"])  # type: ignore
             for message in ts.observation.messages
         ]
         model_input = self.renderer.build_generation_prompt(messages)
-        # TODO: How do we access model max context length and max_tokens?
-        if model_input.length + 2048 > 32768 - 10:
-            model_input = _middle_truncate(model_input, 32768 - 2048)
-        
+
+        # May need to truncate context len to prevent errors
+        if model_input.length > DEFAULT_MAX_CONTEXT_LEN - self.max_tokens + CONTEXT_LEN_BUFFER:
+            model_input = _middle_truncate(model_input, DEFAULT_MAX_CONTEXT_LEN - self.max_tokens)
+
         return model_input
 
     def _get_ares_action(self, action: tinker_types.Action) -> llm_clients.LLMResponse:
@@ -172,7 +172,6 @@ class TinkerCompatibleEnv(tinker_types.Env):
 
         if ts.last():
             await self.env.close()
-            _ALL_ENVS.remove(self.env)
 
         return tinker_types.StepResult(
             reward=ts.reward or 0.0,
@@ -200,6 +199,7 @@ class TinkerEnvGroupBuilder(tinker_types.EnvGroupBuilder):
     group_size: int
     renderer: renderers.Renderer
     convo_prefix: list[renderers.Message] | None = None
+    max_tokens: int
 
     async def make_envs(self) -> Sequence[TinkerCompatibleEnv]:
         envs: list[TinkerCompatibleEnv] = []
@@ -208,12 +208,12 @@ class TinkerEnvGroupBuilder(tinker_types.EnvGroupBuilder):
                 f"{self.env_preset_name}:{self.env_preset_idx}",
                 **self.env_make_kwargs,
             )
-            _ALL_ENVS.append(env)
             envs.append(
                 TinkerCompatibleEnv(
                     env,
                     self.renderer,
                     convo_prefix=self.convo_prefix,
+                    max_tokens=self.max_tokens,
                 )
             )
         return envs
@@ -241,6 +241,7 @@ class TinkerDataset(tinker_types.RLDataset):
     convo_prefix: list[renderers.Message] | None = None
     split: Literal["train", "test"]
     seed: int = 0
+    max_tokens: int
 
     @property
     def num_tasks(self) -> int:
@@ -277,6 +278,7 @@ class TinkerDataset(tinker_types.RLDataset):
                     group_size=self.group_size,
                     renderer=self.renderer,
                     convo_prefix=self.convo_prefix,
+                    max_tokens=self.max_tokens,
                 )
             )
 
@@ -307,6 +309,7 @@ class TinkerDatasetBuilder(tinker_types.RLDatasetBuilder):
     group_size: int  # NOTE: This is how many times to rerun the same env
     convo_prefix: list[renderers.Message] | None = None
     seed: int = 0
+    max_tokens: int
 
     async def __call__(self) -> tuple[TinkerDataset, TinkerDataset]:
         tokenizer = tokenizer_utils.get_tokenizer(self.model_name_for_tokenizer)
@@ -321,6 +324,7 @@ class TinkerDatasetBuilder(tinker_types.RLDatasetBuilder):
             convo_prefix=self.convo_prefix,
             split="train",
             seed=self.seed,
+            max_tokens=self.max_tokens,
         )
         test_ds = TinkerDataset(
             env_preset_name=self.env_preset_name,
@@ -332,6 +336,7 @@ class TinkerDatasetBuilder(tinker_types.RLDatasetBuilder):
             convo_prefix=self.convo_prefix,
             split="test",
             seed=self.seed,
+            max_tokens=self.max_tokens,
         )
         return train_ds, test_ds
 
@@ -459,6 +464,7 @@ async def main(cli_config: CLIConfig):
         env_preset_name=cli_config.env_preset_name,
         env_make_kwargs=cli_config.env_make_kwargs,
         num_tasks=cli_config.num_tasks,
+        max_tokens=cli_config.max_tokens,
     )
 
     # Configure Tinker training
@@ -489,12 +495,8 @@ async def main(cli_config: CLIConfig):
     # Verify log directory behavior
     cli_utils.check_log_dir(log_path, behavior_if_exists=cli_config.behavior_if_log_dir_exists)
 
-    # Run training with guaranteed cleanup
-    try:
-        await tinker_train.main(config)
-    finally:
-        _LOGGER.info("Cleaning up environments...")
-        _close_all_envs()
+    # Run training
+    await tinker_train.main(config)
 
 
 if __name__ == "__main__":
