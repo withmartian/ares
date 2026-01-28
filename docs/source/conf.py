@@ -5,6 +5,7 @@
 
 import os
 import sys
+from importlib.metadata import version
 
 # Add the project root to the path
 sys.path.insert(0, os.path.abspath("../../src"))
@@ -15,7 +16,9 @@ sys.path.insert(0, os.path.abspath("../../src"))
 project = "ARES"
 copyright = "2026, Martian"
 author = "Martian"
-release = "0.0.1"
+
+# Read version from installed package metadata
+release = version("martian-ares")
 
 # -- General configuration ---------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration
