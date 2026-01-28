@@ -12,6 +12,19 @@ import openai.types.completion_usage
 from ares.llms import request
 
 
+class OutputLengthExceededError(Exception):
+    """Raised when LLM output exceeds the maximum allowed length.
+
+    This matches the terminal-bench reference implementation's error handling.
+    """
+
+    def __init__(self, message: str, truncated_response: str | None = None):
+        super().__init__(message)
+        self.truncated_response = truncated_response
+
+
+# TODO: Move to its own file.
+# TODO: Improve the data model so it's not chat completions specific.
 @dataclasses.dataclass(frozen=True)
 class LLMResponse:
     chat_completion_response: openai.types.chat.chat_completion.ChatCompletion

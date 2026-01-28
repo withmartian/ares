@@ -1,11 +1,8 @@
 """XML parser for Terminus 2 agent responses."""
 
 import dataclasses
-import logging
 import re
 import xml.etree.ElementTree as ET
-
-_LOGGER = logging.getLogger(__name__)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -118,12 +115,12 @@ class Terminus2XMLParser:
 
     def salvage_truncated_response(self, truncated_text: str) -> tuple[str | None, bool]:
         """Try to salvage a valid response from truncated XML output.
-        
+
         This matches the terminal-bench reference implementation's behavior.
-        
+
         Args:
             truncated_text: The truncated XML response.
-            
+
         Returns:
             Tuple of (salvaged_response, has_multiple_blocks) where:
             - salvaged_response is the valid XML if found, None otherwise
@@ -131,17 +128,17 @@ class Terminus2XMLParser:
         """
         # Try to find complete <response> blocks in the truncated output
         import re
-        
+
         # Find all complete <response>...</response> blocks
         response_pattern = r"<response>.*?</response>"
         matches = list(re.finditer(response_pattern, truncated_text, re.DOTALL))
-        
+
         if not matches:
             return None, False
-        
+
         # If we found multiple blocks, that's unusual
         has_multiple_blocks = len(matches) > 1
-        
+
         # Try to parse the first complete block
         for match in matches:
             response_xml = match.group(0)
@@ -153,6 +150,5 @@ class Terminus2XMLParser:
                     return response_xml, has_multiple_blocks
             except ET.ParseError:
                 continue
-        
-        return None, has_multiple_blocks
 
+        return None, has_multiple_blocks
