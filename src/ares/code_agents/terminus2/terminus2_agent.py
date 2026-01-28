@@ -7,7 +7,9 @@ Adapted from Harbor's Terminus 2 agent:
 https://github.com/laude-institute/harbor/blob/main/src/harbor/agents/terminus_2/terminus_2.py
 """
 
+import asyncio
 import dataclasses
+import functools
 import logging
 import pathlib
 import re
@@ -57,6 +59,19 @@ You are picking up work from a previous AI agent on this task:
 
 Please begin by asking several questions (at least five, more if necessary) about the current state of the solution that are not answered in the summary from the prior agent. After you ask these questions you will be on your own, so ask everything you need to know.
 """.strip()  # noqa: E501
+
+
+@functools.cache
+def _load_template(template_path: pathlib.Path) -> str:
+    """Load a template file with caching to avoid repeated blocking I/O.
+
+    Args:
+        template_path: Path to the template file.
+
+    Returns:
+        The template content as a string.
+    """
+    return template_path.read_text()
 
 
 def _sanitize_content(content: str) -> str:
@@ -125,16 +140,16 @@ class Terminus2Agent(code_agent_base.CodeAgent):
         else:
             raise ValueError(f"Unknown parser format: {self.parser_format}. Use 'json' or 'xml'.")
 
-        # Load the prompt template
+        # Load the prompt template (cached to avoid repeated blocking I/O)
         template_dir = pathlib.Path(__file__).parent / "templates"
         if self.parser_format == "json":
             template_path = template_dir / "terminus-json-plain.txt"
         else:
             template_path = template_dir / "terminus-xml-plain.txt"
 
-        self._prompt_template = template_path.read_text()
-        self._timeout_template = (template_dir / "timeout.txt").read_text()
-        self._summarize_template = (template_dir / "summarize.txt").read_text()
+        self._prompt_template = _load_template(template_path)
+        self._timeout_template = _load_template(template_dir / "timeout.txt")
+        self._summarize_template = _load_template(template_dir / "summarize.txt")
 
         # Conversation history
         self._messages: list[request.Message] = []
@@ -396,8 +411,8 @@ class Terminus2Agent(code_agent_base.CodeAgent):
         # Combine all outputs
         combined_output = "\n\n".join(outputs)
 
-        # Limit output length
-        return self._limit_output_length(combined_output)
+        # Limit output length (async to avoid blocking on large outputs)
+        return await self._limit_output_length_async(combined_output)
 
     def _add_message(self, role: str, content: str) -> None:
         """Add a message to the conversation history.
@@ -477,7 +492,7 @@ class Terminus2Agent(code_agent_base.CodeAgent):
         question_prompt = _QUESTIONS_PROMPT_TEMPLATE.format(
             original_instruction=self._original_instruction,
             summary_content=summary_content,
-            current_screen=self._limit_output_length(current_screen),
+            current_screen=await self._limit_output_length_async(current_screen),
         )
 
         try:
@@ -603,6 +618,25 @@ class Terminus2Agent(code_agent_base.CodeAgent):
             f"{first_portion}\n[... output limited to {_MAX_OUTPUT_BYTES} bytes; "
             f"{omitted_bytes} interior bytes omitted ...]\n{last_portion}"
         )
+
+    async def _limit_output_length_async(self, output: str) -> str:
+        """Async wrapper for _limit_output_length that offloads to thread pool for large outputs.
+
+        For small outputs, runs synchronously. For large outputs (>50KB), offloads the
+        encoding/decoding work to a thread pool to avoid blocking the event loop.
+
+        Args:
+            output: The output to limit.
+
+        Returns:
+            The potentially truncated output.
+        """
+        # For small outputs, run synchronously to avoid thread pool overhead
+        if len(output) < 50_000:
+            return self._limit_output_length(output)
+
+        # For large outputs, offload to thread pool to avoid blocking event loop
+        return await asyncio.to_thread(self._limit_output_length, output)
 
     def _get_completion_confirmation_message(self, terminal_output: str) -> str:
         """Get the message to confirm task completion.
