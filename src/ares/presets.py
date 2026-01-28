@@ -15,8 +15,8 @@ import logging
 from harbor.models.task import task as harbor_task
 
 from ares import registry
-from ares.code_agents import mini_swe_agent
 from ares.code_agents import code_agent_base
+from ares.code_agents import mini_swe_agent
 from ares.containers import containers
 from ares.environments import base
 from ares.environments import code_env
