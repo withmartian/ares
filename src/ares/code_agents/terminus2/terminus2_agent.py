@@ -1,10 +1,9 @@
-"""Terminus 2 Code Agent implementation WITHOUT tmux.
-
-This is identical to Terminus2Agent except it uses direct command execution
-instead of tmux.
+"""Terminus 2 Code Agent implementation using tmux.
 
 Adapted from Harbor's Terminus 2 agent:
 https://github.com/laude-institute/harbor/blob/main/src/harbor/agents/terminus_2/terminus_2.py
+
+Uses tmux for persistent terminal sessions to maintain shell state across commands.
 """
 
 import asyncio
@@ -13,6 +12,7 @@ import functools
 import logging
 import pathlib
 import re
+import shlex
 from typing import Literal, cast
 
 from ares.code_agents import code_agent_base
@@ -108,9 +108,10 @@ class SubagentMetrics:
 
 @dataclasses.dataclass(kw_only=True)
 class Terminus2Agent(code_agent_base.CodeAgent):
-    """Terminus 2 agent using direct command execution.
+    """Terminus 2 agent using tmux for persistent terminal sessions.
 
-    This agent executes commands directly via container.exec_run().
+    This agent executes commands via a persistent tmux session to maintain
+    shell state (working directory, environment variables, etc.) across commands.
 
     Attributes:
         container: The container to execute commands in.
@@ -119,6 +120,8 @@ class Terminus2Agent(code_agent_base.CodeAgent):
         max_turns: Maximum number of LLM interactions before stopping.
         timeout_s: Default timeout for command execution in seconds.
         enable_summarization: Enable context summarization when context limit is exceeded.
+        tmux_pane_width: Width of tmux pane in characters (default: 160).
+        tmux_pane_height: Height of tmux pane in characters (default: 40).
     """
 
     container: containers.Container
@@ -129,6 +132,8 @@ class Terminus2Agent(code_agent_base.CodeAgent):
     max_turns: int = 50
     timeout_s: float = _DEFAULT_TIMEOUT_S
     enable_summarization: bool = True
+    tmux_pane_width: int = 160
+    tmux_pane_height: int = 40
 
     def __post_init__(self):
         """Initialize the agent."""
@@ -162,7 +167,56 @@ class Terminus2Agent(code_agent_base.CodeAgent):
         self._subagent_metrics = SubagentMetrics()  # Track subagent metrics separately
         self._last_output: str = ""  # Track last command output for summarization
 
+        # Tmux session state
+        self._tmux_session_name = f"terminus2_{id(self)}"
+        self._tmux_initialized = False
+
         _LOGGER.debug("[%d] Initialized Terminus2Agent with %s format.", id(self), self.parser_format)
+
+    async def _ensure_tmux_session(self) -> None:
+        """Initialize tmux session on first use.
+
+        Creates a detached tmux session with configured dimensions and sets up
+        the working directory.
+        """
+        if self._tmux_initialized:
+            return
+
+        _LOGGER.info("[%d] Creating tmux session: %s", id(self), self._tmux_session_name)
+
+        # Create detached tmux session with specific dimensions
+        await self.container.exec_run(
+            f"tmux new-session -d -s {self._tmux_session_name} "
+            f"-x {self.tmux_pane_width} -y {self.tmux_pane_height}",
+            workdir="/testbed",
+            timeout_s=10.0,
+        )
+
+        # Change to testbed directory in the session
+        await self.container.exec_run(
+            f"tmux send-keys -t {self._tmux_session_name} 'cd /testbed' Enter",
+            timeout_s=5.0,
+        )
+
+        # Small delay to let session initialize
+        await asyncio.sleep(0.2)
+
+        self._tmux_initialized = True
+        _LOGGER.info("[%d] Tmux session ready: %s", id(self), self._tmux_session_name)
+
+    async def _cleanup_tmux_session(self) -> None:
+        """Clean up tmux session on shutdown."""
+        if not self._tmux_initialized:
+            return
+
+        try:
+            _LOGGER.info("[%d] Killing tmux session: %s", id(self), self._tmux_session_name)
+            await self.container.exec_run(
+                f"tmux kill-session -t {self._tmux_session_name}",
+                timeout_s=5.0,
+            )
+        except Exception as e:
+            _LOGGER.warning("[%d] Error killing tmux session: %s", id(self), e)
 
     async def run(self, task: str) -> None:
         """Run the agent on the given task.
@@ -257,6 +311,8 @@ class Terminus2Agent(code_agent_base.CodeAgent):
                         # Second time marking complete - actually finish
                         _LOGGER.info("[%d] Task marked complete (confirmed). Finishing.", id(self))
                         self._add_message("user", "Task marked as complete. Finishing execution.")
+                        # Cleanup tmux session
+                        await self._cleanup_tmux_session()
                         return
                     else:
                         # First time - ask for confirmation
@@ -282,6 +338,9 @@ class Terminus2Agent(code_agent_base.CodeAgent):
                 # Continue to give the agent a chance to recover
 
         _LOGGER.warning("[%d] Reached maximum turns (%d). Stopping.", id(self), self.max_turns)
+
+        # Cleanup tmux session
+        await self._cleanup_tmux_session()
 
     async def _query_llm(self) -> llm_clients.LLMResponse:
         """Query the LLM with the current conversation history.
@@ -354,18 +413,19 @@ class Terminus2Agent(code_agent_base.CodeAgent):
             raise
 
     async def _execute_commands(self, commands: list[json_parser.Command]) -> str:
-        """Execute a list of commands and return the combined output.
+        """Execute a list of commands via tmux and return the terminal output.
 
         Args:
             commands: List of commands to execute.
 
         Returns:
-            The combined output from all commands.
+            The terminal output after executing all commands.
         """
         if not commands:
             return "(no commands executed)"
 
-        outputs = []
+        # Ensure tmux session exists
+        await self._ensure_tmux_session()
 
         for i, cmd in enumerate(commands):
             # Skip empty commands
@@ -373,46 +433,49 @@ class Terminus2Agent(code_agent_base.CodeAgent):
                 _LOGGER.warning("[%d] Skipping empty command %d/%d", id(self), i + 1, len(commands))
                 continue
 
-            _LOGGER.debug("[%d] Executing command %d/%d: %s", id(self), i + 1, len(commands), cmd.keystrokes[:100])
+            _LOGGER.debug("[%d] Sending to tmux %d/%d: %s", id(self), i + 1, len(commands), cmd.keystrokes[:100])
 
             try:
-                # Execute command directly (NO TMUX)
-                # Use the duration as timeout, with a minimum and maximum
-                timeout = max(5.0, min(cmd.duration, self.timeout_s))
-
-                result = await self.container.exec_run(
-                    cmd.keystrokes,
-                    timeout_s=timeout,
-                    workdir="/testbed",
+                # Send keystrokes to tmux session
+                # Use shlex.quote to safely handle special characters
+                quoted_keys = shlex.quote(cmd.keystrokes)
+                await self.container.exec_run(
+                    f"tmux send-keys -t {self._tmux_session_name} {quoted_keys}",
+                    timeout_s=5.0,
                 )
 
-                # Format output like a terminal would show it
-                output_text = f"$ {cmd.keystrokes}\n{result.output}"
-                if result.exit_code != 0:
-                    output_text += f"\n(exit code: {result.exit_code})"
-
-                outputs.append(output_text)
-                self._last_output = result.output
+                # Wait for command to complete (cap at max timeout)
+                wait_time = min(cmd.duration, self.timeout_s)
+                _LOGGER.debug("[%d] Waiting %.1fs for command to complete", id(self), wait_time)
+                await asyncio.sleep(wait_time)
 
             except TimeoutError:
-                _LOGGER.warning("[%d] Timeout executing command %d: %s", id(self), i + 1, cmd.keystrokes[:100])
-                timeout_msg = self._timeout_template.format(
-                    timeout=timeout,
-                    command=cmd.keystrokes,
-                    output=self._last_output or "(no output)",
-                )
-                outputs.append(timeout_msg)
+                _LOGGER.warning("[%d] Timeout sending command %d: %s", id(self), i + 1, cmd.keystrokes[:100])
+                # Continue to next command - tmux session still alive
 
             except Exception as e:
-                _LOGGER.error("[%d] Error executing command %d: %s", id(self), i + 1, e)
-                error_msg = f"$ {cmd.keystrokes}\n(error: {e})"
-                outputs.append(error_msg)
+                _LOGGER.error("[%d] Error sending command %d: %s", id(self), i + 1, e)
+                # Continue to next command - tmux session may still be alive
 
-        # Combine all outputs
-        combined_output = "\n\n".join(outputs)
+        # Capture terminal output after all commands
+        try:
+            _LOGGER.debug("[%d] Capturing terminal output from tmux", id(self))
+            result = await self.container.exec_run(
+                f"tmux capture-pane -t {self._tmux_session_name} -p",
+                timeout_s=5.0,
+            )
+            terminal_output = result.output
+            self._last_output = terminal_output
 
-        # Limit output length (async to avoid blocking on large outputs)
-        return await self._limit_output_length_async(combined_output)
+            # Limit output length (async to avoid blocking on large outputs)
+            return await self._limit_output_length_async(terminal_output)
+
+        except Exception as e:
+            _LOGGER.error("[%d] Error capturing tmux output: %s", id(self), e)
+            # Return last known output or error message
+            if self._last_output:
+                return self._last_output
+            return f"(error capturing terminal output: {e})"
 
     def _add_message(self, role: str, content: str) -> None:
         """Add a message to the conversation history.
