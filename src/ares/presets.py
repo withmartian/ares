@@ -31,7 +31,7 @@ def _make_harbor_dataset_id(name: str, version: str) -> str:
     if name == "swe-lancer-diamond":
         name = f"swe-lancer-diamond-{version}"
 
-    return name.replace("swebench-verified", "sbv").replace("terminal-bench", "tb")
+    return name.replace("swebench-verified", "sbv").replace("terminal-bench", "tbench")
 
 
 @dataclasses.dataclass(frozen=True)
