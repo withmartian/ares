@@ -14,6 +14,10 @@ Prerequisites:
 
     - Install docker & make sure the daemon is running.
     - Install dependencies: `uv sync --group examples`
+    - If you see Docker authentication errors (e.g., "email must be verified"):
+        * RECOMMENDED: Set DOCKER_SKIP_AUTH=true to use anonymous pulls (no account needed)
+        * Or run `docker logout` to clear stored credentials
+        * Or verify your email at https://hub.docker.com/settings/general
 
 Example usage:
 
