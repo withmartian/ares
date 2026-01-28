@@ -1,8 +1,41 @@
-"""TODO: Description
-Code heavily inspired from
-https://github.com/thinking-machines-lab/tinker-cookbook/blob/main/tinker_cookbook/recipes/code_rl/code_env.py
-and
-https://github.com/thinking-machines-lab/tinker-cookbook/blob/main/tinker_cookbook/recipes/code_rl/train.py
+"""ARES + Tinker RL Training Script
+
+Train code agents using reinforcement learning with ARES environments and Tinker's training infrastructure.
+This script combines ARES's Harbor-compatible environments (including SWE-bench) with Tinker's RL training
+loop, enabling async rollouts, LoRA fine-tuning, and WandB logging.
+
+The integration works by wrapping ARES environments in Tinker-compatible adapters that:
+- Convert LLM requests/responses between ARES and Tinker formats
+- Handle tokenization and prompt rendering
+- Manage episode lifecycle and reward computation
+- Support async parallel rollouts across multiple environments
+
+Prerequisites:
+    Set your TINKER_API_KEY environment variable.
+
+Usage:
+    # Train with defaults (Qwen3-4B on sbv-mswea)
+    uv run -m examples.05_tinker_train
+
+    # Train with custom model and hyperparameters
+    uv run -m examples.05_tinker_train \\
+        --model_name meta-llama/Llama-3.1-8B-Instruct \\
+        --learning_rate 5e-7 \\
+        --lora_rank 64 \\
+        --num_tasks 100
+
+    # Enable WandB logging
+    uv run -m examples.05_tinker_train \\
+        --wandb_project ares-rl \\
+        --wandb_name my-experiment
+
+    # Continue from checkpoint
+    uv run -m examples.05_tinker_train \\
+        --load_checkpoint_path /path/to/checkpoint
+
+Implementation heavily inspired by:
+- https://github.com/thinking-machines-lab/tinker-cookbook/blob/main/tinker_cookbook/recipes/code_rl/code_env.py
+- https://github.com/thinking-machines-lab/tinker-cookbook/blob/main/tinker_cookbook/recipes/code_rl/train.py
 """
 
 import asyncio
@@ -31,6 +64,9 @@ _ALL_ENVS: list[base.Environment] = []
 _LOGGER = logging.getLogger(__name__)
 
 
+# === Utility Functions ===
+
+
 def _close_all_envs() -> None:
     """Tinker Env does not have a close pattern, so we have to make sure everything closed gracefully after running"""
     asyncio.gather(*[env.close() for env in _ALL_ENVS])
@@ -49,6 +85,11 @@ def _get_text_content(message: renderers.Message) -> str:
 
 
 def _middle_truncate(model_input: tinker.ModelInput, max_tokens: int) -> tinker.ModelInput:
+    """Truncate model input from the middle when exceeding max context length.
+
+    This preserves both the beginning (task context) and end (recent history)
+    of the conversation while removing middle content.
+    """
     num_tokens_to_truncate = model_input.length - max_tokens + 10
     if num_tokens_to_truncate <= 0:
         return model_input
@@ -63,7 +104,20 @@ def _middle_truncate(model_input: tinker.ModelInput, max_tokens: int) -> tinker.
     return tinker.ModelInput.from_ints(new_ints)
 
 
+# === Environment Adapters ===
+
+
 class TinkerCompatibleEnv(tinker_types.Env):
+    """Adapter wrapping ARES environments to work with Tinker's RL training loop.
+
+    Handles bidirectional conversion:
+    - ARES LLMRequest -> Tinker ModelInput (tokenized prompts)
+    - Tinker Action (text) -> ARES LLMResponse
+    - ARES TimeStep -> Tinker StepResult
+
+    This enables using any ARES environment with Tinker's training infrastructure.
+    """
+
     def __init__(
         self,
         env: base.Environment[llm_clients.LLMResponse, llm_clients.LLMRequest, float, float],
@@ -134,6 +188,12 @@ class TinkerCompatibleEnv(tinker_types.Env):
 
 @chz.chz
 class TinkerEnvGroupBuilder(tinker_types.EnvGroupBuilder):
+    """Factory for creating groups of identical ARES environments for parallel rollouts.
+
+    Creates `group_size` copies of the same environment instance (same task) to enable
+    multiple rollout attempts per task, improving gradient estimates in RL training.
+    """
+
     env_preset_name: str
     env_preset_idx: int
     env_make_kwargs: frozendict.frozendict[str, Any]
@@ -161,6 +221,15 @@ class TinkerEnvGroupBuilder(tinker_types.EnvGroupBuilder):
 
 @chz.chz
 class TinkerDataset(tinker_types.RLDataset):
+    """RL dataset wrapping ARES environment presets with batching and shuffling.
+
+    Provides batched access to ARES tasks (e.g., SWE-bench instances) with:
+    - Random shuffling based on seed
+    - Batch iteration for parallel training
+    - Train/test split support
+    - Optional task limit for quick experiments
+    """
+
     # ARES params
     env_preset_name: str
     env_make_kwargs: frozendict.frozendict[str, Any]
@@ -219,6 +288,14 @@ class TinkerDataset(tinker_types.RLDataset):
 
 @chz.chz
 class TinkerDatasetBuilder(tinker_types.RLDatasetBuilder):
+    """Builder for constructing train and test datasets from ARES environments.
+
+    Handles tokenizer initialization, renderer setup, and dataset configuration.
+    Returns separate train and test datasets with appropriate group sizes:
+    - Train: group_size rollouts per task (for better gradients)
+    - Test: 1 rollout per task (for efficient evaluation)
+    """
+
     # ARES params
     env_preset_name: str
     env_make_kwargs: frozendict.frozendict[str, Any]
@@ -259,62 +336,97 @@ class TinkerDatasetBuilder(tinker_types.RLDatasetBuilder):
         return train_ds, test_ds
 
 
-# Config
+# === CLI Configuration ===
+
 
 @chz.chz
 class CLIConfig:
-    """Command-line configuration for DeepCoder RL training."""
+    """Command-line configuration for ARES + Tinker RL training.
 
-    # Model configuration
-    # model_name: str = "meta-llama/Llama-3.1-8B-Instruct"
+    All fields can be overridden via command-line arguments.
+    Example: --model_name meta-llama/Llama-3.1-8B-Instruct --learning_rate 5e-7
+    """
+
+    # === Model Configuration ===
+    # HuggingFace model identifier - supported models:
+    # https://tinker-docs.thinkingmachines.ai/model-lineup#full-listing
     model_name: str = "Qwen/Qwen3-4B-Instruct-2507"
+    # LoRA rank for parameter-efficient fine-tuning (higher = more capacity, slower)
     lora_rank: int = 32
+    # Renderer for prompt formatting (auto-detected from model if None)
     renderer_name: str | None = None
+    # Path to resume training from a checkpoint
     load_checkpoint_path: str | None = None
 
-    # Data / environment configuration
-    seed: int = 0
-
-    # Training hyperparameters
-    group_size: int = 4
-    groups_per_batch: int = 20
-    learning_rate: float = 1e-6
-    max_tokens: int = 2048
-    kl_penalty_coef: float = 0.0
-    num_substeps: int = 1
-
-    # Logging / eval / checkpoints
-    log_dir: str | None = None
-    log_path: str | None = None
-    wandb_project: str | None = None
-    wandb_name: str | None = None
-    compute_post_kl: bool = False
-    eval_every: int = 0
-    save_every: int = 20
-
-    # Service configuration
-    base_url: str | None = None
-
-    behavior_if_log_dir_exists: cli_utils.LogdirBehavior = "ask"
-
-    # Async rollout configuration
-    max_steps_off_policy: int | None = 10
-
-    # ARES params
+    # === ARES Environment Configuration ===
+    # ARES environment preset (e.g., "sbv-mswea", "tbench-mswea")
     env_preset_name: str = "sbv-mswea"
+    # Number of tasks to train on (None = use all available)
+    num_tasks: int | None = 20
+    # Additional kwargs passed to ares.make() (e.g., container factory, resources)
     env_make_kwargs: frozendict.frozendict[str, Any] = frozendict.frozendict(
         {"container_factory": daytona.DaytonaContainer}
     )
-    num_tasks: int | None = 40
+
+    # === Training Hyperparameters ===
+    # Number of rollouts per environment (higher = better gradient estimates)
+    group_size: int = 4
+    # Number of environment groups per training batch
+    groups_per_batch: int = 20
+    # Learning rate for LoRA parameter updates
+    learning_rate: float = 1e-6
+    # Maximum tokens to generate per LLM response
+    max_tokens: int = 2048
+    # KL penalty coefficient for policy regularization (0.0 = no regularization)
+    kl_penalty_coef: float = 0.0
+    # Number of gradient accumulation substeps per batch
+    num_substeps: int = 1
+    # Random seed for reproducibility
+    seed: int = 0
+
+    # === Async Rollout Configuration ===
+    # Max steps an environment can lag behind current policy (None = synchronous, 10 = async)
+    # NOTE: This is required to enable async rollouts.
+    max_steps_off_policy: int | None = 10
+
+    # === Logging, Evaluation, and Checkpointing ===
+    # Directory for logs (deprecated, use log_path instead)
+    log_dir: str | None = None
+    # Full path for training logs and checkpoints (auto-generated if None)
+    log_path: str | None = None
+    # WandB project name (enables WandB logging if set)
+    wandb_project: str | None = None
+    # WandB run name (auto-generated if None)
+    wandb_name: str | None = None
+    # Compute KL divergence after each update (adds overhead)
+    compute_post_kl: bool = False
+    # Run evaluation every N training steps (0 = no evaluation)
+    eval_every: int = 0
+    # Save checkpoint every N training steps
+    save_every: int = 20
+    # Behavior when log directory already exists ("ask", "overwrite", "fail")
+    behavior_if_log_dir_exists: cli_utils.LogdirBehavior = "ask"
+
+    # === Service Configuration ===
+    # Tinker service base URL (None = use default local service)
+    base_url: str | None = None
 
 
-async def main():
-    cli_config = CLIConfig()
+# === Main Training Script ===
 
+
+async def main(cli_config: CLIConfig):
+    """Main training loop with ARES environments and Tinker RL infrastructure.
+
+    Args:
+        cli_config: Command-line configuration parsed by chz.entrypoint()
+    """
+    # Auto-detect renderer if not specified
     renderer_name = cli_config.renderer_name or model_info.get_recommended_renderer_name(
         cli_config.model_name
     )
 
+    # Generate run name for logging and checkpointing
     model_tag = cli_config.model_name.replace("/", "-")
     run_name = (
         f"ares-tinker-{model_tag}-{cli_config.lora_rank}rank-"
@@ -323,14 +435,21 @@ async def main():
         f"{datetime.now().strftime('%Y-%m-%d-%H-%M')}"
     )
 
-    # Set log path
+    # Set log path (use provided or auto-generate)
     if cli_config.log_path is not None:
         log_path = cli_config.log_path
     else:
         log_path = f"/tmp/tinker-examples/code_rl/{run_name}"
 
+    # Set WandB run name (use provided or auto-generate)
     wandb_name = cli_config.wandb_name or run_name
 
+    _LOGGER.info("Starting training run: %s", run_name)
+    _LOGGER.info("Model: %s (rank=%d)", cli_config.model_name, cli_config.lora_rank)
+    _LOGGER.info("Environment: %s (%d tasks)", cli_config.env_preset_name, cli_config.num_tasks or 0)
+    _LOGGER.info("Log path: %s", log_path)
+
+    # Build ARES dataset with Tinker compatibility layer
     dataset_builder = TinkerDatasetBuilder(
         batch_size=cli_config.groups_per_batch,
         model_name_for_tokenizer=cli_config.model_name,
@@ -339,8 +458,10 @@ async def main():
         seed=cli_config.seed,
         env_preset_name=cli_config.env_preset_name,
         env_make_kwargs=cli_config.env_make_kwargs,
+        num_tasks=cli_config.num_tasks,
     )
 
+    # Configure Tinker training
     config = tinker_train.Config(
         learning_rate=cli_config.learning_rate,
         dataset_builder=dataset_builder,
@@ -365,13 +486,17 @@ async def main():
         else None,
     )
 
+    # Verify log directory behavior
     cli_utils.check_log_dir(log_path, behavior_if_exists=cli_config.behavior_if_log_dir_exists)
 
+    # Run training with guaranteed cleanup
     try:
         await tinker_train.main(config)
     finally:
+        _LOGGER.info("Cleaning up environments...")
         _close_all_envs()
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    cli_config = chz.entrypoint(CLIConfig)
+    asyncio.run(main(cli_config))
