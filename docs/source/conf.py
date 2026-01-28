@@ -3,7 +3,6 @@
 # For the full list of built-in configuration values, see the documentation:
 # https://www.sphinx-doc.org/en/master/usage/configuration.html
 
-from importlib.metadata import version
 import os
 import sys
 
@@ -18,7 +17,7 @@ copyright = "2026, Martian"
 author = "Martian"
 
 # Read version from installed package metadata
-release = version("martian-ares")
+release = "0.0.1"
 
 # -- General configuration ---------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration

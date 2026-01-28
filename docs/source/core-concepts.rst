@@ -130,7 +130,7 @@ The minimal interface is simple:
 .. code-block:: python
 
     class CodeAgent(Protocol):
-        async def run(task: str) -> None:
+        async def run(self, task: str) -> None:
             """Runs the agent for the specific task."""
 
     class CodeAgentFactory[T: CodeAgent](Protocol):
@@ -256,7 +256,7 @@ Containers abstract over different backend implementations (local Docker, cloud 
 .. code-block:: python
 
     class Container(Protocol):
-        async def start(env: dict[str, str] | None) -> None
+        async def start(self, env: dict[str, str] | None) -> None
         async def stop() -> None
         async def exec_run(command, workdir, env, timeout_s) -> ExecResult
         async def upload_files(local_paths, remote_paths) -> None
@@ -294,7 +294,8 @@ Core Interface
 .. code-block:: python
 
     class LLMClient(Protocol):
-        async def __call__(request: LLMRequest) -> LLMResponse
+        async def __call__(self, request: LLMRequest) -> LLMResponse:
+            ...
 
     @dataclass(frozen=True)
     class LLMRequest:

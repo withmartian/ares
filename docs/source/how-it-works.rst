@@ -61,9 +61,9 @@ The environment side:
         )
 
         if get_request in done:
-            request, future = get_request.result()
-            self._llm_req_future = future
-            return TimeStep(step_type="MID", observation=request, ...)
+            value_and_future = get_request.result()
+            self._llm_req_future = value_and_future.future
+            return TimeStep(step_type="MID", observation=value_and_future.value, ...)
 
     async def step(self, action: LLMResponse) -> TimeStep:
         # Unblock the code agent by providing response
