@@ -180,23 +180,53 @@ class Terminus2Agent(code_agent_base.CodeAgent):
         the working directory.
         """
         if self._tmux_initialized:
+            _LOGGER.debug("[%d] Tmux session already initialized: %s", id(self), self._tmux_session_name)
             return
 
+        # Check if tmux is installed, install if needed
+        _LOGGER.debug("[%d] Checking if tmux is installed", id(self))
+        check_result = await self.container.exec_run("which tmux", timeout_s=10.0)
+
+        if check_result.exit_code != 0:
+            _LOGGER.info("[%d] tmux not found, installing...", id(self))
+            install_result = await self.container.exec_run(
+                "apt-get update -qq && apt-get install -y -qq tmux",
+                timeout_s=60.0,
+            )
+            if install_result.exit_code != 0:
+                _LOGGER.error("[%d] Failed to install tmux: %s", id(self), install_result.output)
+                raise RuntimeError(f"Could not install tmux: {install_result.output}")
+            _LOGGER.info("[%d] tmux installed successfully", id(self))
+        else:
+            _LOGGER.debug("[%d] tmux is already installed", id(self))
+
         _LOGGER.info("[%d] Creating tmux session: %s", id(self), self._tmux_session_name)
+        _LOGGER.debug("[%d] Tmux dimensions: %dx%d", id(self), self.tmux_pane_width, self.tmux_pane_height)
 
         # Create detached tmux session with specific dimensions
-        await self.container.exec_run(
-            f"tmux new-session -d -s {self._tmux_session_name} "
-            f"-x {self.tmux_pane_width} -y {self.tmux_pane_height}",
-            workdir="/testbed",
-            timeout_s=10.0,
-        )
+        try:
+            result = await self.container.exec_run(
+                f"tmux new-session -d -s {self._tmux_session_name} "
+                f"-x {self.tmux_pane_width} -y {self.tmux_pane_height}",
+                workdir="/testbed",
+                timeout_s=10.0,
+            )
+            _LOGGER.debug("[%d] Tmux new-session result: exit_code=%s", id(self), result.exit_code)
+            if result.exit_code != 0:
+                _LOGGER.error("[%d] Failed to create tmux session: %s", id(self), result.output)
+        except Exception as e:
+            _LOGGER.error("[%d] Error creating tmux session: %s", id(self), e)
+            raise
 
         # Change to testbed directory in the session
-        await self.container.exec_run(
-            f"tmux send-keys -t {self._tmux_session_name} 'cd /testbed' Enter",
-            timeout_s=5.0,
-        )
+        try:
+            result = await self.container.exec_run(
+                f"tmux send-keys -t {self._tmux_session_name} 'cd /testbed' Enter",
+                timeout_s=5.0,
+            )
+            _LOGGER.debug("[%d] Tmux cd command result: exit_code=%s", id(self), result.exit_code)
+        except Exception as e:
+            _LOGGER.warning("[%d] Error sending cd to tmux: %s", id(self), e)
 
         # Small delay to let session initialize
         await asyncio.sleep(0.2)
@@ -283,6 +313,12 @@ class Terminus2Agent(code_agent_base.CodeAgent):
                         continue
 
                 # Parse the response
+                _LOGGER.debug(
+                    "[%d] Parsing LLM response (format: %s, length: %d)",
+                    id(self),
+                    self.parser_format,
+                    len(assistant_message),
+                )
                 parsed, feedback = self._parser.parse(assistant_message)
 
                 # Handle parsing errors
@@ -292,6 +328,13 @@ class Terminus2Agent(code_agent_base.CodeAgent):
                     _LOGGER.warning("[%d] Failed response (first 2000 chars): %s", id(self), assistant_message[:2000])
                     self._add_message("user", feedback)
                     continue
+
+                _LOGGER.debug(
+                    "[%d] Parsed successfully: %d commands, task_complete=%s",
+                    id(self),
+                    len(parsed.commands),
+                    parsed.task_complete,
+                )
 
                 # Execute commands
                 if parsed.commands:
@@ -437,12 +480,36 @@ class Terminus2Agent(code_agent_base.CodeAgent):
 
             try:
                 # Send keystrokes to tmux session
-                # Use shlex.quote to safely handle special characters
-                quoted_keys = shlex.quote(cmd.keystrokes)
-                await self.container.exec_run(
-                    f"tmux send-keys -t {self._tmux_session_name} {quoted_keys}",
-                    timeout_s=5.0,
-                )
+                # Split on newlines: send each line literally (-l flag), then press Enter
+                # This ensures commands execute (newline → Enter key press)
+                lines = cmd.keystrokes.split("\n")
+                _LOGGER.debug("[%d] Split keystroke into %d lines", id(self), len(lines))
+
+                for line_idx, line in enumerate(lines):
+                    # Skip the final empty string after trailing newline
+                    if line_idx == len(lines) - 1 and not line:
+                        _LOGGER.debug("[%d] Skipping empty final line", id(self))
+                        continue
+
+                    # Send the line literally (no key interpretation)
+                    if line:
+                        send_cmd = f"tmux send-keys -t {self._tmux_session_name} -l {shlex.quote(line)}"
+                        _LOGGER.debug("[%d] Sending line %d: %s", id(self), line_idx, send_cmd[:100])
+                        result = await self.container.exec_run(send_cmd, timeout_s=5.0)
+                        if result.exit_code != 0:
+                            _LOGGER.warning(
+                                "[%d] send-keys returned exit_code=%s: %s", id(self), result.exit_code, result.output
+                            )
+
+                    # Press Enter after each line (except the last empty one)
+                    if line_idx < len(lines) - 1:
+                        enter_cmd = f"tmux send-keys -t {self._tmux_session_name} Enter"
+                        _LOGGER.debug("[%d] Sending Enter after line %d", id(self), line_idx)
+                        result = await self.container.exec_run(enter_cmd, timeout_s=5.0)
+                        if result.exit_code != 0:
+                            _LOGGER.warning(
+                                "[%d] Enter returned exit_code=%s: %s", id(self), result.exit_code, result.output
+                            )
 
                 # Wait for command to complete (cap at max timeout)
                 wait_time = min(cmd.duration, self.timeout_s)
@@ -464,16 +531,25 @@ class Terminus2Agent(code_agent_base.CodeAgent):
                 f"tmux capture-pane -t {self._tmux_session_name} -p",
                 timeout_s=5.0,
             )
+            _LOGGER.debug(
+                "[%d] Capture result: exit_code=%s, output_length=%d", id(self), result.exit_code, len(result.output)
+            )
             terminal_output = result.output
             self._last_output = terminal_output
 
+            # Log first 500 chars of output for debugging
+            _LOGGER.debug("[%d] Terminal output (first 500 chars): %s", id(self), terminal_output[:500])
+
             # Limit output length (async to avoid blocking on large outputs)
-            return await self._limit_output_length_async(terminal_output)
+            limited = await self._limit_output_length_async(terminal_output)
+            _LOGGER.debug("[%d] Returning output (length: %d)", id(self), len(limited))
+            return limited
 
         except Exception as e:
             _LOGGER.error("[%d] Error capturing tmux output: %s", id(self), e)
             # Return last known output or error message
             if self._last_output:
+                _LOGGER.warning("[%d] Returning last known output", id(self))
                 return self._last_output
             return f"(error capturing terminal output: {e})"
 
