@@ -13,7 +13,7 @@ class Command:
     """A command to execute in the terminal."""
 
     keystrokes: str
-    duration: float = 5.0  # Default duration in seconds
+    duration: float = 1.0  # Default duration in seconds (matches official)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -94,14 +94,15 @@ class Terminus2JSONParser:
                     f"WARNINGS: Command at index {i} must have a 'keystrokes' string field.",
                 )
 
-            duration = cmd.get("duration", 5.0)
+            duration = cmd.get("duration", 1.0)
             if not isinstance(duration, (int, float)):
                 return (
                     ParsedResponse(commands=[], task_complete=False),
                     f"WARNINGS: Command at index {i} 'duration' must be a number.",
                 )
 
-            commands.append(Command(keystrokes=keystrokes.strip(), duration=float(duration)))
+            # Don't strip keystrokes - preserve exact whitespace as in official implementation
+            commands.append(Command(keystrokes=keystrokes, duration=float(duration)))
 
         # Parse task_complete
         task_complete = data.get("task_complete", False)
@@ -147,12 +148,13 @@ class Terminus2JSONParser:
             keystrokes = keystrokes.replace('\\"', '"').replace("\\n", "\n").replace("\\t", "\t").replace("\\\\", "\\")
 
             # Try to find the corresponding duration
-            duration = 5.0  # default
+            duration = 1.0  # default (matches official)
             # Check if this duration comes after this keystroke
             if i < len(duration_matches) and duration_matches[i].start() > keystroke_match.end():
                 duration = float(duration_matches[i].group(1))
 
-            commands.append(Command(keystrokes=keystrokes.strip(), duration=duration))
+            # Don't strip keystrokes - preserve exact whitespace
+            commands.append(Command(keystrokes=keystrokes, duration=duration))
 
         # Extract task_complete
         task_complete = False

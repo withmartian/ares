@@ -10,7 +10,7 @@ class Command:
     """A command to execute in the terminal."""
 
     keystrokes: str
-    duration: float = 5.0  # Default duration in seconds
+    duration: float = 1.0  # Default duration in seconds (matches official)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -68,27 +68,32 @@ class Terminus2XMLParser:
         commands = []
         commands_elem = root.find("commands")
         if commands_elem is not None:
-            for i, cmd_elem in enumerate(commands_elem.findall("command")):
-                keystrokes_elem = cmd_elem.find("keystrokes")
-                if keystrokes_elem is None or not keystrokes_elem.text:
+            # Look for <keystrokes> elements directly (not wrapped in <command>)
+            for i, keystrokes_elem in enumerate(commands_elem.findall("keystrokes")):
+                if keystrokes_elem.text is None:
                     return (
                         ParsedResponse(commands=[], task_complete=False),
-                        f"WARNINGS: Command at index {i} must have a <keystrokes> element with text.",
+                        f"WARNINGS: Keystrokes element at index {i} must have text content.",
                     )
 
-                keystrokes = keystrokes_elem.text.strip()
+                # Don't strip - preserve exact whitespace as in official implementation
+                keystrokes = keystrokes_elem.text
 
-                duration_elem = cmd_elem.find("duration")
-                if duration_elem is not None and duration_elem.text:
+                # Duration is an XML attribute, not a child element
+                duration_attr = keystrokes_elem.get("duration")
+                if duration_attr is not None:
                     try:
-                        duration = float(duration_elem.text.strip())
+                        duration = float(duration_attr)
                     except ValueError:
                         return (
                             ParsedResponse(commands=[], task_complete=False),
-                            f"WARNINGS: Command at index {i} <duration> must be a number.",
+                            (
+                                f"WARNINGS: Keystrokes element at index {i} "
+                                f"has invalid duration attribute: {duration_attr}"
+                            ),
                         )
                 else:
-                    duration = 5.0  # Default duration
+                    duration = 1.0  # Default duration (matches official)
 
                 commands.append(Command(keystrokes=keystrokes, duration=duration))
 
