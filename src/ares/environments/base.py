@@ -1,10 +1,7 @@
 """
-SWE dm_env Environment implementation.
+dm_env Environment protocol and utilities for ARES.
 """
 
-import abc
-import asyncio
-import atexit
 import functools
 import logging
 import os
@@ -16,14 +13,7 @@ import uuid
 
 from numpy.typing import NDArray
 
-from ares.code_agents import code_agent_base
-from ares.code_agents import mini_swe_agent
 from ares.containers import containers
-from ares.containers import daytona as ares_daytona
-from ares.environments import base
-from ares.experiment_tracking import stat_tracker
-from ares.llms import llm_clients
-from ares.llms import queue_mediated_client
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -123,47 +113,6 @@ class Environment[ActionType, ObservationType, RewardType: Scalar, DiscountType:
         """
         ...
 
-    # TODO: adapt the dm_env specs for ARES.
-    # def reward_spec(self):
-    #     """Describes the reward returned by the environment.
-
-    #     By default this is assumed to be a single float.
-
-    #     Returns:
-    #       An `Array` spec, or a nested dict, list or tuple of `Array` specs.
-    #     """
-    #     return specs.Array(shape=(), dtype=float, name="reward")
-
-    # def discount_spec(self) -> specs.Array:
-    #     """Describes the discount returned by the environment.
-
-    #     By default this is assumed to be a single float between 0 and 1.
-
-    #     Returns:
-    #       An `Array` spec, or a nested dict, list or tuple of `Array` specs.
-    #     """
-    #     return specs.BoundedArray(shape=(), dtype=float, minimum=0.0, maximum=1.0, name="discount")
-
-    # def observation_spec(self):
-    #     """Defines the observations provided by the environment.
-
-    #     May use a subclass of `specs.Array` that specifies additional properties
-    #     such as min and max bounds on the values.
-
-    #     Returns:
-    #       An `Array` spec, or a nested dict, list or tuple of `Array` specs.
-    #     """
-
-    # def action_spec(self):
-    #     """Defines the actions that should be provided to `step`.
-
-    #     May use a subclass of `specs.Array` that specifies additional properties
-    #     such as min and max bounds on the values.
-
-    #     Returns:
-    #       An `Array` spec, or a nested dict, list or tuple of `Array` specs.
-    #     """
-
     async def close(self) -> None:
         """Frees any resources used by the environment.
 
@@ -206,6 +155,21 @@ async def create_container(
     dockerfile_path: pathlib.Path | str | None = None,
     resources: containers.Resources | None = None,
 ) -> containers.Container:
+    """Create a container from an image or Dockerfile.
+
+    Args:
+        container_factory: Factory for creating containers.
+        container_prefix: Prefix for the container name.
+        image_name: Optional image name to use.
+        dockerfile_path: Optional path to Dockerfile.
+        resources: Optional resource constraints.
+
+    Returns:
+        A created container (not yet started).
+
+    Raises:
+        ValueError: If neither image_name nor dockerfile_path is specified.
+    """
     timestamp = int(time.time())
     unique_id = str(uuid.uuid4())[:8]  # Use first 8 chars of UUID for brevity
 
@@ -224,228 +188,3 @@ async def create_container(
     container = create_fn(name=container_name, resources=resources)
 
     return container
-
-
-class Janitor:
-    def __init__(self):
-        # We use the in-memory ID since the environment isn't hashable.
-        self._environment_by_id: dict[int, CodeBaseEnv] = {}
-        atexit.register(self._sync_cleanup)
-
-    def register_for_cleanup(self, env: "CodeBaseEnv"):
-        self._environment_by_id[id(env)] = env
-
-    def unregister_for_cleanup(self, env: "CodeBaseEnv"):
-        del self._environment_by_id[id(env)]
-
-    def _cleanup_environment(self, env: "CodeBaseEnv") -> None:
-        if env._container is not None:
-            _LOGGER.info("Stopping and removing container %s.", env._container)
-            env._container.stop_and_remove()
-
-    def _sync_cleanup(self):
-        if self._environment_by_id:
-            _LOGGER.info("Cleaning up %d environments iteratively...", len(self._environment_by_id))
-        # Copy keys so we can modify the dictionary during iteration.
-        keys = list(self._environment_by_id.keys())
-        for key in keys:
-            env = self._environment_by_id[key]
-            self._cleanup_environment(env)
-            del self._environment_by_id[key]
-
-
-# We don't need to do it this way, but it feels slightly more elegent to have a single
-# function registered for cleanup than to register an atexit fn for every single environment.
-_ENVIRONMENT_JANITOR = Janitor()
-
-
-class CodeBaseEnv[TaskType](Environment[llm_clients.LLMResponse, llm_clients.LLMRequest | None, float, float]):
-    """Base environment for code agents that computes reward at the end of an episode."""
-
-    def __init__(
-        self,
-        *,
-        container_factory: containers.ContainerFactory = ares_daytona.DaytonaContainer,
-        code_agent_factory: code_agent_base.CodeAgentFactory = mini_swe_agent.MiniSWECodeAgent,
-        step_limit: int = 100,
-        prefix: str = "",
-        tracker: stat_tracker.StatTracker | None = None,
-    ):
-        self._container_factory = container_factory
-        self._code_agent_factory = code_agent_factory
-        self._step_limit = step_limit
-        self._prefix = prefix
-        self._tracker = tracker if tracker is not None else stat_tracker.NullStatTracker()
-
-        # We set the LLM client to a queue mediated client so that
-        # we can return LLM requests in the reset and step methods.
-        # We should never allow a user to pass a different LLM client.
-        self._llm_client = queue_mediated_client.QueueMediatedLLMClient(q=asyncio.Queue())
-        self._llm_req_future: asyncio.Future[llm_clients.LLMResponse] | None = None
-
-        # State.
-        self._is_active = False
-        self._container: containers.Container | None = None
-        self._current_task: TaskType | None = None
-        self._code_agent_task: asyncio.Task[None] | None = None
-        self._step_count = 0
-        self._is_active = False
-
-        # Register for cleanup on exit.
-        _ENVIRONMENT_JANITOR.register_for_cleanup(self)
-
-    async def reset(self) -> base.TimeStep[llm_clients.LLMRequest, float, float]:
-        # Require the environment to be used as a context manager.
-        reset_start_time = time.time()
-        self._assert_active()
-
-        # Ensure the environment is being used as a context manager.
-        _LOGGER.debug("[%d] Resetting environment.", id(self))
-
-        self._step_count = 0
-        self._requires_reset = False
-
-        if self._container is not None:
-            _LOGGER.debug("[%d] Stopping container on reset.", id(self))
-            # Stop the container to free resources.
-            await self._container.stop()
-            self._container = None
-
-        await self._reset_task()
-        await self._start_container()
-        await self._start_code_agent()
-
-        ts = await self._get_time_step()
-
-        # If the timestep is supposed to be the last, then we have a problem.
-        # This can't be both the first and last timestep, so we raise an exception.
-        if ts.step_type == "LAST":
-            raise RuntimeError("The code agent didn't make any LLM requests.")
-
-        # get_time_step always returns a MID timestep, but we know it's actually a first timestep.
-        assert ts.observation is not None
-        result = TimeStep(step_type="FIRST", reward=ts.reward, discount=ts.discount, observation=ts.observation)
-
-        reset_end_time = time.time()
-        self._tracker.scalar(f"{self._prefix}/reset", reset_end_time - reset_start_time)
-        return result
-
-    async def step(self, action: llm_clients.LLMResponse) -> base.TimeStep[llm_clients.LLMRequest | None, float, float]:
-        # Require the environment to be used as a context manager.
-        step_start_time = time.time()
-        self._assert_active()
-
-        # Ensure the environment is being used as a context manager.
-        _LOGGER.debug("[%d] Stepping environment.", id(self))
-
-        if self._requires_reset:
-            # TODO: Custom error.
-            raise RuntimeError("Environment must be reset.")
-
-        self._step_count += 1
-
-        _LOGGER.debug("[%d] Setting LLM request future result.", id(self))
-        assert self._llm_req_future is not None
-        self._llm_req_future.set_result(action)
-        _LOGGER.debug("[%d] LLM request future result set.", id(self))
-
-        with self._tracker.timeit(f"{self._prefix}/get_time_step"):
-            ts = await self._get_time_step()
-
-        if self._step_count >= self._step_limit:
-            _LOGGER.debug("[%d] Step limit reached. Returning LAST timestep.", id(self))
-            assert self._code_agent_task is not None
-            self._code_agent_task.cancel()
-            # Truncation: step_type="LAST", discount=1.0, unless we're _also_ already in a terminal state.
-            ts = TimeStep(step_type="LAST", reward=ts.reward, discount=ts.discount, observation=ts.observation)
-
-        if ts.step_type == "LAST":
-            self._requires_reset = True
-
-        step_end_time = time.time()
-        self._tracker.scalar(f"{self._prefix}/step", step_end_time - step_start_time)
-
-        return ts
-
-    async def _get_time_step(
-        self,
-    ) -> base.TimeStep[llm_clients.LLMRequest | None, float, float]:
-        # Wait for the code agent to send another request or complete.
-        _LOGGER.debug("[%d] Waiting for code agent or LLM request.", id(self))
-        with self._tracker.timeit(f"{self._prefix}/get_from_queue"):
-            get_from_queue_task = asyncio.create_task(self._llm_client.q.get())
-            tasks = [self._code_agent_task, get_from_queue_task]
-            done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
-        _LOGGER.debug("[%d] Code agent or LLM request completed.", id(self))
-
-        if self._code_agent_task in done:
-            _LOGGER.debug("[%d] Code agent completed.", id(self))
-            # We're done. Return the final reward.
-            assert self._container is not None
-            assert self._current_task is not None
-            _LOGGER.debug("[%d] Running tests and evaluating.", id(self))
-            with self._tracker.timeit(f"{self._prefix}/run_tests_and_evaluate"):
-                reward = await self._compute_reward()
-            _LOGGER.debug("[%d] Tests and evaluation completed. Reward: %f.", id(self), reward)
-
-            # TODO: Make sure this is correct.
-            # Cancel the queue get task.
-            get_from_queue_task.cancel()
-
-            return base.TimeStep(step_type="LAST", reward=reward, discount=0.0, observation=None)
-
-        if get_from_queue_task in done:
-            with self._tracker.timeit(f"{self._prefix}/get_and_make_timestep"):
-                _LOGGER.debug("[%d] LLM request completed.", id(self))
-                req_and_future = await get_from_queue_task
-                self._llm_req_future = req_and_future.future
-                _LOGGER.debug("[%d] LLM request received.", id(self))
-                return base.TimeStep(step_type="MID", reward=0.0, discount=1.0, observation=req_and_future.value)
-
-        raise RuntimeError("Code agent task or LLM request future did not complete.")
-
-    async def close(self) -> None:
-        # Shut down any resources used by the environment.
-        if self._container is not None:
-            _LOGGER.debug("[%d] Stopping container on exit.", id(self))
-            await self._container.stop()
-            self._container = None
-
-    async def __aenter__(self) -> "CodeBaseEnv":
-        self._is_active = True
-        _ENVIRONMENT_JANITOR.register_for_cleanup(self)
-        return self
-
-    async def __aexit__(
-        self, exc_type: type[BaseException] | None, exc_value: BaseException | None, traceback: TracebackType | None
-    ) -> None:
-        del exc_type, exc_value, traceback  # Unused.
-
-        self._is_active = False
-        await self.close()
-
-        _ENVIRONMENT_JANITOR.unregister_for_cleanup(self)
-
-    def _assert_active(self) -> None:
-        if not self._is_active:
-            raise RuntimeError("Environment is not active.")
-
-    @abc.abstractmethod
-    async def _reset_task(self) -> None:
-        """Should set `self._current_task` with a TaskType"""
-        pass
-
-    @abc.abstractmethod
-    async def _start_container(self) -> None:
-        """Should set `self._container` with a running container"""
-        pass
-
-    @abc.abstractmethod
-    async def _start_code_agent(self) -> None:
-        """Should set `self._code_agent_task` with an Asyncio Task"""
-        pass
-
-    @abc.abstractmethod
-    async def _compute_reward(self) -> float:
-        """Runs when the episode has concluded - should return the reward for the episode"""
-        pass

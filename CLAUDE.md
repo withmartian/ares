@@ -79,18 +79,21 @@ ARES treats code agent interactions as a reinforcement learning problem:
 
 #### 1. Environments (`src/ares/environments/`)
 
-**Base Pattern (`base.py`):**
-- `CodeBaseEnv[TaskType]` orchestrates the entire RL loop
-- Manages container lifecycle, code agent execution, and LLM request interception
-- Four abstract methods to implement: `_reset_task()`, `_start_container()`, `_start_code_agent()`, `_compute_reward()`
-- Uses async context manager pattern (`async with env:`) for cleanup
+**Base (`base.py`):**
+- `Environment` protocol defines the dm_env interface (`reset()`, `step()`, `close()`)
+- `TimeStep` namedtuple for observations, rewards, and episode signals
+- `create_container()` helper for creating containers from images or Dockerfiles
+- `Janitor` class for emergency cleanup of containers on abnormal termination
 
-**Concrete Implementations:**
-- `SweBenchEnv` (`swebench_env.py`) - For SWE-bench dataset. Each task has a pre-built Docker image. Reward is 1.0 if all FAIL_TO_PASS tests pass.
-- `HarborEnv` (`harbor_env.py`) - For Harbor-compatible datasets. Builds containers from Dockerfiles. Reads reward from `/reward.txt` or `/reward.json`.
+**Implementation (`code_env.py`):**
+- `CodeEnvironment` - Concrete environment for Harbor-compatible datasets (including SWE-bench)
+- Orchestrates the entire RL loop: manages container lifecycle, code agent execution, and LLM request interception
+- Builds containers from Dockerfiles with configurable resources (CPU, memory, disk)
+- Reads reward from `/reward.txt` or `/reward.json` in the container
+- Uses async context manager pattern (`async with env:`) for guaranteed cleanup
 
 **Episode Termination:**
-- Step limit reached (default: 100 steps)
+- Step limit reached (default: 250 steps for CodeEnvironment)
 - Agent explicitly submits (signals completion)
 - Container or agent error
 
@@ -180,7 +183,7 @@ Without this pattern, agents would need explicit RL-aware interfaces, breaking t
 ## Key Design Patterns
 
 ### Protocol-Oriented Design
-Heavy use of `typing.Protocol` for structural subtyping without inheritance. Key protocols: `Environment`, `CodeAgent`, `Container`, `LLMClient`, `ContainerFactory`, `CodeAgentFactory`, `StatTracker`.
+Heavy use of `typing.Protocol` for structural subtyping without inheritance. Key protocols: `Environment`, `CodeAgent`, `Container`, `LLMClient`, `ContainerFactory`, `CodeAgentFactory`, `StatTracker`. Environments implement the `Environment` protocol directly without inheritance hierarchies.
 
 ### Factory Pattern
 Used for dependency injection - environments receive factories, not concrete instances, allowing easy swapping of implementations (local vs cloud containers, different agents, etc.).
@@ -193,6 +196,9 @@ Most dataclasses use `frozen=True` to ensure thread-safety in async contexts.
 
 ### Queue-Mediated Communication
 Async queues bridge linear agent code with the RL environment, enabling "interception" of LLM calls without agents being aware of the RL loop.
+
+### YAGNI (You Aren't Gonna Need It)
+Prefer concrete implementations over abstractions. For example, `CodeEnvironment` implements the `Environment` protocol directly without base classes, since Harbor is designed to handle all code agent benchmarks. Abstractions are added only when needed.
 
 ## Code Conventions
 

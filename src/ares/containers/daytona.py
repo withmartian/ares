@@ -31,8 +31,18 @@ def _get_daytona_client_sync() -> daytona.Daytona:
 
 @tenacity.retry(
     retry=tenacity.retry_if_exception_type(daytona.common.errors.DaytonaError),
+    stop=tenacity.stop_after_attempt(3),
+    wait=tenacity.wait_exponential_jitter(max=60),
+    before_sleep=tenacity.before_sleep_log(_LOGGER, logging.INFO),
+)
+async def _create_sandbox_with_retry(params: daytona.CreateSandboxFromImageParams) -> daytona.AsyncSandbox:
+    return await _get_daytona_client().create(params=params)
+
+
+@tenacity.retry(
+    retry=tenacity.retry_if_exception_type(daytona.common.errors.DaytonaError),
     stop=tenacity.stop_after_attempt(10),
-    wait=tenacity.wait_exponential(multiplier=1.2, min=1, max=60) + tenacity.wait_random(min=0, max=1),
+    wait=tenacity.wait_exponential_jitter(max=60),
     before_sleep=tenacity.before_sleep_log(_LOGGER, logging.INFO),
 )
 async def _exec_with_retry(
@@ -93,7 +103,7 @@ class DaytonaContainer(containers.Container):
             labels={"user": config.CONFIG.user},
             resources=self._daytona_resources,
         )
-        self._sbx = await _get_daytona_client().create(params=params)
+        self._sbx = await _create_sandbox_with_retry(params=params)
 
     async def stop(self) -> None:
         """Stop the container."""

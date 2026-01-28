@@ -123,6 +123,7 @@ class MiniSWECodeAgent(code_agent_base.CodeAgent):
         environment_config = self._config.get("environment", {})
         self._env_timeout = environment_config.get("timeout", None)
         self._environment_env_vars = environment_config.get("env", None)
+        self._environment_cwd = environment_config.get("cwd", "/testbed")
 
         # Somewhat frustratingly, minisweagent uses kwargs.
         # We handle this by inspecting whether an argument will be accepted by the agent config.
@@ -134,14 +135,16 @@ class MiniSWECodeAgent(code_agent_base.CodeAgent):
             else:
                 _LOGGER.info("Ignoring argument %s in agent configuration.", k)
 
+        # Initialize step and cost tracking
+        self._n_calls = 0
+        self._total_cost = 0.0
+        self._step_limit = self._agent_config.get("step_limit", 0)
+        self._cost_limit = self._agent_config.get("cost_limit", 0.0)
+
         self._messages: list[chat_completion_message_param.ChatCompletionMessageParam] = []
         _LOGGER.debug("[%d] Initialized MiniSWECodeAgent.", id(self))
 
     def _add_message(self, role: Literal["system", "user", "assistant"], content: str) -> None:
-        if not content.strip():
-            _LOGGER.warning("[%d] Ignoring empty message with role %s.", id(self), role)
-            content = "[Empty content]"
-
         self._messages.append(
             {"role": role, "content": content},  # type: ignore
         )
@@ -191,8 +194,13 @@ class MiniSWECodeAgent(code_agent_base.CodeAgent):
 
     async def query(self) -> llm_clients.LLMResponse:
         """Query the model and return the response."""
-        # if 0 < self._config.step_limit <= self.model.n_calls or 0 < self.config.cost_limit <= self.model.cost:
-        # raise LimitsExceeded()
+        # Check step limit before making LLM call
+        if 0 < self._step_limit <= self._n_calls:
+            raise _LimitsExceededError(f"Step limit of {self._step_limit} exceeded")
+        # Check cost limit before making LLM call
+        if 0 < self._cost_limit <= self._total_cost:
+            raise _LimitsExceededError(f"Cost limit of ${self._cost_limit:.2f} exceeded")
+
         _LOGGER.debug("[%d] Querying LLM.", id(self))
 
         with self.tracker.timeit("mswea/llm_request"):
@@ -203,6 +211,9 @@ class MiniSWECodeAgent(code_agent_base.CodeAgent):
                 )
             )
         _LOGGER.debug("[%d] LLM response received.", id(self))
+
+        self._n_calls += 1
+        self._total_cost += response.cost
 
         message_content = response.chat_completion_response.choices[0].message.content
         assert message_content is not None
@@ -223,10 +234,13 @@ class MiniSWECodeAgent(code_agent_base.CodeAgent):
             try:
                 output = await self.container.exec_run(
                     action,
+                    workdir=self._environment_cwd,
                     timeout_s=self._env_timeout,
                     env=self._environment_env_vars,
                 )
             except TimeoutError as e:
+                # NOTE: Unlike the official implementation, we cannot retrieve partial output on timeout
+                # because asyncio.wait_for cancels the task without preserving partial execution state.
                 raise _ExecutionTimeoutError(_render_timeout_template(action, "")) from e
 
         _LOGGER.debug("[%d] Action executed.", id(self))
