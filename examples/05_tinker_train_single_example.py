@@ -1,5 +1,8 @@
 """TODO: Description
-Tinker Cookbook compatible URL: https://github.com/thinking-machines-lab/tinker-cookbook/tree/dccee2809ddc74248b250b86afae5d9104ebf0e3
+Code heavily inspired from
+https://github.com/thinking-machines-lab/tinker-cookbook/blob/main/tinker_cookbook/recipes/code_rl/code_env.py
+and
+https://github.com/thinking-machines-lab/tinker-cookbook/blob/main/tinker_cookbook/recipes/code_rl/train.py
 """
 
 import asyncio
@@ -12,6 +15,7 @@ from typing import Any, Literal
 
 import chz
 import numpy as np
+import tinker
 from tinker_cookbook import cli_utils, model_info, renderers, tokenizer_utils
 from tinker_cookbook.rl import train as tinker_train
 from tinker_cookbook.rl import types as tinker_types
@@ -41,7 +45,22 @@ def _get_text_content(message: renderers.Message) -> str:
     content = message["content"]
     if isinstance(content, str):
         return content
-    return "".join(p["text"] for p in content if p["type"] == "text")
+    return "".join(p["text"] for p in content if p["type"] == "text")  # type: ignore
+
+
+def _middle_truncate(model_input: tinker.ModelInput, max_tokens: int) -> tinker.ModelInput:
+    num_tokens_to_truncate = model_input.length - max_tokens + 10
+    if num_tokens_to_truncate <= 0:
+        return model_input
+
+    center_idx = model_input.length // 2
+    truncate_start_idx = center_idx - num_tokens_to_truncate // 2
+    truncate_end_idx = center_idx + num_tokens_to_truncate // 2
+
+    curr_ints = model_input.to_ints()
+    # TODO: Put something in between (like an ellipsis)
+    new_ints = curr_ints[:truncate_start_idx] + curr_ints[truncate_end_idx:]
+    return tinker.ModelInput.from_ints(new_ints)
 
 
 class TinkerCompatibleEnv(tinker_types.Env):
@@ -55,12 +74,20 @@ class TinkerCompatibleEnv(tinker_types.Env):
         self.renderer = renderer
         self.convo_prefix = convo_prefix
 
-    def _get_tinker_observation(self, ts: base.TimeStep[llm_clients.LLMRequest, float, float]) -> tinker_types.Observation:
+    def _get_tinker_observation(self, ts: base.TimeStep[llm_clients.LLMRequest | None, float, float]) -> tinker_types.Observation:
+        if ts.observation is None:
+            return tinker.ModelInput.empty()
+
         messages = [
-            renderers.Message(role=message.role, content=message.content)  # type: ignore
+            renderers.Message(role=message["role"], content=message["content"])  # type: ignore
             for message in ts.observation.messages
         ]
-        return self.renderer.build_generation_prompt(messages)
+        model_input = self.renderer.build_generation_prompt(messages)
+        # TODO: How do we access model max context length and max_tokens?
+        if model_input.length + 2048 > 32768 - 10:
+            model_input = _middle_truncate(model_input, 32768 - 2048)
+        
+        return model_input
 
     def _get_ares_action(self, action: tinker_types.Action) -> llm_clients.LLMResponse:
         message, parse_success = self.renderer.parse_response(action)
@@ -109,7 +136,7 @@ class TinkerCompatibleEnv(tinker_types.Env):
 class TinkerEnvGroupBuilder(tinker_types.EnvGroupBuilder):
     env_preset_name: str
     env_preset_idx: int
-    env_make_kwargs: dict[str, Any]
+    env_make_kwargs: frozendict.frozendict[str, Any]
     group_size: int
     renderer: renderers.Renderer
     convo_prefix: list[renderers.Message] | None = None
@@ -136,7 +163,8 @@ class TinkerEnvGroupBuilder(tinker_types.EnvGroupBuilder):
 class TinkerDataset(tinker_types.RLDataset):
     # ARES params
     env_preset_name: str
-    env_make_kwargs: dict[str, Any]
+    env_make_kwargs: frozendict.frozendict[str, Any]
+    max_num_tasks: int | None = None
     # Tinker params
     batch_size: int
     renderer: renderers.Renderer
@@ -145,14 +173,19 @@ class TinkerDataset(tinker_types.RLDataset):
     split: Literal["train", "test"]
     seed: int = 0
 
+    @property
+    def num_tasks(self) -> int:
+        return self.max_num_tasks or self.env_info.num_tasks
+
     @functools.cached_property
     def idx_map(self) -> dict[int, int]:
         """Indexing map for shuffling the dataset before indexing via ares.make"""
         np.random.seed(self.seed)
+        # Need to use self.env_info.num_tasks here to ensure random shuffling
         shuffled_indices = list(range(self.env_info.num_tasks))
         np.random.shuffle(shuffled_indices)
 
-        return {idx: shuffled_idx for idx, shuffled_idx in enumerate(shuffled_indices)}
+        return {idx: shuffled_idx for idx, shuffled_idx in enumerate(shuffled_indices[:self.num_tasks])}
 
     @functools.cached_property
     def env_info(self) -> registry.EnvironmentInfo:
@@ -160,7 +193,7 @@ class TinkerDataset(tinker_types.RLDataset):
 
     def get_batch(self, index: int) -> Sequence[TinkerEnvGroupBuilder]:
         start = index * self.batch_size
-        end = min((index + 1) * self.batch_size, self.env_info.num_tasks)
+        end = min((index + 1) * self.batch_size, self.num_tasks)
         if start >= end:
             raise IndexError("Incorrect batch index for TinkerDataset")
 
@@ -181,14 +214,15 @@ class TinkerDataset(tinker_types.RLDataset):
         return builders
 
     def __len__(self) -> int:
-        return (self.env_info.num_tasks + self.batch_size - 1) // self.batch_size
+        return (self.num_tasks + self.batch_size - 1) // self.batch_size
 
 
 @chz.chz
 class TinkerDatasetBuilder(tinker_types.RLDatasetBuilder):
     # ARES params
     env_preset_name: str
-    env_make_kwargs: dict[str, Any]
+    env_make_kwargs: frozendict.frozendict[str, Any]
+    num_tasks: int | None = None
     # Tinker params
     batch_size: int
     model_name_for_tokenizer: str
@@ -203,6 +237,7 @@ class TinkerDatasetBuilder(tinker_types.RLDatasetBuilder):
         train_ds = TinkerDataset(
             env_preset_name=self.env_preset_name,
             env_make_kwargs=self.env_make_kwargs,
+            max_num_tasks=self.num_tasks,
             batch_size=self.batch_size,
             group_size=self.group_size,
             renderer=renderer,
@@ -213,6 +248,7 @@ class TinkerDatasetBuilder(tinker_types.RLDatasetBuilder):
         test_ds = TinkerDataset(
             env_preset_name=self.env_preset_name,
             env_make_kwargs=self.env_make_kwargs,
+            max_num_tasks=self.num_tasks,
             batch_size=self.batch_size,
             group_size=1,
             renderer=renderer,
@@ -231,7 +267,7 @@ class CLIConfig:
 
     # Model configuration
     # model_name: str = "meta-llama/Llama-3.1-8B-Instruct"
-    model_name: str = "meta-llama/Llama-3.2-1B"
+    model_name: str = "Qwen/Qwen3-4B-Instruct-2507"
     lora_rank: int = 32
     renderer_name: str | None = None
     load_checkpoint_path: str | None = None
@@ -240,10 +276,10 @@ class CLIConfig:
     seed: int = 0
 
     # Training hyperparameters
-    group_size: int = 1
+    group_size: int = 4
     groups_per_batch: int = 20
-    learning_rate: float = 1e-5
-    max_tokens: int = 5
+    learning_rate: float = 1e-6
+    max_tokens: int = 2048
     kl_penalty_coef: float = 0.0
     num_substeps: int = 1
 
@@ -253,7 +289,7 @@ class CLIConfig:
     wandb_project: str | None = None
     wandb_name: str | None = None
     compute_post_kl: bool = False
-    eval_every: int = 20
+    eval_every: int = 0
     save_every: int = 20
 
     # Service configuration
@@ -262,17 +298,17 @@ class CLIConfig:
     behavior_if_log_dir_exists: cli_utils.LogdirBehavior = "ask"
 
     # Async rollout configuration
-    max_steps_off_policy: int | None = None
+    max_steps_off_policy: int | None = 10
 
     # ARES params
-    env_preset_name: str = "terminal-bench--mswea"
+    env_preset_name: str = "sbv-mswea"
     env_make_kwargs: frozendict.frozendict[str, Any] = frozendict.frozendict(
         {"container_factory": daytona.DaytonaContainer}
     )
+    num_tasks: int | None = 40
 
 
 async def main():
-    # TODO: Use the code from the RL Code Example
     cli_config = CLIConfig()
 
     renderer_name = cli_config.renderer_name or model_info.get_recommended_renderer_name(
@@ -281,7 +317,7 @@ async def main():
 
     model_tag = cli_config.model_name.replace("/", "-")
     run_name = (
-        f"deepcoder-{model_tag}-{cli_config.lora_rank}rank-"
+        f"ares-tinker-{model_tag}-{cli_config.lora_rank}rank-"
         f"{cli_config.learning_rate}lr-{cli_config.group_size}group-"
         f"{cli_config.groups_per_batch}batch-seed{cli_config.seed}-"
         f"{datetime.now().strftime('%Y-%m-%d-%H-%M')}"
