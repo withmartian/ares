@@ -181,10 +181,10 @@ class MiniSWECodeAgent(code_agent_base.CodeAgent):
                     await self.step()
             except _NonTerminatingError as e:
                 _LOGGER.debug("[%d] Non-terminating error: %s", id(self), e)
-                self._add_message("user", str(e))
+                self._add_message("user", repr(e))
             except _TerminatingError as e:
                 _LOGGER.debug("[%d] Terminating error: %s", id(self), e)
-                self._add_message("user", str(e))
+                self._add_message("user", repr(e))
                 return
 
     async def step(self) -> None:

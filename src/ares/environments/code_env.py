@@ -17,6 +17,7 @@ import time
 from types import TracebackType
 from typing import Self
 
+from harbor.models import registry as harbor_registry
 from harbor.models.task import task as harbor_task
 from harbor.models.trial import paths as harbor_paths
 from harbor.registry import client as harbor_dataset_client
@@ -45,6 +46,12 @@ def load_harbor_dataset(name: str, version: str) -> list[harbor_task.Task]:
         harbor_task.Task(task_dir=task_item.downloaded_path)
         for task_item in client.download_dataset(name=name, version=version)
     ]
+
+
+@functools.lru_cache(maxsize=250)
+def list_harbor_datasets() -> list[harbor_registry.DatasetSpec]:
+    client = _get_harbor_dataset_client()
+    return client.get_datasets()
 
 
 class CodeEnvironment(base.Environment[llm_clients.LLMResponse, llm_clients.LLMRequest | None, float, float]):
