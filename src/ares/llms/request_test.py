@@ -2,6 +2,12 @@
 
 from typing import Any
 
+import anthropic.types
+import openai.types.chat
+import openai.types.chat.completion_create_params
+import openai.types.responses.response_create_params
+import openai.types.shared_params
+
 from ares.llms import request as request_lib
 
 
@@ -27,7 +33,13 @@ class TestLLMRequestChatCompletionConversion:
             temperature=0.7,
             top_p=0.9,
             stream=True,
-            tools=[{"type": "function", "function": {"name": "test"}}],
+            tools=[
+                {
+                    "name": "test",
+                    "description": "A test function",
+                    "input_schema": {"type": "object", "properties": {}},
+                }
+            ],
             tool_choice="auto",
             metadata={"user_id": "123"},
             service_tier="default",
@@ -39,7 +51,17 @@ class TestLLMRequestChatCompletionConversion:
         assert kwargs["temperature"] == 0.7
         assert kwargs["top_p"] == 0.9
         assert kwargs["stream"] is True
-        assert kwargs["tools"] == [{"type": "function", "function": {"name": "test"}}]
+        # Tools should be converted to OpenAI format
+        assert kwargs["tools"] == [
+            {
+                "type": "function",
+                "function": {
+                    "name": "test",
+                    "description": "A test function",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            }
+        ]
         assert kwargs["tool_choice"] == "auto"
         assert kwargs["metadata"] == {"user_id": "123"}
         assert kwargs["service_tier"] == "default"
@@ -89,7 +111,7 @@ class TestLLMRequestChatCompletionConversion:
 
     def test_from_chat_completion_minimal(self):
         """Test parsing minimal Chat Completions request."""
-        kwargs = {
+        kwargs: openai.types.chat.completion_create_params.CompletionCreateParams = {
             "model": "gpt-4o",
             "messages": [{"role": "user", "content": "Hello"}],
         }
@@ -101,14 +123,23 @@ class TestLLMRequestChatCompletionConversion:
 
     def test_from_chat_completion_all_params(self):
         """Test parsing Chat Completions with all parameters."""
-        kwargs = {
+        kwargs: openai.types.chat.completion_create_params.CompletionCreateParams = {
             "model": "gpt-4o",
             "messages": [{"role": "user", "content": "Hello"}],
             "max_completion_tokens": 100,
             "temperature": 0.7,
             "top_p": 0.9,
             "stream": True,
-            "tools": [{"type": "function", "function": {"name": "test"}}],
+            "tools": [
+                openai.types.chat.ChatCompletionToolParam(
+                    type="function",
+                    function=openai.types.shared_params.FunctionDefinition(
+                        name="test",
+                        description="A test function",
+                        parameters={"type": "object", "properties": {"arg": {"type": "string"}}},
+                    ),
+                )
+            ],
             "tool_choice": "auto",
             "metadata": {"user_id": "123"},
             "service_tier": "default",
@@ -120,7 +151,14 @@ class TestLLMRequestChatCompletionConversion:
         assert request.temperature == 0.7
         assert request.top_p == 0.9
         assert request.stream is True
-        assert request.tools == [{"type": "function", "function": {"name": "test"}}]
+        # Tools are converted from OpenAI to Claude format internally
+        assert request.tools == [
+            {
+                "name": "test",
+                "description": "A test function",
+                "input_schema": {"type": "object", "properties": {"arg": {"type": "string"}}},
+            }
+        ]
         assert request.tool_choice == "auto"
         assert request.metadata == {"user_id": "123"}
         assert request.service_tier == "default"
@@ -128,7 +166,7 @@ class TestLLMRequestChatCompletionConversion:
 
     def test_from_chat_completion_extracts_system_prompt(self):
         """Test that system message is extracted to system_prompt."""
-        kwargs = {
+        kwargs: openai.types.chat.completion_create_params.CompletionCreateParams = {
             "model": "gpt-4o",
             "messages": [
                 {"role": "system", "content": "You are helpful."},
@@ -142,7 +180,7 @@ class TestLLMRequestChatCompletionConversion:
 
     def test_from_chat_completion_handles_max_tokens_fallback(self):
         """Test that deprecated max_tokens is used as fallback."""
-        kwargs = {
+        kwargs: openai.types.chat.completion_create_params.CompletionCreateParams = {
             "model": "gpt-4o",
             "messages": [{"role": "user", "content": "Hello"}],
             "max_tokens": 100,
@@ -153,14 +191,23 @@ class TestLLMRequestChatCompletionConversion:
 
     def test_roundtrip_chat_completion(self):
         """Test that Chat Completions roundtrip preserves data."""
-        original = {
+        original: openai.types.chat.completion_create_params.CompletionCreateParams = {
             "model": "gpt-4o",
             "messages": [{"role": "user", "content": "Hello"}],
             "max_completion_tokens": 100,
             "temperature": 0.7,
             "top_p": 0.9,
             "stream": True,
-            "tools": [{"type": "function", "function": {"name": "test"}}],
+            "tools": [
+                openai.types.chat.ChatCompletionToolParam(
+                    type="function",
+                    function=openai.types.shared_params.FunctionDefinition(
+                        name="test",
+                        description="Test tool",
+                        parameters={"type": "object", "properties": {"x": {"type": "number"}}},
+                    ),
+                )
+            ],
             "tool_choice": "auto",
             "metadata": {"user_id": "123"},
         }
@@ -198,7 +245,13 @@ class TestLLMRequestResponsesConversion:
             temperature=0.7,
             top_p=0.9,
             stream=True,
-            tools=[{"type": "function", "name": "test"}],
+            tools=[
+                {
+                    "name": "test",
+                    "description": "A test function",
+                    "input_schema": {"type": "object", "properties": {}},
+                }
+            ],
             tool_choice="auto",
             metadata={"user_id": "123"},
             service_tier="default",
@@ -209,7 +262,17 @@ class TestLLMRequestResponsesConversion:
         assert kwargs["temperature"] == 0.7
         assert kwargs["top_p"] == 0.9
         assert kwargs["stream"] is True
-        assert kwargs["tools"] == [{"type": "function", "name": "test"}]
+        # Tools should be converted to OpenAI format
+        assert kwargs["tools"] == [
+            {
+                "type": "function",
+                "function": {
+                    "name": "test",
+                    "description": "A test function",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            }
+        ]
         assert kwargs["tool_choice"] == "auto"
         assert kwargs["metadata"] == {"user_id": "123"}
         assert kwargs["service_tier"] == "default"
@@ -247,7 +310,7 @@ class TestLLMRequestResponsesConversion:
 
     def test_from_responses_minimal(self):
         """Test parsing minimal Responses request."""
-        kwargs = {
+        kwargs: openai.types.responses.response_create_params.ResponseCreateParams = {
             "model": "gpt-4o",
             "input": "Hello",
         }
@@ -257,14 +320,21 @@ class TestLLMRequestResponsesConversion:
 
     def test_from_responses_all_params(self):
         """Test parsing Responses with all parameters."""
-        kwargs = {
+        kwargs: openai.types.responses.response_create_params.ResponseCreateParams = {
             "model": "gpt-4o",
             "input": [{"type": "message", "role": "user", "content": "Hello"}],
             "max_output_tokens": 100,
             "temperature": 0.7,
             "top_p": 0.9,
             "stream": True,
-            "tools": [{"type": "function", "name": "test"}],
+            "tools": [
+                {
+                    "type": "function",
+                    "name": "test",
+                    "description": "A test function",
+                    "parameters": {"type": "object", "properties": {"x": {"type": "number"}}},
+                }
+            ],
             "tool_choice": "auto",
             "metadata": {"user_id": "123"},
             "service_tier": "default",
@@ -276,7 +346,12 @@ class TestLLMRequestResponsesConversion:
         assert request.temperature == 0.7
         assert request.top_p == 0.9
         assert request.stream is True
-        assert request.tools == [{"type": "function", "name": "test"}]
+        # Tools should be converted from OpenAI to Claude format
+        assert request.tools == [{
+            "name": "test",
+            "description": "A test function",
+            "input_schema": {"type": "object", "properties": {"x": {"type": "number"}}},
+        }]
         assert request.tool_choice == "auto"
         assert request.metadata == {"user_id": "123"}
         assert request.service_tier == "default"
@@ -284,7 +359,7 @@ class TestLLMRequestResponsesConversion:
 
     def test_from_responses_string_input(self):
         """Test parsing Responses with string input."""
-        kwargs = {
+        kwargs: openai.types.responses.response_create_params.ResponseCreateParams = {
             "input": "Hello, world!",
         }
         request = request_lib.LLMRequest.from_responses(kwargs)
@@ -293,7 +368,7 @@ class TestLLMRequestResponsesConversion:
 
     def test_from_responses_list_input(self):
         """Test parsing Responses with list input."""
-        kwargs = {
+        kwargs: openai.types.responses.response_create_params.ResponseCreateParams = {
             "model": "gpt-4o",
             "input": [
                 {"type": "message", "role": "user", "content": "Hello"},
@@ -330,7 +405,13 @@ class TestLLMRequestMessagesConversion:
             top_p=0.9,
             top_k=40,
             stream=True,
-            tools=[{"type": "custom", "name": "test"}],
+            tools=[
+                {
+                    "name": "test",
+                    "description": "A test function",
+                    "input_schema": {"type": "object", "properties": {}},
+                }
+            ],
             tool_choice={"type": "auto"},
             metadata={"user_id": "123"},
             service_tier="auto",
@@ -343,7 +424,14 @@ class TestLLMRequestMessagesConversion:
         assert kwargs["top_p"] == 0.9
         assert kwargs["top_k"] == 40
         assert kwargs["stream"] is True
-        assert kwargs["tools"] == [{"type": "custom", "name": "test"}]
+        # Tools stay in Claude format (no conversion needed)
+        assert kwargs["tools"] == [
+            {
+                "name": "test",
+                "description": "A test function",
+                "input_schema": {"type": "object", "properties": {}},
+            }
+        ]
         assert kwargs["tool_choice"] == {"type": "auto"}
         assert kwargs["metadata"] == {"user_id": "123"}
         assert kwargs["service_tier"] == "auto"
@@ -417,7 +505,7 @@ class TestLLMRequestMessagesConversion:
 
     def test_from_messages_minimal(self):
         """Test parsing minimal Messages request."""
-        kwargs = {
+        kwargs: anthropic.types.MessageCreateParams = {
             "model": "claude-sonnet-4-5-20250929",
             "messages": [{"role": "user", "content": "Hello"}],
             "max_tokens": 100,
@@ -429,7 +517,7 @@ class TestLLMRequestMessagesConversion:
 
     def test_from_messages_all_params(self):
         """Test parsing Messages with all parameters."""
-        kwargs = {
+        kwargs: anthropic.types.MessageCreateParams = {
             "model": "claude-sonnet-4-5-20250929",
             "messages": [{"role": "user", "content": "Hello"}],
             "max_tokens": 100,
@@ -468,7 +556,7 @@ class TestLLMRequestMessagesConversion:
             (0.75, 1.5),
         ]
         for claude_temp, openai_temp in test_cases:
-            kwargs = {
+            kwargs: anthropic.types.MessageCreateParams = {
                 "model": "claude-sonnet-4-5-20250929",
                 "messages": [{"role": "user", "content": "Hello"}],
                 "max_tokens": 100,
@@ -483,7 +571,7 @@ class TestLLMRequestCrossAPIConversion:
 
     def test_chat_to_responses_to_chat(self):
         """Test Chat -> Responses -> Chat roundtrip."""
-        original_chat = {
+        original_chat: openai.types.chat.completion_create_params.CompletionCreateParams = {
             "model": "gpt-4o",
             "messages": [{"role": "user", "content": "Hello"}],
             "max_completion_tokens": 100,
@@ -501,27 +589,25 @@ class TestLLMRequestCrossAPIConversion:
 
     def test_chat_to_messages_temperature_conversion(self):
         """Test Chat -> Messages converts temperature correctly."""
-        request = request_lib.LLMRequest.from_chat_completion(
-            {
-                "model": "gpt-4o",
-                "messages": [{"role": "user", "content": "Hello"}],
-                "temperature": 1.0,
-            }
-        )
+        chat_params: openai.types.chat.completion_create_params.CompletionCreateParams = {
+            "model": "gpt-4o",
+            "messages": [{"role": "user", "content": "Hello"}],
+            "temperature": 1.0,
+        }
+        request = request_lib.LLMRequest.from_chat_completion(chat_params)
         claude_kwargs = request.to_messages_kwargs()
 
         assert claude_kwargs["temperature"] == 0.5  # 1.0 / 2
 
     def test_messages_to_chat_temperature_conversion(self):
         """Test Messages -> Chat converts temperature correctly."""
-        request = request_lib.LLMRequest.from_messages(
-            {
-                "model": "claude-sonnet-4-5-20250929",
-                "messages": [{"role": "user", "content": "Hello"}],
-                "max_tokens": 100,
-                "temperature": 0.5,
-            }
-        )
+        messages_params: anthropic.types.MessageCreateParams = {
+            "model": "claude-sonnet-4-5-20250929",
+            "messages": [{"role": "user", "content": "Hello"}],
+            "max_tokens": 100,
+            "temperature": 0.5,
+        }
+        request = request_lib.LLMRequest.from_messages(messages_params)
         chat_kwargs = request.to_chat_completion_kwargs()
 
         assert chat_kwargs["temperature"] == 1.0  # 0.5 * 2

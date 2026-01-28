@@ -2,21 +2,22 @@
 
 import dataclasses
 import logging
-from typing import Any, Literal, Required, TypedDict
+from typing import Any, Literal, NotRequired, Required, TypedDict
 
 import anthropic.types
+import openai.types.chat
 import openai.types.chat.completion_create_params
 import openai.types.responses.response_create_params
 
 _LOGGER = logging.getLogger(__name__)
 
 
-class UserMessage(TypedDict, total=False):
+class UserMessage(TypedDict):
     """User message in a conversation."""
 
-    role: Required[Literal["user"]]
-    content: Required[str]
-    name: str  # Optional - for identifying the user
+    role: Literal["user"]
+    content: str
+    name: NotRequired[str]  # Optional - for identifying the user
 
 
 class AssistantMessage(TypedDict, total=False):
@@ -28,13 +29,13 @@ class AssistantMessage(TypedDict, total=False):
     tool_calls: list[dict[str, Any]]  # Optional - for tool usage
 
 
-class ToolMessage(TypedDict, total=False):
+class ToolMessage(TypedDict):
     """Tool result message in a conversation."""
 
-    role: Required[Literal["tool"]]
-    content: Required[str]
-    tool_call_id: Required[str]
-    name: str  # Optional
+    role: Literal["tool"]
+    content: str
+    tool_call_id: str
+    name: NotRequired[str]  # Optional
 
 
 # Union type for all supported message types
@@ -44,7 +45,89 @@ Message = UserMessage | AssistantMessage | ToolMessage
 _VALID_ROLES = frozenset(["user", "assistant", "tool"])
 
 
-@dataclasses.dataclass(frozen=True)
+class JSONSchema(TypedDict):
+    """JSON Schema definition for tool parameters/input."""
+
+    type: Literal["object"]
+    properties: dict[str, Any]
+    required: NotRequired[list[str]]  # Optional - list of required property names
+    # Additional schema fields (additionalProperties, etc.) can be passed via properties
+
+
+class Tool(TypedDict):
+    """Unified tool definition.
+
+    Uses Claude's simpler format internally (flat structure with input_schema).
+    Converts to/from OpenAI's nested format (type: "function" with function.parameters).
+    """
+
+    name: str
+    description: str
+    input_schema: JSONSchema
+
+
+def _tool_to_openai(tool: Tool) -> openai.types.chat.ChatCompletionToolParam:
+    """Convert Tool from Claude format to OpenAI format.
+
+    Args:
+        tool: Tool in Claude format (flat with input_schema)
+
+    Returns:
+        Tool in OpenAI format (nested with type and function.parameters)
+    """
+    return openai.types.chat.ChatCompletionToolParam(
+        type="function",
+        function=openai.types.shared_params.FunctionDefinition(
+            name=tool["name"],
+            description=tool["description"],
+            parameters=tool["input_schema"],
+        ),
+    )
+
+
+def _tool_from_openai(openai_tool: openai.types.chat.ChatCompletionToolParam) -> Tool:
+    """Convert tool from OpenAI Chat Completions format to Claude format.
+
+    Args:
+        openai_tool: Tool in OpenAI Chat Completions format (nested with type and function.parameters)
+
+    Returns:
+        Tool in Claude format (flat with input_schema)
+    """
+    function = openai_tool["function"]
+    return Tool(
+        name=function["name"],
+        description=function.get("description", ""),
+        input_schema=function.get("parameters", {"type": "object", "properties": {}}),
+    )
+
+
+def _tool_from_responses(responses_tool: openai.types.responses.ToolParam) -> Tool:
+    """Convert tool from OpenAI Responses format to Claude format.
+
+    Args:
+        responses_tool: Tool in OpenAI Responses format (flat with type, name, parameters)
+
+    Returns:
+        Tool in Claude format (flat with input_schema)
+
+    Note:
+        Currently only supports FunctionToolParam. Other tool types are not converted.
+    """
+    # Only handle FunctionToolParam for now
+    if responses_tool.get("type") == "function":
+        # Type guard: if type is "function", this is FunctionToolParam
+        func_tool: openai.types.responses.FunctionToolParam = responses_tool  # type: ignore[assignment]
+        return Tool(
+            name=func_tool["name"],
+            description=func_tool.get("description") or "",
+            input_schema=func_tool.get("parameters") or {"type": "object", "properties": {}},
+        )
+    # For other tool types, we can't convert them to Claude format
+    raise ValueError(f"Unsupported tool type for conversion: {responses_tool.get('type')}")
+
+
+@dataclasses.dataclass(frozen=True, kw_only=True)
 class LLMRequest:
     """Unified request format for OpenAI Chat Completions, OpenAI Responses, and Claude Messages APIs.
 
@@ -80,7 +163,7 @@ class LLMRequest:
     temperature: float | None = None
     top_p: float | None = None
     stream: bool = False
-    tools: list[dict[str, Any]] | None = None
+    tools: list[Tool] | None = None
     tool_choice: str | dict[str, Any] | None = None
     metadata: dict[str, Any] | None = None
     service_tier: Literal["auto", "default", "flex", "scale", "priority", "standard_only"] | None = None
@@ -145,7 +228,7 @@ class LLMRequest:
         if self.stream:
             kwargs["stream"] = True
         if self.tools:
-            kwargs["tools"] = self.tools
+            kwargs["tools"] = [_tool_to_openai(tool) for tool in self.tools]
         if self.tool_choice is not None:
             kwargs["tool_choice"] = self.tool_choice
         if self.metadata:
@@ -209,7 +292,7 @@ class LLMRequest:
         if self.stream:
             kwargs["stream"] = True
         if self.tools:
-            kwargs["tools"] = self.tools
+            kwargs["tools"] = [_tool_to_openai(tool) for tool in self.tools]
         if self.tool_choice is not None:
             kwargs["tool_choice"] = self.tool_choice
         if self.metadata:
@@ -279,10 +362,10 @@ class LLMRequest:
         if self.stream:
             kwargs["stream"] = True
         if self.tools:
-            # TODO: Convert tool schemas from OpenAI to Claude format
+            # Tools are already in Claude format internally, just pass through
             kwargs["tools"] = self.tools
         if self.tool_choice is not None:
-            # TODO: Convert tool_choice from OpenAI to Claude format
+            # TODO: Convert tool_choice from OpenAI to Claude format if needed
             kwargs["tool_choice"] = self.tool_choice
         if self.metadata:
             # Claude uses metadata.user_id specifically
@@ -345,7 +428,7 @@ class LLMRequest:
     @classmethod
     def from_chat_completion(
         cls,
-        kwargs: openai.types.chat.completion_create_params.CompletionCreateParamsBase,
+        kwargs: openai.types.chat.completion_create_params.CompletionCreateParams,
         *,
         strict: bool = True,
     ) -> "LLMRequest":
@@ -411,13 +494,19 @@ class LLMRequest:
             # Convert to our Message format (dict with proper fields)
             filtered_messages.append(dict(msg))  # type: ignore[arg-type]
 
+        # Convert tools from OpenAI to Claude format
+        tools_param = kwargs.get("tools")
+        converted_tools: list[Tool] | None = None
+        if tools_param:
+            converted_tools = [_tool_from_openai(tool) for tool in tools_param]
+
         return cls(
             messages=filtered_messages,
             max_output_tokens=kwargs.get("max_completion_tokens") or kwargs.get("max_tokens"),
             temperature=kwargs.get("temperature"),
             top_p=kwargs.get("top_p"),
             stream=kwargs.get("stream", False),
-            tools=kwargs.get("tools"),
+            tools=converted_tools,
             tool_choice=kwargs.get("tool_choice"),
             metadata=kwargs.get("metadata"),
             service_tier=kwargs.get("service_tier"),
@@ -495,13 +584,19 @@ class LLMRequest:
                         }
                     )
 
+        # Convert tools from Responses format to Claude format
+        tools_param = kwargs.get("tools")
+        converted_tools: list[Tool] | None = None
+        if tools_param:
+            converted_tools = [_tool_from_responses(tool) for tool in tools_param]
+
         return cls(
             messages=filtered_messages,
             max_output_tokens=kwargs.get("max_output_tokens"),
             temperature=kwargs.get("temperature"),
             top_p=kwargs.get("top_p"),
             stream=kwargs.get("stream", False),
-            tools=kwargs.get("tools"),
+            tools=converted_tools,
             tool_choice=kwargs.get("tool_choice"),
             metadata=kwargs.get("metadata"),
             service_tier=kwargs.get("service_tier"),
