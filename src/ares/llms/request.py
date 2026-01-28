@@ -2,12 +2,14 @@
 
 import dataclasses
 import logging
-from typing import Any, Literal, NotRequired, Required, TypedDict
+from typing import Any, Literal, NotRequired, Required, TypedDict, cast
 
 import anthropic.types
 import openai.types.chat
 import openai.types.chat.completion_create_params
+import openai.types.responses
 import openai.types.responses.response_create_params
+import openai.types.shared_params
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -80,7 +82,7 @@ def _tool_to_openai(tool: Tool) -> openai.types.chat.ChatCompletionToolParam:
         function=openai.types.shared_params.FunctionDefinition(
             name=tool["name"],
             description=tool["description"],
-            parameters=tool["input_schema"],
+            parameters=cast(dict[str, object], tool["input_schema"]),
         ),
     )
 
@@ -95,10 +97,18 @@ def _tool_from_openai(openai_tool: openai.types.chat.ChatCompletionToolParam) ->
         Tool in Claude format (flat with input_schema)
     """
     function = openai_tool["function"]
+    parameters = function.get("parameters", {"type": "object", "properties": {}})
+
+    # Validate that parameters is a valid JSONSchema
+    if not isinstance(parameters, dict):
+        raise ValueError(f"Tool parameters must be a dict, got {type(parameters)}")
+    if "type" not in parameters:
+        raise ValueError("Tool parameters must have a 'type' field")
+
     return Tool(
         name=function["name"],
         description=function.get("description", ""),
-        input_schema=function.get("parameters", {"type": "object", "properties": {}}),
+        input_schema=cast(JSONSchema, parameters),
     )
 
 
@@ -117,14 +127,73 @@ def _tool_from_responses(responses_tool: openai.types.responses.ToolParam) -> To
     # Only handle FunctionToolParam for now
     if responses_tool.get("type") == "function":
         # Type guard: if type is "function", this is FunctionToolParam
-        func_tool: openai.types.responses.FunctionToolParam = responses_tool  # type: ignore[assignment]
+        func_tool = cast(openai.types.responses.FunctionToolParam, responses_tool)
+        parameters = func_tool.get("parameters") or {"type": "object", "properties": {}}
+
+        # Validate that parameters is a valid JSONSchema
+        if not isinstance(parameters, dict):
+            raise ValueError(f"Tool parameters must be a dict, got {type(parameters)}")
+        if "type" not in parameters:
+            raise ValueError("Tool parameters must have a 'type' field")
+
         return Tool(
             name=func_tool["name"],
             description=func_tool.get("description") or "",
-            input_schema=func_tool.get("parameters") or {"type": "object", "properties": {}},
+            input_schema=cast(JSONSchema, parameters),
         )
     # For other tool types, we can't convert them to Claude format
     raise ValueError(f"Unsupported tool type for conversion: {responses_tool.get('type')}")
+
+
+def _tool_from_anthropic(
+    anthropic_tool: anthropic.types.ToolUnionParam,
+) -> Tool:
+    """Convert tool from Anthropic Messages format to internal format.
+
+    Args:
+        anthropic_tool: Tool in Anthropic format (ToolParam with type='custom'/None, or built-in tool types)
+
+    Returns:
+        Tool in internal format
+
+    Raises:
+        ValueError: If tool type is unsupported or required fields are missing
+
+    Note:
+        Only supports ToolParam with type='custom' or type=None. Built-in tool types
+        (bash_20250124, text_editor_*, web_search_*) are not supported.
+    """
+    # Check tool type - we only accept "custom" (or None which defaults to custom)
+    # Reject built-in tool types like bash_20250124, text_editor_*, web_search_*
+    tool_type = anthropic_tool.get("type")
+    if tool_type is not None and tool_type != "custom":
+        raise ValueError(
+            f"Unsupported tool type: {tool_type}. Only 'custom' tools are supported. "
+            f"Built-in tools (bash, text_editor, web_search) are not supported."
+        )
+
+    # Validate required fields
+    if "name" not in anthropic_tool:
+        raise ValueError("Tool missing required 'name' field")
+
+    if "input_schema" not in anthropic_tool:
+        raise ValueError(f"Tool '{anthropic_tool.get('name')}' missing required 'input_schema' field")
+
+    # Validate input_schema structure
+    input_schema = anthropic_tool["input_schema"]
+    if not isinstance(input_schema, dict):
+        raise ValueError(
+            f"Tool '{anthropic_tool['name']}' input_schema must be a dict, got {type(input_schema)}"
+        )
+
+    if "type" not in input_schema:
+        raise ValueError(f"Tool '{anthropic_tool['name']}' input_schema must have a 'type' field")
+
+    return Tool(
+        name=anthropic_tool["name"],
+        description=anthropic_tool.get("description", ""),
+        input_schema=cast(JSONSchema, input_schema),
+    )
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
@@ -333,7 +402,8 @@ class LLMRequest:
             msg_dict = dict(msg)
             role = msg_dict["role"]
             if role in ("system", "developer"):
-                filtered_messages.append(f"{role} message: {msg_dict.get('content', '')[:50]}...")
+                content = str(msg_dict.get("content", ""))[:50]
+                filtered_messages.append(f"{role} message: {content}...")
 
         if filtered_messages:
             lost_info.append(f"Messages filtered out (use system_prompt instead): {'; '.join(filtered_messages)}")
@@ -491,27 +561,54 @@ class LLMRequest:
                 _LOGGER.warning("Skipping message with unsupported role: %s", role)
                 continue
 
-            # Convert to our Message format (dict with proper fields)
-            filtered_messages.append(dict(msg))  # type: ignore[arg-type]
+            # Convert to our Message format - cast dict to Message since we validated the role
+            filtered_messages.append(cast(Message, dict(msg)))
 
         # Convert tools from OpenAI to Claude format
         tools_param = kwargs.get("tools")
         converted_tools: list[Tool] | None = None
         if tools_param:
-            converted_tools = [_tool_from_openai(tool) for tool in tools_param]
+            converted_tools = []
+            for tool in tools_param:
+                tool_type = tool.get("type")
+                if tool_type != "function":
+                    if strict:
+                        raise ValueError(f"Unsupported tool type: {tool_type}. Only 'function' tools are supported.")
+                    _LOGGER.warning("Skipping tool with unsupported type: %s", tool_type)
+                    continue
+                converted_tools.append(_tool_from_openai(cast(openai.types.chat.ChatCompletionToolParam, tool)))
+
+        # Handle stop sequences - convert single string to list
+        stop_param = kwargs.get("stop")
+        stop_sequences: list[str] | None = None
+        if isinstance(stop_param, list):
+            stop_sequences = stop_param
+        elif isinstance(stop_param, str):
+            stop_sequences = [stop_param]
+
+        # Handle system prompt - extract string from various formats
+        final_system_prompt: str | None = None
+        if system_prompt:
+            if isinstance(system_prompt, str):
+                final_system_prompt = system_prompt
+            else:
+                # If it's an iterable, try to extract text content
+                if strict:
+                    raise ValueError("system_prompt must be a string in Chat Completions format")
+                _LOGGER.warning("Non-string system prompt provided, skipping")
 
         return cls(
             messages=filtered_messages,
             max_output_tokens=kwargs.get("max_completion_tokens") or kwargs.get("max_tokens"),
             temperature=kwargs.get("temperature"),
             top_p=kwargs.get("top_p"),
-            stream=kwargs.get("stream", False),
+            stream=bool(kwargs.get("stream", False)),
             tools=converted_tools,
-            tool_choice=kwargs.get("tool_choice"),
-            metadata=kwargs.get("metadata"),
+            tool_choice=cast(str | dict[str, Any] | None, kwargs.get("tool_choice")),
+            metadata=cast(dict[str, Any] | None, kwargs.get("metadata")),
             service_tier=kwargs.get("service_tier"),
-            stop_sequences=kwargs.get("stop") if isinstance(kwargs.get("stop"), list) else None,
-            system_prompt=system_prompt,
+            stop_sequences=stop_sequences,
+            system_prompt=final_system_prompt,
         )
 
     @classmethod
@@ -564,7 +661,7 @@ class LLMRequest:
         filtered_messages: list[Message] = []
 
         if isinstance(input_param, str):
-            filtered_messages = [{"role": "user", "content": input_param}]  # type: ignore[typeddict-item]
+            filtered_messages = [UserMessage(role="user", content=input_param)]
         elif isinstance(input_param, list):
             for item in input_param:
                 if item.get("type") == "message":
@@ -577,12 +674,12 @@ class LLMRequest:
                         _LOGGER.warning("Skipping message with unsupported role: %s", role)
                         continue
 
-                    filtered_messages.append(
-                        {
-                            "role": role,  # type: ignore[typeddict-item]
-                            "content": item.get("content", ""),
-                        }
-                    )
+                    # Extract content - it might be string or complex content list
+                    content_param = item.get("content", "")
+                    content_str = content_param if isinstance(content_param, str) else ""
+
+                    # Cast to Message after validating role
+                    filtered_messages.append(cast(Message, {"role": role, "content": content_str}))
 
         # Convert tools from Responses format to Claude format
         tools_param = kwargs.get("tools")
@@ -595,10 +692,10 @@ class LLMRequest:
             max_output_tokens=kwargs.get("max_output_tokens"),
             temperature=kwargs.get("temperature"),
             top_p=kwargs.get("top_p"),
-            stream=kwargs.get("stream", False),
+            stream=bool(kwargs.get("stream", False)),
             tools=converted_tools,
-            tool_choice=kwargs.get("tool_choice"),
-            metadata=kwargs.get("metadata"),
+            tool_choice=cast(str | dict[str, Any] | None, kwargs.get("tool_choice")),
+            metadata=cast(dict[str, Any] | None, kwargs.get("metadata")),
             service_tier=kwargs.get("service_tier"),
             system_prompt=kwargs.get("instructions"),
         )
@@ -673,8 +770,21 @@ class LLMRequest:
                 _LOGGER.warning("Skipping message with unsupported role: %s", role)
                 continue
 
-            # Convert to our Message format
-            filtered_messages.append(dict(msg))  # type: ignore[arg-type]
+            # Convert to our Message format - cast after validating role
+            filtered_messages.append(cast(Message, dict(msg)))
+
+        # Convert tools from Anthropic format to internal format
+        tools_param = kwargs.get("tools")
+        converted_tools: list[Tool] | None = None
+        if tools_param:
+            converted_tools = []
+            for tool in tools_param:
+                try:
+                    converted_tools.append(_tool_from_anthropic(tool))
+                except ValueError as e:
+                    if strict:
+                        raise
+                    _LOGGER.warning("Skipping invalid tool: %s", e)
 
         return cls(
             messages=filtered_messages,
@@ -682,11 +792,11 @@ class LLMRequest:
             temperature=temperature,
             top_p=kwargs.get("top_p"),
             top_k=kwargs.get("top_k"),
-            stream=kwargs.get("stream", False),
-            tools=kwargs.get("tools"),
-            tool_choice=kwargs.get("tool_choice"),
-            metadata=kwargs.get("metadata"),
+            stream=bool(kwargs.get("stream", False)),
+            tools=converted_tools,
+            tool_choice=cast(str | dict[str, Any] | None, kwargs.get("tool_choice")),
+            metadata=cast(dict[str, Any] | None, kwargs.get("metadata")),
             service_tier=kwargs.get("service_tier"),
-            stop_sequences=kwargs.get("stop_sequences"),
+            stop_sequences=cast(list[str] | None, kwargs.get("stop_sequences")),
             system_prompt=system_prompt,
         )

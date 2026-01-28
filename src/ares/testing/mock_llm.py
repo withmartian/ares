@@ -87,7 +87,7 @@ class MockLLMClient:
         """Get the most recent request, or None if no requests."""
         return self.requests[-1] if self.requests else None
 
-    def get_request_messages(self, index: int = -1) -> list[dict]:
+    def get_request_messages(self, index: int = -1) -> list[request.Message]:
         """Get messages from a specific request (default: last request)."""
         if not self.requests:
             return []

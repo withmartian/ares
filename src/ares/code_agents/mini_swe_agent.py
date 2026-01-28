@@ -19,7 +19,6 @@ import re
 from typing import Literal
 
 import jinja2
-from openai.types.chat import chat_completion_message_param
 import yaml
 
 from ares.code_agents import code_agent_base
@@ -142,7 +141,7 @@ class MiniSWECodeAgent(code_agent_base.CodeAgent):
         self._step_limit = self._agent_config.get("step_limit", 0)
         self._cost_limit = self._agent_config.get("cost_limit", 0.0)
 
-        self._messages: list[chat_completion_message_param.ChatCompletionMessageParam] = []
+        self._messages: list[request.Message] = []
         _LOGGER.debug("[%d] Initialized MiniSWECodeAgent.", id(self))
 
     def _add_message(self, role: Literal["system", "user", "assistant"], content: str) -> None:

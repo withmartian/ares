@@ -58,7 +58,7 @@ async def test_mock_llm_client_response_handler():
 
     def handler(req: request.LLMRequest) -> str:
         # Echo back the user's message
-        user_msg = req.messages[-1]["content"]
+        user_msg = req.messages[-1].get("content", "")
         return f"You said: {user_msg}"
 
     client = mock_llm.MockLLMClient(response_handler=handler)
@@ -109,17 +109,15 @@ async def test_mock_llm_client_get_request_messages():
 
     req = request.LLMRequest(
         messages=[
-            {"role": "system", "content": "You are helpful"},
             {"role": "user", "content": "Hello"},
-        ]
+        ],
     )
 
     await client(req)
 
     messages = client.get_request_messages()
-    assert len(messages) == 2
-    assert messages[0]["content"] == "You are helpful"
-    assert messages[1]["content"] == "Hello"
+    assert len(messages) == 1
+    assert messages[0].get("content", "") == "Hello"
 
 
 @pytest.mark.asyncio
@@ -167,6 +165,7 @@ async def test_mock_llm_response_structure():
     assert choice.finish_reason == "stop"
 
     # Check usage structure
+    assert completion.usage is not None
     assert completion.usage.prompt_tokens == 100
     assert completion.usage.completion_tokens == 50
     assert completion.usage.total_tokens == 150
