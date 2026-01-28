@@ -14,9 +14,10 @@ import re
 from typing import Literal, cast
 
 from ares.code_agents import code_agent_base
-from ares.code_agents.terminus_2 import json_parser
-from ares.code_agents.terminus_2 import xml_parser
+from ares.code_agents.terminus2 import json_parser
+from ares.code_agents.terminus2 import xml_parser
 from ares.containers import containers
+from ares.experiment_tracking import stat_tracker
 from ares.llms import llm_clients
 from ares.llms import request
 
@@ -107,6 +108,8 @@ class Terminus2Agent(code_agent_base.CodeAgent):
 
     container: containers.Container
     llm_client: llm_clients.LLMClient
+    # TODO: Actually use the stat tracker in the agent.
+    tracker: stat_tracker.StatTracker = dataclasses.field(default_factory=stat_tracker.NullStatTracker)
     parser_format: Literal["json", "xml"] = "json"
     max_turns: int = 50
     timeout_s: float = _DEFAULT_TIMEOUT_S
@@ -628,32 +631,3 @@ class Terminus2Agent(code_agent_base.CodeAgent):
                 "make any further corrections. If so, include "
                 "<task_complete>true</task_complete> again."
             )
-
-
-@dataclasses.dataclass(kw_only=True)
-class Terminus2AgentFactory(code_agent_base.CodeAgentFactory):
-    """Factory for creating Terminus2Agent instances."""
-
-    parser_format: Literal["json", "xml"] = "json"
-    max_turns: int = 50
-    timeout_s: float = _DEFAULT_TIMEOUT_S
-    enable_summarization: bool = True
-
-    def __call__(self, container: containers.Container, llm_client: llm_clients.LLMClient) -> Terminus2Agent:
-        """Create a new Terminus2Agent instance.
-
-        Args:
-            container: The container to use.
-            llm_client: The LLM client to use.
-
-        Returns:
-            A new Terminus2Agent instance.
-        """
-        return Terminus2Agent(
-            container=container,
-            llm_client=llm_client,
-            parser_format=self.parser_format,
-            max_turns=self.max_turns,
-            timeout_s=self.timeout_s,
-            enable_summarization=self.enable_summarization,
-        )
