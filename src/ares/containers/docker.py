@@ -42,13 +42,14 @@ class DockerContainer(containers.Container):
         client.images.client.api._auth_configs["credHelpers"] = {}  # type: ignore
         return client
 
-    def _build_image_with_maybe_no_auth(self, path: str, tag: str | None) -> docker.models.images.Image:
+    def _build_image(self, path: str, tag: str | None) -> docker.models.images.Image:
         try:
             return self._client.images.build(path=path, tag=tag)[0]
         except docker.errors.DockerException as e:
             if "StoreError" in str(e):
-                # Fix for https://github.com/docker/docker-py/issues/3379
-                # Try again after removing auth sources, since they might be broken
+                # Try again after removing auth sources, since they might be broken.
+                # Fix for https://github.com/docker/docker-py/issues/3379 - if auth sources fail,
+                # we the build() call will fail even if the image is publicly accessible.
                 return self._client_with_no_auth.images.build(path=path, tag=tag)[0]
             else:
                 raise
@@ -63,7 +64,7 @@ class DockerContainer(containers.Container):
             # TODO: Some kind of cache for dockerfile directory to avoid
             #       rebuilding same image over and over again?
             image_obj = await asyncio.to_thread(
-                self._build_image_with_maybe_no_auth,
+                self._build_image,
                 path=dockerfile_path.parent.as_posix(),
                 tag=self.name,
             )
