@@ -414,7 +414,7 @@ class TestLLMRequestMessagesConversion:
                     "input_schema": {"type": "object", "properties": {}},
                 }
             ],
-            tool_choice={"type": "auto"},
+            tool_choice="auto",  # Internal format
             metadata={"user_id": "123"},
             service_tier="auto",
             stop_sequences=["STOP", "END"],
@@ -556,7 +556,7 @@ class TestLLMRequestMessagesConversion:
         assert request.tools == [
             {"name": "test", "description": "", "input_schema": {"type": "object", "properties": {}}}
         ]
-        assert request.tool_choice == {"type": "auto"}
+        assert request.tool_choice == "auto"  # Internal format
         assert request.metadata == {"user_id": "123"}
         assert request.service_tier == "auto"
         assert request.stop_sequences == ["STOP"]

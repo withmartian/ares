@@ -68,6 +68,21 @@ class Tool(TypedDict):
     input_schema: JSONSchema
 
 
+class ToolChoiceTool(TypedDict):
+    """Tool choice: model must use a specific named tool."""
+
+    type: Literal["tool"]
+    name: str
+
+
+# Internal tool choice format
+# - "auto": Model decides whether to use tools
+# - "any": Model must use at least one tool (maps to OpenAI "required")
+# - "none": Model must not use any tools
+# - ToolChoiceTool: Model must use a specific named tool
+ToolChoice = Literal["auto", "any", "none"] | ToolChoiceTool
+
+
 def _tool_to_openai(tool: Tool) -> openai.types.chat.ChatCompletionToolParam:
     """Convert Tool from Claude format to OpenAI format.
 
@@ -196,6 +211,126 @@ def _tool_from_anthropic(
     )
 
 
+def _tool_choice_to_openai(tool_choice: ToolChoice | None) -> str | dict[str, Any] | None:
+    """Convert internal ToolChoice to OpenAI Chat Completions format.
+
+    Args:
+        tool_choice: Internal tool choice
+
+    Returns:
+        Tool choice in OpenAI format:
+        - "auto": Model decides
+        - "required": Must use at least one tool
+        - "none": Must not use any tools
+        - {"type": "function", "function": {"name": "..."}}: Specific function
+    """
+    if tool_choice is None:
+        return None
+
+    if tool_choice == "auto":
+        return "auto"
+    elif tool_choice == "any":
+        return "required"  # Map "any" to OpenAI's "required"
+    elif tool_choice == "none":
+        return "none"
+    elif isinstance(tool_choice, dict) and tool_choice.get("type") == "tool":
+        return {
+            "type": "function",
+            "function": {"name": tool_choice["name"]},
+        }
+
+    return None
+
+
+def _tool_choice_from_openai(
+    tool_choice: str | dict[str, Any] | None,
+) -> ToolChoice | None:
+    """Convert OpenAI Chat Completions tool_choice to internal format.
+
+    Args:
+        tool_choice: OpenAI tool choice parameter
+
+    Returns:
+        Internal ToolChoice format
+    """
+    if tool_choice is None:
+        return None
+
+    if isinstance(tool_choice, str):
+        if tool_choice == "auto":
+            return "auto"
+        elif tool_choice == "required":
+            return "any"  # Map OpenAI "required" to "any"
+        elif tool_choice == "none":
+            return "none"
+
+    elif isinstance(tool_choice, dict):
+        choice_type = tool_choice.get("type")
+        if choice_type == "function":
+            # {"type": "function", "function": {"name": "x"}} -> {"type": "tool", "name": "x"}
+            function_data = tool_choice.get("function", {})
+            if isinstance(function_data, dict) and "name" in function_data:
+                return ToolChoiceTool(type="tool", name=function_data["name"])
+
+    return None
+
+
+def _tool_choice_to_anthropic(tool_choice: ToolChoice | None) -> dict[str, Any] | None:
+    """Convert internal ToolChoice to Anthropic Messages format.
+
+    Args:
+        tool_choice: Internal tool choice
+
+    Returns:
+        Tool choice in Anthropic format:
+        - {"type": "auto"}: Model decides
+        - {"type": "any"}: Must use at least one tool
+        - {"type": "none"}: Must not use any tools
+        - {"type": "tool", "name": "..."}: Specific tool
+    """
+    if tool_choice is None:
+        return None
+
+    if tool_choice == "auto":
+        return {"type": "auto"}
+    elif tool_choice == "any":
+        return {"type": "any"}
+    elif tool_choice == "none":
+        return {"type": "none"}
+    elif isinstance(tool_choice, dict) and tool_choice.get("type") == "tool":
+        return {"type": "tool", "name": tool_choice["name"]}
+
+    return None
+
+
+def _tool_choice_from_anthropic(
+    tool_choice: dict[str, Any] | None,
+) -> ToolChoice | None:
+    """Convert Anthropic Messages tool_choice to internal format.
+
+    Args:
+        tool_choice: Anthropic tool choice parameter
+
+    Returns:
+        Internal ToolChoice format
+    """
+    if tool_choice is None:
+        return None
+
+    if isinstance(tool_choice, dict):
+        choice_type = tool_choice.get("type")
+        if choice_type == "auto":
+            return "auto"
+        elif choice_type == "any":
+            return "any"
+        elif choice_type == "none":
+            return "none"
+        elif choice_type == "tool" and "name" in tool_choice:
+            return ToolChoiceTool(type="tool", name=tool_choice["name"])
+
+    return None
+
+
 @dataclasses.dataclass(frozen=True, kw_only=True)
 class LLMRequest:
     """Unified request format for OpenAI Chat Completions, OpenAI Responses, and Claude Messages APIs.
@@ -233,7 +368,7 @@ class LLMRequest:
     top_p: float | None = None
     stream: bool = False
     tools: list[Tool] | None = None
-    tool_choice: str | dict[str, Any] | None = None
+    tool_choice: ToolChoice | None = None
     metadata: dict[str, Any] | None = None
     service_tier: Literal["auto", "default", "flex", "scale", "priority", "standard_only"] | None = None
     stop_sequences: list[str] | None = None
@@ -299,7 +434,7 @@ class LLMRequest:
         if self.tools:
             kwargs["tools"] = [_tool_to_openai(tool) for tool in self.tools]
         if self.tool_choice is not None:
-            kwargs["tool_choice"] = self.tool_choice
+            kwargs["tool_choice"] = _tool_choice_to_openai(self.tool_choice)
         if self.metadata:
             kwargs["metadata"] = self.metadata
         if self.service_tier and self.service_tier != "standard_only":
@@ -363,7 +498,7 @@ class LLMRequest:
         if self.tools:
             kwargs["tools"] = [_tool_to_openai(tool) for tool in self.tools]
         if self.tool_choice is not None:
-            kwargs["tool_choice"] = self.tool_choice
+            kwargs["tool_choice"] = _tool_choice_to_openai(self.tool_choice)
         if self.metadata:
             kwargs["metadata"] = self.metadata
         if self.service_tier and self.service_tier != "standard_only":
@@ -435,8 +570,7 @@ class LLMRequest:
             # Tools are already in Claude format internally, just pass through
             kwargs["tools"] = self.tools
         if self.tool_choice is not None:
-            # TODO: Convert tool_choice from OpenAI to Claude format if needed
-            kwargs["tool_choice"] = self.tool_choice
+            kwargs["tool_choice"] = _tool_choice_to_anthropic(self.tool_choice)
         if self.metadata:
             # Claude uses metadata.user_id specifically
             kwargs["metadata"] = self.metadata
@@ -604,7 +738,9 @@ class LLMRequest:
             top_p=kwargs.get("top_p"),
             stream=bool(kwargs.get("stream", False)),
             tools=converted_tools,
-            tool_choice=cast(str | dict[str, Any] | None, kwargs.get("tool_choice")),
+            tool_choice=_tool_choice_from_openai(
+                cast(str | dict[str, Any] | None, kwargs.get("tool_choice"))
+            ),
             metadata=cast(dict[str, Any] | None, kwargs.get("metadata")),
             service_tier=kwargs.get("service_tier"),
             stop_sequences=stop_sequences,
@@ -694,7 +830,9 @@ class LLMRequest:
             top_p=kwargs.get("top_p"),
             stream=bool(kwargs.get("stream", False)),
             tools=converted_tools,
-            tool_choice=cast(str | dict[str, Any] | None, kwargs.get("tool_choice")),
+            tool_choice=_tool_choice_from_openai(
+                cast(str | dict[str, Any] | None, kwargs.get("tool_choice"))
+            ),
             metadata=cast(dict[str, Any] | None, kwargs.get("metadata")),
             service_tier=kwargs.get("service_tier"),
             system_prompt=kwargs.get("instructions"),
@@ -794,7 +932,9 @@ class LLMRequest:
             top_k=kwargs.get("top_k"),
             stream=bool(kwargs.get("stream", False)),
             tools=converted_tools,
-            tool_choice=cast(str | dict[str, Any] | None, kwargs.get("tool_choice")),
+            tool_choice=_tool_choice_from_anthropic(
+                cast(dict[str, Any] | None, kwargs.get("tool_choice"))
+            ),
             metadata=cast(dict[str, Any] | None, kwargs.get("metadata")),
             service_tier=kwargs.get("service_tier"),
             stop_sequences=cast(list[str] | None, kwargs.get("stop_sequences")),
