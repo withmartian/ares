@@ -165,6 +165,12 @@ class CodeEnvironment(base.Environment[llm_clients.LLMResponse, llm_clients.LLMR
 
         if self._code_agent_task in done:
             _LOGGER.debug("[%d] Code agent completed.", id(self))
+
+            assert self._code_agent_task is not None
+            exc = self._code_agent_task.exception()
+            if exc is not None:
+                raise RuntimeError("Code agent task failed") from exc
+
             # We're done. Return the final reward.
             assert self._container is not None
             assert self._current_task is not None
