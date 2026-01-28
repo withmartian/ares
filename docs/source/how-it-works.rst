@@ -70,7 +70,7 @@ The environment side:
         self._llm_req_future.set_result(action)
         return await self._get_time_step()
 
-To dive into the code, see :py:class:`ares.llms.queue_mediated_client.QueueMediatedLLMClient` and :py:meth:`ares.environments.base.CodeBaseEnv._get_time_step`.
+To dive into the code, see :py:class:`ares.llms.queue_mediated_client.QueueMediatedLLMClient` and :py:meth:`ares.environments.code_env.CodeEnvironment._get_time_step`.
 
 Multiple Environments
 --------------------------------

@@ -24,7 +24,7 @@ Key Features
 * **LLM-Level Optimization**: Train the LLM within code agents, not just the agent as a whole
 * **Distributed Workloads**: Support for high-volume, distributed training and evaluation
 * **Mechanistic Interpretability**: Raw access to LLM requests and responses for deep analysis
-* **Async Gym/dm_env like Spec**: Close to Gym/dm_env spec, but incorpirating async methods for performance 
+* **Async Gym/dm_env like Spec**: Close to Gym/dm_env spec, but incorporating async methods for performance 
 
 Indices and tables
 ==================
