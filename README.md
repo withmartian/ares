@@ -6,6 +6,10 @@
 
 ARES (Agentic Research and Evaluation Suite) is an RL-first framework for training and evaluating agents.
 
+## Documentation
+
+📚 **[Read the full documentation](https://ares.readthedocs.io/)** to learn about ARES's core concepts and architecture.
+
 ## Quick Start
 
 ### Pre-requisites
