@@ -73,7 +73,7 @@ class LlamaCppLLMClient(llm_clients.LLMClient):
             n_ctx=self.n_ctx,
         )
 
-    async def __call__(self, request: request.LLMRequest) -> llm_clients.LLMResponse:
+    async def __call__(self, req: request.LLMRequest) -> llm_clients.LLMResponse:
         """Generate a response using llama.cpp.
 
         Args:
@@ -84,7 +84,7 @@ class LlamaCppLLMClient(llm_clients.LLMClient):
         """
         _LOGGER.debug("[%d] Requesting LLM.", id(self))
 
-        completion_kwargs = request.as_kwargs()
+        completion_kwargs = req.to_chat_completion_kwargs()
         # Since llama-cpp-python sets default temperature to 0.2, we explicitly
         # override it to 1.0 if it's not provided by the request.
         completion_kwargs.setdefault("temperature", 1.0)

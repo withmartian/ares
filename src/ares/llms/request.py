@@ -21,7 +21,6 @@ class LLMRequest:
     to convert between them. It includes the 9 core parameters that exist across all APIs.
 
     Core Parameters (all APIs):
-        model: Model identifier string
         messages: List of messages in OpenAI Chat Completions format (will be converted as needed)
         max_output_tokens: Maximum tokens to generate (field name varies by API)
         temperature: Sampling temperature (range 0-2 for OpenAI, auto-converted to 0-1 for Claude)
@@ -38,13 +37,13 @@ class LLMRequest:
         top_k: Top-K sampling (Claude only)
 
     Note:
+        - Model is NOT stored here - it should be managed by the LLMClient
         - Messages are stored in OpenAI Chat Completions format internally
         - Temperature is stored in OpenAI range (0-2), converted to Claude range (0-1) on export
         - Tool schemas are converted as needed for each API
         - Some parameters may be lost or unsupported when converting between APIs
     """
 
-    model: str
     messages: Iterable[openai.types.chat.chat_completion_message_param.ChatCompletionMessageParam]
     max_output_tokens: int | None = None
     temperature: float | None = None
@@ -65,12 +64,13 @@ class LLMRequest:
             strict: If True, raise ValueError on information loss. If False, log warnings.
 
         Returns:
-            Dictionary of kwargs for openai.ChatCompletion.create()
+            Dictionary of kwargs for openai.ChatCompletion.create() (without model)
 
         Raises:
             ValueError: If strict=True and information would be lost in conversion
 
         Note:
+            - Model parameter is NOT included - it should be added by the LLMClient
             - top_k is not supported (Claude-specific)
             - service_tier="standard_only" is not supported
             - stop_sequences truncated to 4 if more provided
@@ -94,7 +94,6 @@ class LLMRequest:
             _LOGGER.warning(msg)
 
         kwargs: dict[str, Any] = {
-            "model": self.model,
             "messages": list(self.messages),
         }
 
@@ -135,12 +134,13 @@ class LLMRequest:
             strict: If True, raise ValueError on information loss. If False, log warnings.
 
         Returns:
-            Dictionary of kwargs for openai.Responses.create()
+            Dictionary of kwargs for openai.Responses.create() (without model)
 
         Raises:
             ValueError: If strict=True and information would be lost in conversion
 
         Note:
+            - Model parameter is NOT included - it should be added by the LLMClient
             - messages are converted to input items
             - system_prompt is mapped to instructions parameter
             - stop_sequences are not supported in Responses API
@@ -150,9 +150,7 @@ class LLMRequest:
         # Check for information loss
         lost_info = []
         if self.stop_sequences:
-            lost_info.append(
-                f"stop_sequences={self.stop_sequences} (not supported by Responses API)"
-            )
+            lost_info.append(f"stop_sequences={self.stop_sequences} (not supported by Responses API)")
         if self.top_k is not None:
             lost_info.append(f"top_k={self.top_k} (Claude-specific, not supported)")
         if self.service_tier == "standard_only":
@@ -165,7 +163,6 @@ class LLMRequest:
             _LOGGER.warning(msg)
 
         kwargs: dict[str, Any] = {
-            "model": self.model,
             "input": self._messages_to_responses_input(),
         }
 
@@ -198,12 +195,13 @@ class LLMRequest:
             strict: If True, raise ValueError on information loss. If False, log warnings.
 
         Returns:
-            Dictionary of kwargs for anthropic.messages.create()
+            Dictionary of kwargs for anthropic.messages.create() (without model)
 
         Raises:
             ValueError: If strict=True and information would be lost in conversion
 
         Note:
+            - Model parameter is NOT included - it should be added by the LLMClient
             - temperature is converted from OpenAI range (0-2) to Claude range (0-1)
             - messages must alternate user/assistant (enforced by Claude API)
             - system_prompt is mapped to system parameter
@@ -213,10 +211,7 @@ class LLMRequest:
         # Check for information loss
         lost_info = []
         if self.service_tier not in (None, "auto", "standard_only"):
-            lost_info.append(
-                f"service_tier='{self.service_tier}' "
-                f"(Claude only supports 'auto' and 'standard_only')"
-            )
+            lost_info.append(f"service_tier='{self.service_tier}' (Claude only supports 'auto' and 'standard_only')")
 
         # Check for filtered messages
         filtered_messages = []
@@ -227,9 +222,7 @@ class LLMRequest:
                 filtered_messages.append(f"{role} message: {msg_dict.get('content', '')[:50]}...")
 
         if filtered_messages:
-            lost_info.append(
-                f"Messages filtered out (use system_prompt instead): {'; '.join(filtered_messages)}"
-            )
+            lost_info.append(f"Messages filtered out (use system_prompt instead): {'; '.join(filtered_messages)}")
 
         if lost_info:
             msg = f"Converting to Claude Messages will lose information: {'; '.join(lost_info)}"
@@ -238,7 +231,6 @@ class LLMRequest:
             _LOGGER.warning(msg)
 
         kwargs: dict[str, Any] = {
-            "model": self.model,
             "messages": self._messages_to_claude_format(),
             "max_tokens": self.max_output_tokens or 1024,  # max_tokens is required by Claude
         }
@@ -281,11 +273,13 @@ class LLMRequest:
         for msg in self.messages:
             # Convert to EasyInputMessageParam format
             msg_dict = dict(msg)  # Convert to regular dict for type safety
-            input_items.append({
-                "type": "message",
-                "role": msg_dict["role"],
-                "content": msg_dict.get("content", ""),
-            })
+            input_items.append(
+                {
+                    "type": "message",
+                    "role": msg_dict["role"],
+                    "content": msg_dict.get("content", ""),
+                }
+            )
         return input_items
 
     def _messages_to_claude_format(self) -> list[dict[str, Any]]:
@@ -309,10 +303,12 @@ class LLMRequest:
             if role in ("tool", "function"):
                 role = "user"
             # Keep user/assistant as-is
-            claude_messages.append({
-                "role": role,
-                "content": msg_dict.get("content", ""),
-            })
+            claude_messages.append(
+                {
+                    "role": role,
+                    "content": msg_dict.get("content", ""),
+                }
+            )
         return claude_messages
 
     @classmethod
@@ -333,10 +329,13 @@ class LLMRequest:
 
         Raises:
             ValueError: If strict=True and there are unhandled parameters
+
+        Note:
+            Model parameter is ignored - it should be managed by the LLMClient
         """
         # Define parameters we actually store/handle
         handled_params = {
-            "model",
+            "model",  # Handled by being ignored (LLMClient manages this)
             "messages",
             "max_completion_tokens",
             "max_tokens",  # Fallback for max_output_tokens
@@ -367,7 +366,6 @@ class LLMRequest:
             messages = messages[1:]
 
         return cls(
-            model=kwargs["model"],
             messages=messages,
             max_output_tokens=kwargs.get("max_completion_tokens") or kwargs.get("max_tokens"),
             temperature=kwargs.get("temperature"),
@@ -399,10 +397,13 @@ class LLMRequest:
 
         Raises:
             ValueError: If strict=True and there are unhandled parameters
+
+        Note:
+            Model parameter is ignored - it should be managed by the LLMClient
         """
         # Define parameters we actually store/handle
         handled_params = {
-            "model",
+            "model",  # Handled by being ignored (LLMClient manages this)
             "input",
             "max_output_tokens",
             "temperature",
@@ -431,13 +432,14 @@ class LLMRequest:
         elif isinstance(input_param, list):
             for item in input_param:
                 if item.get("type") == "message":
-                    messages.append({
-                        "role": item["role"],
-                        "content": item["content"],
-                    })
+                    messages.append(
+                        {
+                            "role": item["role"],
+                            "content": item["content"],
+                        }
+                    )
 
         return cls(
-            model=kwargs.get("model", ""),
             messages=messages,  # type: ignore[arg-type]
             max_output_tokens=kwargs.get("max_output_tokens"),
             temperature=kwargs.get("temperature"),
@@ -469,9 +471,9 @@ class LLMRequest:
         Raises:
             ValueError: If strict=True and there are unhandled parameters
         """
-        # Define parameters we actually store/handle
+        # Define parameters we handle (model is accepted but not stored)
         handled_params = {
-            "model",
+            "model",  # Accepted but not stored - managed by LLMClient
             "messages",
             "max_tokens",
             "temperature",
@@ -509,7 +511,6 @@ class LLMRequest:
             system_prompt = system_param[0].get("text", "") if isinstance(system_param[0], dict) else ""
 
         return cls(
-            model=kwargs["model"],
             messages=kwargs["messages"],  # type: ignore[arg-type]
             max_output_tokens=kwargs["max_tokens"],
             temperature=temperature,

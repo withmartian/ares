@@ -11,12 +11,10 @@ class TestLLMRequestChatCompletionConversion:
     def test_to_chat_completion_minimal(self):
         """Test minimal conversion to Chat Completions format."""
         request = request_lib.LLMRequest(
-            model="gpt-4o",
             messages=[{"role": "user", "content": "Hello"}],
         )
         kwargs = request.to_chat_completion_kwargs()
 
-        assert kwargs["model"] == "gpt-4o"
         assert kwargs["messages"] == [{"role": "user", "content": "Hello"}]
         assert "temperature" not in kwargs
         assert "stream" not in kwargs
@@ -24,7 +22,6 @@ class TestLLMRequestChatCompletionConversion:
     def test_to_chat_completion_all_params(self):
         """Test conversion with all common parameters."""
         request = request_lib.LLMRequest(
-            model="gpt-4o",
             messages=[{"role": "user", "content": "Hello"}],
             max_output_tokens=100,
             temperature=0.7,
@@ -38,7 +35,6 @@ class TestLLMRequestChatCompletionConversion:
         )
         kwargs = request.to_chat_completion_kwargs()
 
-        assert kwargs["model"] == "gpt-4o"
         assert kwargs["max_completion_tokens"] == 100
         assert kwargs["temperature"] == 0.7
         assert kwargs["top_p"] == 0.9
@@ -52,7 +48,6 @@ class TestLLMRequestChatCompletionConversion:
     def test_to_chat_completion_with_system_prompt(self):
         """Test system prompt is added as first message."""
         request = request_lib.LLMRequest(
-            model="gpt-4o",
             messages=[{"role": "user", "content": "Hello"}],
             system_prompt="You are a helpful assistant.",
         )
@@ -65,7 +60,6 @@ class TestLLMRequestChatCompletionConversion:
     def test_to_chat_completion_stop_sequences_truncated(self):
         """Test that stop sequences are truncated to 4 (OpenAI limit)."""
         request = request_lib.LLMRequest(
-            model="gpt-4o",
             messages=[{"role": "user", "content": "Hello"}],
             stop_sequences=["A", "B", "C", "D", "E", "F"],
         )
@@ -76,7 +70,6 @@ class TestLLMRequestChatCompletionConversion:
     def test_to_chat_completion_excludes_top_k(self):
         """Test that top_k (Claude-specific) is excluded."""
         request = request_lib.LLMRequest(
-            model="gpt-4o",
             messages=[{"role": "user", "content": "Hello"}],
             top_k=40,
         )
@@ -87,7 +80,6 @@ class TestLLMRequestChatCompletionConversion:
     def test_to_chat_completion_excludes_standard_only_tier(self):
         """Test that standard_only service tier is excluded."""
         request = request_lib.LLMRequest(
-            model="gpt-4o",
             messages=[{"role": "user", "content": "Hello"}],
             service_tier="standard_only",
         )
@@ -103,7 +95,6 @@ class TestLLMRequestChatCompletionConversion:
         }
         request = request_lib.LLMRequest.from_chat_completion(kwargs)
 
-        assert request.model == "gpt-4o"
         assert list(request.messages) == [{"role": "user", "content": "Hello"}]
         assert request.max_output_tokens is None
         assert request.temperature is None
@@ -125,7 +116,6 @@ class TestLLMRequestChatCompletionConversion:
         }
         request = request_lib.LLMRequest.from_chat_completion(kwargs)
 
-        assert request.model == "gpt-4o"
         assert request.max_output_tokens == 100
         assert request.temperature == 0.7
         assert request.top_p == 0.9
@@ -177,7 +167,6 @@ class TestLLMRequestChatCompletionConversion:
         request = request_lib.LLMRequest.from_chat_completion(original)
         converted = request.to_chat_completion_kwargs()
 
-        assert converted["model"] == original["model"]
         assert converted["messages"] == original["messages"]
         assert converted["max_completion_tokens"] == original["max_completion_tokens"]
         assert converted["temperature"] == original["temperature"]
@@ -194,19 +183,16 @@ class TestLLMRequestResponsesConversion:
     def test_to_responses_minimal(self):
         """Test minimal conversion to Responses format."""
         request = request_lib.LLMRequest(
-            model="gpt-4o",
             messages=[{"role": "user", "content": "Hello"}],
         )
         kwargs = request.to_responses_kwargs()
 
-        assert kwargs["model"] == "gpt-4o"
         assert kwargs["input"] == [{"type": "message", "role": "user", "content": "Hello"}]
         assert "temperature" not in kwargs
 
     def test_to_responses_all_params(self):
         """Test conversion with all common parameters."""
         request = request_lib.LLMRequest(
-            model="gpt-4o",
             messages=[{"role": "user", "content": "Hello"}],
             max_output_tokens=100,
             temperature=0.7,
@@ -219,7 +205,6 @@ class TestLLMRequestResponsesConversion:
         )
         kwargs = request.to_responses_kwargs()
 
-        assert kwargs["model"] == "gpt-4o"
         assert kwargs["max_output_tokens"] == 100
         assert kwargs["temperature"] == 0.7
         assert kwargs["top_p"] == 0.9
@@ -232,7 +217,6 @@ class TestLLMRequestResponsesConversion:
     def test_to_responses_with_instructions(self):
         """Test system prompt is mapped to instructions."""
         request = request_lib.LLMRequest(
-            model="gpt-4o",
             messages=[{"role": "user", "content": "Hello"}],
             system_prompt="You are a helpful assistant.",
         )
@@ -243,7 +227,6 @@ class TestLLMRequestResponsesConversion:
     def test_to_responses_excludes_stop_sequences(self):
         """Test that stop_sequences are not included (not supported)."""
         request = request_lib.LLMRequest(
-            model="gpt-4o",
             messages=[{"role": "user", "content": "Hello"}],
             stop_sequences=["STOP"],
         )
@@ -255,7 +238,6 @@ class TestLLMRequestResponsesConversion:
     def test_to_responses_excludes_top_k(self):
         """Test that top_k is excluded."""
         request = request_lib.LLMRequest(
-            model="gpt-4o",
             messages=[{"role": "user", "content": "Hello"}],
             top_k=40,
         )
@@ -271,7 +253,6 @@ class TestLLMRequestResponsesConversion:
         }
         request = request_lib.LLMRequest.from_responses(kwargs)
 
-        assert request.model == "gpt-4o"
         assert list(request.messages) == [{"role": "user", "content": "Hello"}]
 
     def test_from_responses_all_params(self):
@@ -291,7 +272,6 @@ class TestLLMRequestResponsesConversion:
         }
         request = request_lib.LLMRequest.from_responses(kwargs)
 
-        assert request.model == "gpt-4o"
         assert request.max_output_tokens == 100
         assert request.temperature == 0.7
         assert request.top_p == 0.9
@@ -305,7 +285,6 @@ class TestLLMRequestResponsesConversion:
     def test_from_responses_string_input(self):
         """Test parsing Responses with string input."""
         kwargs = {
-            "model": "gpt-4o",
             "input": "Hello, world!",
         }
         request = request_lib.LLMRequest.from_responses(kwargs)
@@ -335,19 +314,16 @@ class TestLLMRequestMessagesConversion:
     def test_to_messages_minimal(self):
         """Test minimal conversion to Messages format."""
         request = request_lib.LLMRequest(
-            model="claude-sonnet-4-5-20250929",
             messages=[{"role": "user", "content": "Hello"}],
         )
         kwargs = request.to_messages_kwargs()
 
-        assert kwargs["model"] == "claude-sonnet-4-5-20250929"
         assert kwargs["messages"] == [{"role": "user", "content": "Hello"}]
         assert kwargs["max_tokens"] == 1024  # Default required by Claude
 
     def test_to_messages_all_params(self):
         """Test conversion with all common parameters."""
         request = request_lib.LLMRequest(
-            model="claude-sonnet-4-5-20250929",
             messages=[{"role": "user", "content": "Hello"}],
             max_output_tokens=100,
             temperature=1.4,  # Will be converted to 0.7
@@ -362,7 +338,6 @@ class TestLLMRequestMessagesConversion:
         )
         kwargs = request.to_messages_kwargs()
 
-        assert kwargs["model"] == "claude-sonnet-4-5-20250929"
         assert kwargs["max_tokens"] == 100
         assert kwargs["temperature"] == 0.7  # Converted from 1.4
         assert kwargs["top_p"] == 0.9
@@ -385,7 +360,6 @@ class TestLLMRequestMessagesConversion:
         ]
         for openai_temp, claude_temp in test_cases:
             request = request_lib.LLMRequest(
-                model="claude-sonnet-4-5-20250929",
                 messages=[{"role": "user", "content": "Hello"}],
                 temperature=openai_temp,
             )
@@ -395,7 +369,6 @@ class TestLLMRequestMessagesConversion:
     def test_to_messages_with_system_prompt(self):
         """Test system prompt is mapped to system parameter."""
         request = request_lib.LLMRequest(
-            model="claude-sonnet-4-5-20250929",
             messages=[{"role": "user", "content": "Hello"}],
             system_prompt="You are a helpful assistant.",
         )
@@ -406,7 +379,6 @@ class TestLLMRequestMessagesConversion:
     def test_to_messages_excludes_invalid_service_tier(self):
         """Test that non-Claude service tiers are excluded."""
         request = request_lib.LLMRequest(
-            model="claude-sonnet-4-5-20250929",
             messages=[{"role": "user", "content": "Hello"}],
             service_tier="flex",  # Not supported by Claude
         )
@@ -417,7 +389,6 @@ class TestLLMRequestMessagesConversion:
     def test_to_messages_filters_system_messages(self):
         """Test that system/developer messages are filtered out."""
         request = request_lib.LLMRequest(
-            model="claude-sonnet-4-5-20250929",
             messages=[
                 {"role": "system", "content": "System message"},
                 {"role": "user", "content": "Hello"},
@@ -438,7 +409,6 @@ class TestLLMRequestMessagesConversion:
             {"role": "tool", "content": "Sunny, 72°F"},
         ]
         request = request_lib.LLMRequest(
-            model="claude-sonnet-4-5-20250929",
             messages=messages,  # type: ignore
         )
         kwargs = request.to_messages_kwargs()
@@ -454,7 +424,6 @@ class TestLLMRequestMessagesConversion:
         }
         request = request_lib.LLMRequest.from_messages(kwargs)
 
-        assert request.model == "claude-sonnet-4-5-20250929"
         assert list(request.messages) == [{"role": "user", "content": "Hello"}]
         assert request.max_output_tokens == 100
 
@@ -477,7 +446,6 @@ class TestLLMRequestMessagesConversion:
         }
         request = request_lib.LLMRequest.from_messages(kwargs)
 
-        assert request.model == "claude-sonnet-4-5-20250929"
         assert request.max_output_tokens == 100
         assert request.temperature == 1.4  # Converted from 0.7
         assert request.top_p == 0.9
@@ -526,7 +494,8 @@ class TestLLMRequestCrossAPIConversion:
         request2 = request_lib.LLMRequest.from_responses(responses_kwargs)
         final_chat = request2.to_chat_completion_kwargs()
 
-        assert final_chat["model"] == original_chat["model"]
+        # Note: model will be dropped in the conversion.
+        assert "model" not in final_chat
         assert final_chat["max_completion_tokens"] == original_chat["max_completion_tokens"]
         assert final_chat["temperature"] == original_chat["temperature"]
 
@@ -561,7 +530,6 @@ class TestLLMRequestCrossAPIConversion:
         """Test that core parameters are preserved across all conversions."""
         # Create a request with all common parameters
         original = request_lib.LLMRequest(
-            model="gpt-4o",
             messages=[{"role": "user", "content": "Hello"}],
             max_output_tokens=100,
             temperature=1.0,
@@ -576,10 +544,6 @@ class TestLLMRequestCrossAPIConversion:
         messages_kwargs = original.to_messages_kwargs()
 
         # Verify core params are present in all
-        assert chat_kwargs["model"] == "gpt-4o"
-        assert responses_kwargs["model"] == "gpt-4o"
-        assert messages_kwargs["model"] == "gpt-4o"
-
         assert chat_kwargs["max_completion_tokens"] == 100
         assert responses_kwargs["max_output_tokens"] == 100
         assert messages_kwargs["max_tokens"] == 100

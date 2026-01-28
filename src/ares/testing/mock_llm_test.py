@@ -11,8 +11,8 @@ async def test_mock_llm_client_records_requests():
     """Test that mock LLM client records all requests."""
     client = mock_llm.MockLLMClient()
 
-    request1 = request.LLMRequest(model="test-model", messages=[{"role": "user", "content": "Hello"}])
-    request2 = request.LLMRequest(model="test-model", messages=[{"role": "user", "content": "World"}])
+    request1 = request.LLMRequest(messages=[{"role": "user", "content": "Hello"}])
+    request2 = request.LLMRequest(messages=[{"role": "user", "content": "World"}])
 
     await client(request1)
     await client(request2)
@@ -27,7 +27,7 @@ async def test_mock_llm_client_default_response():
     """Test that mock LLM client returns default response."""
     client = mock_llm.MockLLMClient()
 
-    req = request.LLMRequest(model="test-model", messages=[{"role": "user", "content": "test"}])
+    req = request.LLMRequest(messages=[{"role": "user", "content": "test"}])
     response = await client(req)
 
     assert response.chat_completion_response.choices[0].message.content == "Mock LLM response"
@@ -39,7 +39,7 @@ async def test_mock_llm_client_configured_responses():
     """Test that mock LLM client cycles through configured responses."""
     client = mock_llm.MockLLMClient(responses=["First", "Second", "Third"])
 
-    req = request.LLMRequest(model="test-model", messages=[{"role": "user", "content": "test"}])
+    req = request.LLMRequest(messages=[{"role": "user", "content": "test"}])
 
     response1 = await client(req)
     response2 = await client(req)
@@ -63,7 +63,7 @@ async def test_mock_llm_client_response_handler():
 
     client = mock_llm.MockLLMClient(response_handler=handler)
 
-    req = request.LLMRequest(model="test-model", messages=[{"role": "user", "content": "Hello AI"}])
+    req = request.LLMRequest(messages=[{"role": "user", "content": "Hello AI"}])
     response = await client(req)
 
     assert response.chat_completion_response.choices[0].message.content == "You said: Hello AI"
@@ -74,7 +74,7 @@ async def test_mock_llm_client_call_count():
     """Test that mock LLM client tracks call count."""
     client = mock_llm.MockLLMClient()
 
-    req = request.LLMRequest(model="test-model", messages=[{"role": "user", "content": "test"}])
+    req = request.LLMRequest(messages=[{"role": "user", "content": "test"}])
 
     assert client.call_count == 0
 
@@ -92,8 +92,8 @@ async def test_mock_llm_client_get_last_request():
 
     assert client.get_last_request() is None
 
-    request1 = request.LLMRequest(model="test-model", messages=[{"role": "user", "content": "First"}])
-    request2 = request.LLMRequest(model="test-model", messages=[{"role": "user", "content": "Second"}])
+    request1 = request.LLMRequest(messages=[{"role": "user", "content": "First"}])
+    request2 = request.LLMRequest(messages=[{"role": "user", "content": "Second"}])
 
     await client(request1)
     assert client.get_last_request() == request1
@@ -108,7 +108,6 @@ async def test_mock_llm_client_get_request_messages():
     client = mock_llm.MockLLMClient()
 
     req = request.LLMRequest(
-        model="test-model",
         messages=[
             {"role": "system", "content": "You are helpful"},
             {"role": "user", "content": "Hello"},
@@ -128,7 +127,7 @@ async def test_mock_llm_client_reset():
     """Test that reset() clears all data."""
     client = mock_llm.MockLLMClient()
 
-    req = request.LLMRequest(model="test-model", messages=[{"role": "user", "content": "test"}])
+    req = request.LLMRequest(messages=[{"role": "user", "content": "test"}])
     await client(req)
     await client(req)
 
@@ -146,7 +145,7 @@ async def test_mock_llm_response_structure():
     """Test that mock response has correct structure."""
     client = mock_llm.MockLLMClient()
 
-    req = request.LLMRequest(model="test-model", messages=[{"role": "user", "content": "test"}])
+    req = request.LLMRequest(messages=[{"role": "user", "content": "test"}])
     response = await client(req)
 
     # Check response structure
