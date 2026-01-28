@@ -197,9 +197,7 @@ def _tool_from_anthropic(
     # Validate input_schema structure
     input_schema = anthropic_tool["input_schema"]
     if not isinstance(input_schema, dict):
-        raise ValueError(
-            f"Tool '{anthropic_tool['name']}' input_schema must be a dict, got {type(input_schema)}"
-        )
+        raise ValueError(f"Tool '{anthropic_tool['name']}' input_schema must be a dict, got {type(input_schema)}")
 
     if "type" not in input_schema:
         raise ValueError(f"Tool '{anthropic_tool['name']}' input_schema must have a 'type' field")
@@ -257,12 +255,10 @@ def _tool_choice_from_openai(
         return None
 
     if isinstance(tool_choice, str):
-        if tool_choice == "auto":
-            return "auto"
-        elif tool_choice == "required":
-            return "any"  # Map OpenAI "required" to "any"
-        elif tool_choice == "none":
-            return "none"
+        result = {"auto": "auto", "required": "any", "none": "none"}.get(tool_choice)
+        if not result:
+            raise ValueError(f"Unsupported tool choice: {tool_choice}")
+        return cast(Literal["auto", "any", "none"], result)
 
     elif isinstance(tool_choice, dict):
         choice_type = tool_choice.get("type")
@@ -738,9 +734,7 @@ class LLMRequest:
             top_p=kwargs.get("top_p"),
             stream=bool(kwargs.get("stream", False)),
             tools=converted_tools,
-            tool_choice=_tool_choice_from_openai(
-                cast(str | dict[str, Any] | None, kwargs.get("tool_choice"))
-            ),
+            tool_choice=_tool_choice_from_openai(cast(str | dict[str, Any] | None, kwargs.get("tool_choice"))),
             metadata=cast(dict[str, Any] | None, kwargs.get("metadata")),
             service_tier=kwargs.get("service_tier"),
             stop_sequences=stop_sequences,
@@ -830,9 +824,7 @@ class LLMRequest:
             top_p=kwargs.get("top_p"),
             stream=bool(kwargs.get("stream", False)),
             tools=converted_tools,
-            tool_choice=_tool_choice_from_openai(
-                cast(str | dict[str, Any] | None, kwargs.get("tool_choice"))
-            ),
+            tool_choice=_tool_choice_from_openai(cast(str | dict[str, Any] | None, kwargs.get("tool_choice"))),
             metadata=cast(dict[str, Any] | None, kwargs.get("metadata")),
             service_tier=kwargs.get("service_tier"),
             system_prompt=kwargs.get("instructions"),
@@ -932,9 +924,7 @@ class LLMRequest:
             top_k=kwargs.get("top_k"),
             stream=bool(kwargs.get("stream", False)),
             tools=converted_tools,
-            tool_choice=_tool_choice_from_anthropic(
-                cast(dict[str, Any] | None, kwargs.get("tool_choice"))
-            ),
+            tool_choice=_tool_choice_from_anthropic(cast(dict[str, Any] | None, kwargs.get("tool_choice"))),
             metadata=cast(dict[str, Any] | None, kwargs.get("metadata")),
             service_tier=kwargs.get("service_tier"),
             stop_sequences=cast(list[str] | None, kwargs.get("stop_sequences")),
