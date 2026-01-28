@@ -47,7 +47,11 @@ All other functionality is available via submodules:
 from ares import presets  # noqa: F401
 
 # Import commonly used types for external users
+from ares.llms.request import AssistantMessage
 from ares.llms.request import LLMRequest
+from ares.llms.request import Message
+from ares.llms.request import ToolMessage
+from ares.llms.request import UserMessage
 
 # Import registry functions to expose at top level
 from ares.registry import info
@@ -55,7 +59,11 @@ from ares.registry import make
 
 # Define public API
 __all__ = [
+    "AssistantMessage",
     "LLMRequest",
+    "Message",
+    "ToolMessage",
+    "UserMessage",
     "info",
     "make",
 ]

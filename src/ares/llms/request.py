@@ -1,16 +1,47 @@
 """Unified LLM request abstraction supporting multiple API formats."""
 
-from collections.abc import Iterable
 import dataclasses
 import logging
-from typing import Any, Literal
+from typing import Any, Literal, Required, TypedDict
 
 import anthropic.types
-import openai.types.chat.chat_completion_message_param
 import openai.types.chat.completion_create_params
 import openai.types.responses.response_create_params
 
 _LOGGER = logging.getLogger(__name__)
+
+
+class UserMessage(TypedDict, total=False):
+    """User message in a conversation."""
+
+    role: Required[Literal["user"]]
+    content: Required[str]
+    name: str  # Optional - for identifying the user
+
+
+class AssistantMessage(TypedDict, total=False):
+    """Assistant message in a conversation."""
+
+    role: Required[Literal["assistant"]]
+    content: str  # Optional - might not have content if tool_calls present
+    name: str  # Optional
+    tool_calls: list[dict[str, Any]]  # Optional - for tool usage
+
+
+class ToolMessage(TypedDict, total=False):
+    """Tool result message in a conversation."""
+
+    role: Required[Literal["tool"]]
+    content: Required[str]
+    tool_call_id: Required[str]
+    name: str  # Optional
+
+
+# Union type for all supported message types
+Message = UserMessage | AssistantMessage | ToolMessage
+
+# Valid roles (excludes system/developer which go in system_prompt)
+_VALID_ROLES = frozenset(["user", "assistant", "tool"])
 
 
 @dataclasses.dataclass(frozen=True)
@@ -21,7 +52,7 @@ class LLMRequest:
     to convert between them. It includes the 9 core parameters that exist across all APIs.
 
     Core Parameters (all APIs):
-        messages: List of messages in OpenAI Chat Completions format (will be converted as needed)
+        messages: List of user/assistant/tool messages (system messages go in system_prompt)
         max_output_tokens: Maximum tokens to generate (field name varies by API)
         temperature: Sampling temperature (range 0-2 for OpenAI, auto-converted to 0-1 for Claude)
         top_p: Nucleus sampling parameter
@@ -33,18 +64,18 @@ class LLMRequest:
     Extended Parameters (partial support):
         service_tier: Processing tier (options differ by API)
         stop_sequences: Stop sequences (not supported in OpenAI Responses)
-        system_prompt: System instructions (location varies by API)
+        system_prompt: System instructions (single source of truth, not in messages list)
         top_k: Top-K sampling (Claude only)
 
     Note:
         - Model is NOT stored here - it should be managed by the LLMClient
-        - Messages are stored in OpenAI Chat Completions format internally
+        - Messages only include user/assistant/tool roles (system/developer go in system_prompt)
         - Temperature is stored in OpenAI range (0-2), converted to Claude range (0-1) on export
         - Tool schemas are converted as needed for each API
         - Some parameters may be lost or unsupported when converting between APIs
     """
 
-    messages: Iterable[openai.types.chat.chat_completion_message_param.ChatCompletionMessageParam]
+    messages: list[Message]
     max_output_tokens: int | None = None
     temperature: float | None = None
     top_p: float | None = None
@@ -357,26 +388,41 @@ class LLMRequest:
                 raise ValueError(msg)
             _LOGGER.warning(msg)
 
-        messages = list(kwargs["messages"])
+        # Extract system prompt and filter messages
         system_prompt = None
+        filtered_messages: list[Message] = []
 
-        # Extract system prompt from messages
-        if messages and messages[0].get("role") in ("system", "developer"):
-            system_prompt = messages[0]["content"]
-            messages = messages[1:]
+        for msg in kwargs["messages"]:
+            role = msg.get("role")
+
+            # Extract system/developer messages as system_prompt (use first one)
+            if role in ("system", "developer"):
+                if system_prompt is None:
+                    system_prompt = msg.get("content", "")
+                continue
+
+            # Validate role is supported
+            if role not in _VALID_ROLES:
+                if strict:
+                    raise ValueError(f"Unsupported message role: {role}. Must be one of {_VALID_ROLES}")
+                _LOGGER.warning("Skipping message with unsupported role: %s", role)
+                continue
+
+            # Convert to our Message format (dict with proper fields)
+            filtered_messages.append(dict(msg))  # type: ignore[arg-type]
 
         return cls(
-            messages=messages,
+            messages=filtered_messages,
             max_output_tokens=kwargs.get("max_completion_tokens") or kwargs.get("max_tokens"),
             temperature=kwargs.get("temperature"),
             top_p=kwargs.get("top_p"),
             stream=kwargs.get("stream", False),
-            tools=kwargs.get("tools"),  # type: ignore[arg-type]
-            tool_choice=kwargs.get("tool_choice"),  # type: ignore[arg-type]
+            tools=kwargs.get("tools"),
+            tool_choice=kwargs.get("tool_choice"),
             metadata=kwargs.get("metadata"),
-            service_tier=kwargs.get("service_tier"),  # type: ignore[arg-type]
+            service_tier=kwargs.get("service_tier"),
             stop_sequences=kwargs.get("stop") if isinstance(kwargs.get("stop"), list) else None,
-            system_prompt=system_prompt,  # type: ignore[arg-type]
+            system_prompt=system_prompt,
         )
 
     @classmethod
@@ -426,29 +472,39 @@ class LLMRequest:
 
         # Convert input items to messages
         input_param = kwargs.get("input", [])
-        messages: list[dict[str, Any]] = []
+        filtered_messages: list[Message] = []
+
         if isinstance(input_param, str):
-            messages = [{"role": "user", "content": input_param}]
+            filtered_messages = [{"role": "user", "content": input_param}]  # type: ignore[typeddict-item]
         elif isinstance(input_param, list):
             for item in input_param:
                 if item.get("type") == "message":
-                    messages.append(
+                    role = item.get("role")
+
+                    # Validate role is supported
+                    if role not in _VALID_ROLES:
+                        if strict:
+                            raise ValueError(f"Unsupported message role: {role}. Must be one of {_VALID_ROLES}")
+                        _LOGGER.warning("Skipping message with unsupported role: %s", role)
+                        continue
+
+                    filtered_messages.append(
                         {
-                            "role": item["role"],
-                            "content": item["content"],
+                            "role": role,  # type: ignore[typeddict-item]
+                            "content": item.get("content", ""),
                         }
                     )
 
         return cls(
-            messages=messages,  # type: ignore[arg-type]
+            messages=filtered_messages,
             max_output_tokens=kwargs.get("max_output_tokens"),
             temperature=kwargs.get("temperature"),
             top_p=kwargs.get("top_p"),
             stream=kwargs.get("stream", False),
-            tools=kwargs.get("tools"),  # type: ignore[arg-type]
-            tool_choice=kwargs.get("tool_choice"),  # type: ignore[arg-type]
+            tools=kwargs.get("tools"),
+            tool_choice=kwargs.get("tool_choice"),
             metadata=kwargs.get("metadata"),
-            service_tier=kwargs.get("service_tier"),  # type: ignore[arg-type]
+            service_tier=kwargs.get("service_tier"),
             system_prompt=kwargs.get("instructions"),
         )
 
@@ -510,17 +566,32 @@ class LLMRequest:
             # Extract text from first text block
             system_prompt = system_param[0].get("text", "") if isinstance(system_param[0], dict) else ""
 
+        # Filter and validate messages
+        filtered_messages: list[Message] = []
+        for msg in kwargs["messages"]:
+            role = msg.get("role")
+
+            # Validate role is supported
+            if role not in _VALID_ROLES:
+                if strict:
+                    raise ValueError(f"Unsupported message role: {role}. Must be one of {_VALID_ROLES}")
+                _LOGGER.warning("Skipping message with unsupported role: %s", role)
+                continue
+
+            # Convert to our Message format
+            filtered_messages.append(dict(msg))  # type: ignore[arg-type]
+
         return cls(
-            messages=kwargs["messages"],  # type: ignore[arg-type]
+            messages=filtered_messages,
             max_output_tokens=kwargs["max_tokens"],
             temperature=temperature,
             top_p=kwargs.get("top_p"),
             top_k=kwargs.get("top_k"),
             stream=kwargs.get("stream", False),
-            tools=kwargs.get("tools"),  # type: ignore[arg-type]
-            tool_choice=kwargs.get("tool_choice"),  # type: ignore[arg-type]
-            metadata=kwargs.get("metadata"),  # type: ignore[arg-type]
-            service_tier=kwargs.get("service_tier"),  # type: ignore[arg-type]
-            stop_sequences=kwargs.get("stop_sequences"),  # type: ignore[arg-type]
+            tools=kwargs.get("tools"),
+            tool_choice=kwargs.get("tool_choice"),
+            metadata=kwargs.get("metadata"),
+            service_tier=kwargs.get("service_tier"),
+            stop_sequences=kwargs.get("stop_sequences"),
             system_prompt=system_prompt,
         )
