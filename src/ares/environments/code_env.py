@@ -7,6 +7,7 @@ This environment will use a new container for each instance at every reset.
 import asyncio
 import atexit
 from collections.abc import Sequence
+import contextlib
 import functools
 import json
 import logging
@@ -188,7 +189,13 @@ class CodeEnvironment(base.Environment[llm_clients.LLMResponse, llm_clients.LLMR
         raise RuntimeError("Code agent task or LLM request future did not complete.")
 
     async def close(self) -> None:
-        # Shut down any resources used by the environment.
+        """Shut down any resources used by the environment."""
+        if self._code_agent_task is not None and not self._code_agent_task.done():
+            self._code_agent_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._code_agent_task
+            self._code_agent_task = None
+
         if self._container is not None:
             _LOGGER.debug("[%d] Stopping container on exit.", id(self))
             await self._container.stop()
