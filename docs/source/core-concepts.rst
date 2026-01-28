@@ -25,7 +25,7 @@ Here's how the components fit together:
 
     ┌────────────────────────┐
     │  Your RL Policy/Agent  │            ┌──────────────────────────────────────┐
-    │  (e.g. Fine-tuned LLM) │            │         CodeBaseEnv                  │
+    │  (e.g. Fine-tuned LLM) │            │         CodeEnvironment              │
     │  receives request,     |            |                                      |
     |  generates response    |            │                                      │
     └──────────┬─────────────┘            │  ┌────────────────────────────────┐  │
@@ -80,7 +80,7 @@ Environment
 
 An **Environment** encapsulates the task, container, and code agent as a single RL environment. ARES implements an async version of `DeepMind's dm_env specification <https://github.com/google-deepmind/dm_env>`_.
 
-The key abstraction is ``CodeBaseEnv``, which:
+The key abstraction is ``CodeEnvironment``, which:
 
 * **Manages a Container** - Provides an isolated execution environment
 * **Manages a CodeAgent** - Runs the orchestration logic for solving the task
@@ -281,7 +281,7 @@ Containers are managed by the environment:
 3. **Execution**: Code agent runs commands via ``exec_run()``
 4. **Cleanup**: Container is stopped and removed when the environment closes
 
-You typically don't interact with containers directly - the ``CodeBaseEnv`` handles their lifecycle.
+You typically don't interact with containers directly - the ``CodeEnvironment`` handles their lifecycle.
 
 LLMClient
 ---------
