@@ -1,4 +1,7 @@
-"""JSON parser for Terminus 2 agent responses."""
+"""JSON parser for Terminus 2 agent responses.
+
+Enhanced with auto-fixes and validation from the original terminal-bench implementation.
+"""
 
 import dataclasses
 import json
@@ -6,6 +9,9 @@ import logging
 import re
 
 _LOGGER = logging.getLogger(__name__)
+
+# Expected field order in JSON responses
+_EXPECTED_FIELD_ORDER = ["analysis", "plan", "commands", "task_complete"]
 
 
 @dataclasses.dataclass(frozen=True)
@@ -38,6 +44,8 @@ class Terminus2JSONParser:
             A tuple of (ParsedResponse, feedback) where feedback is None if parsing
             succeeded, or an error message if parsing failed.
         """
+        warnings = []
+
         # Try to extract JSON from code blocks or raw text
         json_match = re.search(r"```json\s*\n(.*?)\n```", response_text, re.DOTALL)
         if json_match:
@@ -53,23 +61,36 @@ class Terminus2JSONParser:
                     "WARNINGS: Could not find JSON in response. Please provide a valid JSON response.",
                 )
 
+        # Try auto-fix for incomplete JSON first
+        original_json_str = json_str
         try:
             data = json.loads(json_str)
         except json.JSONDecodeError as e:
-            # Fallback: Use broad regex to extract fields
-            _LOGGER.warning("JSON parsing failed: %s. Using regex fallback", e)
-            try:
-                fallback_parsed = self._parse_with_regex(json_str)
-                if fallback_parsed:
-                    _LOGGER.info("Successfully recovered data using regex fallback")
-                    return fallback_parsed, None
-            except Exception as regex_error:
-                _LOGGER.warning("Regex fallback also failed: %s", regex_error)
+            _LOGGER.debug("Initial JSON parsing failed: %s. Attempting auto-fix.", e)
+            json_str = self._auto_fix_json(json_str)
 
-            return (
-                ParsedResponse(commands=[], task_complete=False),
-                f"WARNINGS: Invalid JSON: {e}. Please provide valid JSON.",
-            )
+            try:
+                data = json.loads(json_str)
+                _LOGGER.info("Successfully auto-fixed JSON")
+                warnings.append("Note: JSON was auto-fixed (added missing closing braces/brackets).")
+            except json.JSONDecodeError as e2:
+                # Auto-fix failed, try regex fallback
+                _LOGGER.warning("Auto-fix failed: %s. Using regex fallback", e2)
+                try:
+                    fallback_parsed = self._parse_with_regex(original_json_str)
+                    if fallback_parsed:
+                        _LOGGER.info("Successfully recovered data using regex fallback")
+                        return fallback_parsed, None
+                except Exception as regex_error:
+                    _LOGGER.warning("Regex fallback also failed: %s", regex_error)
+
+                return (
+                    ParsedResponse(commands=[], task_complete=False),
+                    f"WARNINGS: Invalid JSON: {e2}. Please provide valid JSON.",
+                )
+
+        # Validate field order
+        self._validate_field_order(data, warnings)
 
         # Parse commands
         commands = []
@@ -104,6 +125,10 @@ class Terminus2JSONParser:
             # Don't strip keystrokes - preserve exact whitespace as in official implementation
             commands.append(Command(keystrokes=keystrokes, duration=float(duration)))
 
+        # Validate command formatting (check for missing newlines between commands)
+        if len(commands) > 1:
+            self._validate_command_formatting(raw_commands, warnings)
+
         # Parse task_complete
         task_complete = data.get("task_complete", False)
         if not isinstance(task_complete, bool):
@@ -117,7 +142,10 @@ class Terminus2JSONParser:
         if thoughts is not None and not isinstance(thoughts, str):
             thoughts = str(thoughts)
 
-        return ParsedResponse(commands=commands, task_complete=task_complete, thoughts=thoughts), None
+        # Return warnings if any
+        feedback = "\n".join(warnings) if warnings else None
+
+        return ParsedResponse(commands=commands, task_complete=task_complete, thoughts=thoughts), feedback
 
     def _parse_with_regex(self, json_str: str) -> ParsedResponse | None:
         """Fallback parser using very broad regex to extract fields from malformed JSON.
@@ -173,3 +201,82 @@ class Terminus2JSONParser:
             return ParsedResponse(commands=commands, task_complete=task_complete, thoughts=thoughts)
 
         return None
+
+    def _auto_fix_json(self, json_str: str) -> str:
+        """Auto-fix common JSON errors like missing closing braces/brackets.
+
+        Based on the original terminal-bench implementation.
+
+        Args:
+            json_str: The potentially incomplete JSON string.
+
+        Returns:
+            The fixed JSON string.
+        """
+        # Count opening and closing braces/brackets
+        open_braces = json_str.count("{")
+        close_braces = json_str.count("}")
+        open_brackets = json_str.count("[")
+        close_brackets = json_str.count("]")
+
+        # Add missing closing braces
+        if open_braces > close_braces:
+            missing = open_braces - close_braces
+            json_str += "}" * missing
+            _LOGGER.debug("Auto-fix: Added %d closing brace(s)", missing)
+
+        # Add missing closing brackets
+        if open_brackets > close_brackets:
+            missing = open_brackets - close_brackets
+            json_str += "]" * missing
+            _LOGGER.debug("Auto-fix: Added %d closing bracket(s)", missing)
+
+        return json_str
+
+    def _validate_field_order(self, data: dict, warnings: list[str]) -> None:
+        """Validate that fields appear in the expected order.
+
+        Args:
+            data: The parsed JSON data.
+            warnings: List to append warnings to.
+        """
+        # Get the keys that are present in both data and expected order
+        present_keys = [key for key in _EXPECTED_FIELD_ORDER if key in data]
+
+        if len(present_keys) < 2:
+            # Not enough fields to check order
+            return
+
+        # Check if they're in the expected order
+        for i in range(len(present_keys) - 1):
+            curr_key = present_keys[i]
+            next_key = present_keys[i + 1]
+
+            # Find positions in expected order
+            curr_pos = _EXPECTED_FIELD_ORDER.index(curr_key)
+            next_pos = _EXPECTED_FIELD_ORDER.index(next_key)
+
+            if curr_pos > next_pos:
+                warnings.append(
+                    f"Warning: Fields should be in order: {', '.join(_EXPECTED_FIELD_ORDER)}. "
+                    f"Found '{next_key}' before '{curr_key}'."
+                )
+                break
+
+    def _validate_command_formatting(self, raw_commands: list, warnings: list[str]) -> None:
+        """Check if commands are missing newlines between them (common mistake).
+
+        Args:
+            raw_commands: The raw command objects from JSON.
+            warnings: List to append warnings to.
+        """
+        # Check if any keystrokes field is missing a trailing newline when there are multiple commands
+        # This is a common mistake where the agent forgets to add \n between commands
+        for i, cmd in enumerate(raw_commands[:-1]):  # Check all but the last
+            keystrokes = cmd.get("keystrokes", "")
+            if keystrokes and not keystrokes.endswith("\n"):
+                warnings.append(
+                    f"Note: Command {i} doesn't end with a newline. "
+                    "If executing multiple commands, ensure each ends with \\n."
+                )
+                break  # Only warn once

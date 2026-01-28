@@ -144,7 +144,7 @@ class TestXMLParserValidation:
 </response>"""
 
         parser = xml_parser.Terminus2XMLParser()
-        result, error = parser.parse(response)
+        _result, error = parser.parse(response)
 
         assert error is not None
         assert "must have text content" in error.lower()

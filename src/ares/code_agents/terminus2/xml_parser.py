@@ -1,8 +1,17 @@
-"""XML parser for Terminus 2 agent responses."""
+"""XML parser for Terminus 2 agent responses.
+
+Enhanced with validation from the original terminal-bench implementation.
+"""
 
 import dataclasses
+import logging
 import re
 import xml.etree.ElementTree as ET
+
+_LOGGER = logging.getLogger(__name__)
+
+# Expected field order in XML responses
+_EXPECTED_FIELD_ORDER = ["analysis", "plan", "commands", "task_complete"]
 
 
 @dataclasses.dataclass(frozen=True)
@@ -35,6 +44,8 @@ class Terminus2XMLParser:
             A tuple of (ParsedResponse, feedback) where feedback is None if parsing
             succeeded, or an error message if parsing failed.
         """
+        warnings = []
+
         # Try to extract XML from code blocks or raw text
         xml_match = re.search(r"```xml\s*\n(.*?)\n```", response_text, re.DOTALL)
         if xml_match:
@@ -50,6 +61,9 @@ class Terminus2XMLParser:
                     "WARNINGS: Could not find <response> XML in response. Please provide a valid XML response.",
                 )
 
+        # Check for common XML mistakes
+        self._validate_xml_content(xml_str, warnings)
+
         try:
             root = ET.fromstring(xml_str)
         except ET.ParseError as e:
@@ -64,10 +78,21 @@ class Terminus2XMLParser:
                 "WARNINGS: Root element must be <response>.",
             )
 
+        # Validate field order
+        self._validate_field_order(root, warnings)
+
         # Parse commands
         commands = []
         commands_elem = root.find("commands")
         if commands_elem is not None:
+            # Check for multiple command blocks (common mistake)
+            all_commands_elems = root.findall("commands")
+            if len(all_commands_elems) > 1:
+                warnings.append(
+                    f"Warning: Found {len(all_commands_elems)} <commands> blocks. "
+                    "Only the first will be used. Combine all commands into a single <commands> block."
+                )
+
             # Look for <keystrokes> elements directly (not wrapped in <command>)
             for i, keystrokes_elem in enumerate(commands_elem.findall("keystrokes")):
                 if keystrokes_elem.text is None:
@@ -116,7 +141,10 @@ class Terminus2XMLParser:
         if thoughts_elem is not None and thoughts_elem.text:
             thoughts = thoughts_elem.text.strip()
 
-        return ParsedResponse(commands=commands, task_complete=task_complete, thoughts=thoughts), None
+        # Return warnings if any
+        feedback = "\n".join(warnings) if warnings else None
+
+        return ParsedResponse(commands=commands, task_complete=task_complete, thoughts=thoughts), feedback
 
     def salvage_truncated_response(self, truncated_text: str) -> tuple[str | None, bool]:
         """Try to salvage a valid response from truncated XML output.
@@ -157,3 +185,51 @@ class Terminus2XMLParser:
                 continue
 
         return None, has_multiple_blocks
+
+    def _validate_xml_content(self, xml_str: str, warnings: list[str]) -> None:
+        """Validate XML content for common mistakes.
+
+        Args:
+            xml_str: The XML string to validate.
+            warnings: List to append warnings to.
+        """
+        # Check if XML entities are escaped when they shouldn't be (common mistake)
+        # In XML content, < > & should be written as &lt; &gt; &amp;
+        # But sometimes LLMs write &amp;lt; which is double-escaped
+        if "&amp;lt;" in xml_str or "&amp;gt;" in xml_str or "&amp;amp;" in xml_str:
+            warnings.append(
+                "Warning: Found double-escaped XML entities (&amp;lt;, &amp;gt;, &amp;amp;). "
+                "Use single escapes (&lt;, &gt;, &amp;) or write content without escaping if appropriate."
+            )
+
+    def _validate_field_order(self, root: ET.Element, warnings: list[str]) -> None:
+        """Validate that child elements appear in the expected order.
+
+        Args:
+            root: The root XML element.
+            warnings: List to append warnings to.
+        """
+        # Get the tags of child elements
+        child_tags = [child.tag for child in root]
+
+        # Get the tags that are present in both children and expected order
+        present_tags = [tag for tag in _EXPECTED_FIELD_ORDER if tag in child_tags]
+
+        if len(present_tags) < 2:
+            # Not enough fields to check order
+            return
+
+        # Check if they appear in the expected order in the actual XML
+        actual_positions = {tag: child_tags.index(tag) for tag in present_tags}
+
+        for i in range(len(present_tags) - 1):
+            curr_tag = present_tags[i]
+            next_tag = present_tags[i + 1]
+
+            # Check if current appears before next in actual XML
+            if actual_positions[curr_tag] > actual_positions[next_tag]:
+                warnings.append(
+                    f"Warning: Child elements should be in order: {', '.join(_EXPECTED_FIELD_ORDER)}. "
+                    f"Found <{next_tag}> before <{curr_tag}>."
+                )
+                break

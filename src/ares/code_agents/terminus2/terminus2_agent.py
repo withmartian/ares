@@ -31,6 +31,10 @@ _DEFAULT_TIMEOUT_S = 180.0
 # Maximum output length to prevent overwhelming the context
 _MAX_OUTPUT_BYTES = 200_000 * 3
 
+# Timeout for tmux operations (send-keys, capture-pane, etc.)
+# These should be quick, but need to account for network latency with remote containers
+_TMUX_OP_TIMEOUT_S = 10.0
+
 _SUMMARY_PROMPT_TEMPLATE = """
 You are about to hand off your work to another AI agent.
 Please provide a comprehensive summary of what you have accomplished so far on this task:
@@ -170,6 +174,7 @@ class Terminus2Agent(code_agent_base.CodeAgent):
         # Tmux session state
         self._tmux_session_name = f"terminus2_{id(self)}"
         self._tmux_initialized = False
+        self._session_alive = True  # Track if session is still alive
 
         _LOGGER.debug("[%d] Initialized Terminus2Agent with %s format.", id(self), self.parser_format)
 
@@ -185,7 +190,7 @@ class Terminus2Agent(code_agent_base.CodeAgent):
 
         # Check if tmux is installed, install if needed
         _LOGGER.debug("[%d] Checking if tmux is installed", id(self))
-        check_result = await self.container.exec_run("which tmux", timeout_s=10.0)
+        check_result = await self.container.exec_run("which tmux", timeout_s=_TMUX_OP_TIMEOUT_S)
 
         if check_result.exit_code != 0:
             _LOGGER.info("[%d] tmux not found, installing...", id(self))
@@ -209,7 +214,7 @@ class Terminus2Agent(code_agent_base.CodeAgent):
                 f"tmux new-session -d -s {self._tmux_session_name} "
                 f"-x {self.tmux_pane_width} -y {self.tmux_pane_height}",
                 workdir="/testbed",
-                timeout_s=10.0,
+                timeout_s=_TMUX_OP_TIMEOUT_S,
             )
             _LOGGER.debug("[%d] Tmux new-session result: exit_code=%s", id(self), result.exit_code)
             if result.exit_code != 0:
@@ -222,7 +227,7 @@ class Terminus2Agent(code_agent_base.CodeAgent):
         try:
             result = await self.container.exec_run(
                 f"tmux send-keys -t {self._tmux_session_name} 'cd /testbed' Enter",
-                timeout_s=5.0,
+                timeout_s=_TMUX_OP_TIMEOUT_S,
             )
             _LOGGER.debug("[%d] Tmux cd command result: exit_code=%s", id(self), result.exit_code)
         except Exception as e:
@@ -234,6 +239,68 @@ class Terminus2Agent(code_agent_base.CodeAgent):
         self._tmux_initialized = True
         _LOGGER.info("[%d] Tmux session ready: %s", id(self), self._tmux_session_name)
 
+    async def _is_tmux_session_alive(self) -> bool:
+        """Check if the tmux session is still alive.
+
+        Returns:
+            True if the session exists and is alive, False otherwise.
+        """
+        if not self._tmux_initialized:
+            return False
+
+        try:
+            # Check if session exists using tmux has-session
+            result = await self.container.exec_run(
+                f"tmux has-session -t {self._tmux_session_name}",
+                timeout_s=_TMUX_OP_TIMEOUT_S,
+            )
+            return result.exit_code == 0
+        except Exception as e:
+            _LOGGER.warning("[%d] Error checking tmux session: %s", id(self), e)
+            return False
+
+    async def _wait_for_command_with_timeout(self, duration: float) -> bool:
+        """Wait for a command to complete, checking for timeout.
+
+        This monitors the tmux pane to detect if a command is still running after
+        the specified duration.
+
+        Args:
+            duration: How long to wait in seconds.
+
+        Returns:
+            True if the command timed out (still running), False if it completed.
+        """
+        # Wait for the specified duration
+        await asyncio.sleep(duration)
+
+        try:
+            # Check if there's a prompt visible (indicating command completed)
+            # We capture the last line of the pane to see if it looks like a prompt
+            result = await self.container.exec_run(
+                f"tmux capture-pane -t {self._tmux_session_name} -p | tail -1",
+                timeout_s=_TMUX_OP_TIMEOUT_S,
+            )
+
+            last_line = result.output.strip()
+
+            # Heuristic: If the last line ends with common prompt characters, assume command finished
+            # This is not perfect but matches the behavior of the original implementation
+            prompt_indicators = ["$", "#", ">", "%"]
+            has_prompt = any(last_line.endswith(indicator) for indicator in prompt_indicators)
+
+            # If no prompt visible, command might still be running
+            if not has_prompt and last_line:
+                _LOGGER.debug("[%d] No prompt detected, command may still be running: %s", id(self), last_line[:50])
+                return True  # Timeout occurred
+
+            return False  # Command completed
+
+        except Exception as e:
+            _LOGGER.warning("[%d] Error checking command completion: %s", id(self), e)
+            # Assume no timeout if we can't check
+            return False
+
     async def _cleanup_tmux_session(self) -> None:
         """Clean up tmux session on shutdown."""
         if not self._tmux_initialized:
@@ -243,7 +310,7 @@ class Terminus2Agent(code_agent_base.CodeAgent):
             _LOGGER.info("[%d] Killing tmux session: %s", id(self), self._tmux_session_name)
             await self.container.exec_run(
                 f"tmux kill-session -t {self._tmux_session_name}",
-                timeout_s=5.0,
+                timeout_s=_TMUX_OP_TIMEOUT_S,
             )
         except Exception as e:
             _LOGGER.warning("[%d] Error killing tmux session: %s", id(self), e)
@@ -270,6 +337,22 @@ class Terminus2Agent(code_agent_base.CodeAgent):
         while self._turn_count < self.max_turns:
             self._turn_count += 1
             _LOGGER.info("[%d] Turn %d/%d", id(self), self._turn_count, self.max_turns)
+
+            # Check if tmux session is still alive (if it was initialized)
+            if self._tmux_initialized:
+                session_alive = await self._is_tmux_session_alive()
+                if not session_alive:
+                    _LOGGER.error("[%d] Tmux session is no longer alive. Stopping.", id(self))
+                    self._session_alive = False
+                    error_msg = (
+                        "ERROR: The terminal session has died. This usually means:\n"
+                        "1. The container was stopped or crashed\n"
+                        "2. A command killed the terminal session\n"
+                        "3. The system ran out of resources\n"
+                        "Cannot continue execution."
+                    )
+                    self._add_message("user", error_msg)
+                    break
 
             try:
                 # Query the LLM
@@ -470,6 +553,8 @@ class Terminus2Agent(code_agent_base.CodeAgent):
         # Ensure tmux session exists
         await self._ensure_tmux_session()
 
+        timeout_occurred = False
+
         for i, cmd in enumerate(commands):
             # Skip empty commands
             if not cmd.keystrokes or not cmd.keystrokes.strip():
@@ -493,9 +578,10 @@ class Terminus2Agent(code_agent_base.CodeAgent):
 
                     # Send the line literally (no key interpretation)
                     if line:
-                        send_cmd = f"tmux send-keys -t {self._tmux_session_name} -l {shlex.quote(line)}"
+                        # Use -- to prevent text starting with - from being parsed as options
+                        send_cmd = f"tmux send-keys -t {self._tmux_session_name} -l -- {shlex.quote(line)}"
                         _LOGGER.debug("[%d] Sending line %d: %s", id(self), line_idx, send_cmd[:100])
-                        result = await self.container.exec_run(send_cmd, timeout_s=5.0)
+                        result = await self.container.exec_run(send_cmd, timeout_s=_TMUX_OP_TIMEOUT_S)
                         if result.exit_code != 0:
                             _LOGGER.warning(
                                 "[%d] send-keys returned exit_code=%s: %s", id(self), result.exit_code, result.output
@@ -505,19 +591,25 @@ class Terminus2Agent(code_agent_base.CodeAgent):
                     if line_idx < len(lines) - 1:
                         enter_cmd = f"tmux send-keys -t {self._tmux_session_name} Enter"
                         _LOGGER.debug("[%d] Sending Enter after line %d", id(self), line_idx)
-                        result = await self.container.exec_run(enter_cmd, timeout_s=5.0)
+                        result = await self.container.exec_run(enter_cmd, timeout_s=_TMUX_OP_TIMEOUT_S)
                         if result.exit_code != 0:
                             _LOGGER.warning(
                                 "[%d] Enter returned exit_code=%s: %s", id(self), result.exit_code, result.output
                             )
 
-                # Wait for command to complete (cap at max timeout)
+                # Wait for command to complete with timeout detection
                 wait_time = min(cmd.duration, self.timeout_s)
                 _LOGGER.debug("[%d] Waiting %.1fs for command to complete", id(self), wait_time)
-                await asyncio.sleep(wait_time)
+
+                # Check if command is still running after waiting
+                cmd_timeout = await self._wait_for_command_with_timeout(wait_time)
+                if cmd_timeout:
+                    timeout_occurred = True
+                    _LOGGER.warning("[%d] Command %d timed out after %.1fs", id(self), i + 1, wait_time)
 
             except TimeoutError:
                 _LOGGER.warning("[%d] Timeout sending command %d: %s", id(self), i + 1, cmd.keystrokes[:100])
+                timeout_occurred = True
                 # Continue to next command - tmux session still alive
 
             except Exception as e:
@@ -529,13 +621,23 @@ class Terminus2Agent(code_agent_base.CodeAgent):
             _LOGGER.debug("[%d] Capturing terminal output from tmux", id(self))
             result = await self.container.exec_run(
                 f"tmux capture-pane -t {self._tmux_session_name} -p",
-                timeout_s=5.0,
+                timeout_s=_TMUX_OP_TIMEOUT_S,
             )
             _LOGGER.debug(
                 "[%d] Capture result: exit_code=%s, output_length=%d", id(self), result.exit_code, len(result.output)
             )
             terminal_output = result.output
             self._last_output = terminal_output
+
+            # Add timeout feedback if any command timed out
+            if timeout_occurred:
+                timeout_msg = (
+                    "\n\n[TIMEOUT WARNING]: One or more commands exceeded the specified duration. "
+                    "The command may still be running in the background. "
+                    "Consider using Ctrl-C to interrupt long-running commands, "
+                    "or increase the duration if the command needs more time."
+                )
+                terminal_output += timeout_msg
 
             # Log first 500 chars of output for debugging
             _LOGGER.debug("[%d] Terminal output (first 500 chars): %s", id(self), terminal_output[:500])

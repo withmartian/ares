@@ -4,8 +4,8 @@ Tests the full agent including tmux session management, command execution,
 and LLM interaction.
 """
 
-import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
+import pathlib
+from unittest import mock
 
 import pytest
 
@@ -13,10 +13,9 @@ from ares.code_agents.terminus2 import terminus2_agent
 from ares.code_agents.terminus2.json_parser import Command
 from ares.containers import containers
 from ares.llms import llm_clients
-from ares.llms import request
 
 
-class MockContainer:
+class MockContainer(containers.Container):
     """Mock container that tracks commands and simulates tmux."""
 
     def __init__(self):
@@ -24,7 +23,7 @@ class MockContainer:
         self.tmux_sessions = {}  # session_name -> state
         self.tmux_panes = {}  # session_name -> output
 
-    async def exec_run(self, command: str, **kwargs):
+    async def exec_run(self, command: str, **_kwargs):
         """Simulate command execution."""
         self.commands_run.append(command)
 
@@ -99,6 +98,15 @@ class MockContainer:
     async def start(self, env=None):
         pass
 
+    async def stop(self):
+        pass
+
+    async def upload_files(self, local_paths: list[pathlib.Path], remote_paths: list[str]):
+        pass
+
+    async def download_files(self, remote_paths: list[str], local_paths: list[pathlib.Path]):
+        pass
+
 
 class TestTerminus2AgentBasics:
     """Test basic agent functionality."""
@@ -107,7 +115,7 @@ class TestTerminus2AgentBasics:
     async def test_agent_initialization(self):
         """Test agent initializes correctly."""
         container = MockContainer()
-        llm_client = AsyncMock(spec=llm_clients.LLMClient)
+        llm_client = mock.AsyncMock(spec=llm_clients.LLMClient)
 
         agent = terminus2_agent.Terminus2Agent(
             container=container,
@@ -124,7 +132,7 @@ class TestTerminus2AgentBasics:
     async def test_tmux_session_creation(self):
         """Test tmux session is created on first command."""
         container = MockContainer()
-        llm_client = AsyncMock(spec=llm_clients.LLMClient)
+        llm_client = mock.AsyncMock(spec=llm_clients.LLMClient)
 
         agent = terminus2_agent.Terminus2Agent(
             container=container,
@@ -143,7 +151,7 @@ class TestTerminus2AgentBasics:
     async def test_command_execution(self):
         """Test commands are sent to tmux correctly."""
         container = MockContainer()
-        llm_client = AsyncMock(spec=llm_clients.LLMClient)
+        llm_client = mock.AsyncMock(spec=llm_clients.LLMClient)
 
         agent = terminus2_agent.Terminus2Agent(
             container=container,
@@ -165,7 +173,7 @@ class TestTerminus2AgentBasics:
     async def test_multiple_commands(self):
         """Test multiple commands are executed in sequence."""
         container = MockContainer()
-        llm_client = AsyncMock(spec=llm_clients.LLMClient)
+        llm_client = mock.AsyncMock(spec=llm_clients.LLMClient)
 
         agent = terminus2_agent.Terminus2Agent(
             container=container,
@@ -191,7 +199,7 @@ class TestTerminus2AgentBasics:
     async def test_tmux_cleanup(self):
         """Test tmux session is cleaned up."""
         container = MockContainer()
-        llm_client = AsyncMock(spec=llm_clients.LLMClient)
+        llm_client = mock.AsyncMock(spec=llm_clients.LLMClient)
 
         agent = terminus2_agent.Terminus2Agent(
             container=container,
@@ -222,10 +230,10 @@ class TestTerminus2AgentIntegration:
         container = MockContainer()
 
         # Mock LLM responses
-        llm_client = AsyncMock(spec=llm_clients.LLMClient)
+        llm_client = mock.AsyncMock(spec=llm_clients.LLMClient)
 
         # First response: execute a command
-        response1 = MagicMock()
+        response1 = mock.MagicMock()
         response1.chat_completion_response.choices[0].message.content = """{
   "analysis": "Need to list files",
   "plan": "Run ls command",
@@ -240,7 +248,7 @@ class TestTerminus2AgentIntegration:
         response1.chat_completion_response.usage = None
 
         # Second response: mark complete
-        response2 = MagicMock()
+        response2 = mock.MagicMock()
         response2.chat_completion_response.choices[0].message.content = """{
   "analysis": "Files listed",
   "plan": "Task is done",
@@ -250,7 +258,7 @@ class TestTerminus2AgentIntegration:
         response2.chat_completion_response.usage = None
 
         # Third response: confirm completion
-        response3 = MagicMock()
+        response3 = mock.MagicMock()
         response3.chat_completion_response.choices[0].message.content = """{
   "analysis": "Confirming completion",
   "plan": "Done",
@@ -288,7 +296,7 @@ class TestTerminus2AgentEdgeCases:
     async def test_empty_command_skipped(self):
         """Test empty commands are skipped."""
         container = MockContainer()
-        llm_client = AsyncMock(spec=llm_clients.LLMClient)
+        llm_client = mock.AsyncMock(spec=llm_clients.LLMClient)
 
         agent = terminus2_agent.Terminus2Agent(
             container=container,
@@ -309,7 +317,7 @@ class TestTerminus2AgentEdgeCases:
     async def test_command_without_newline(self):
         """Test command without trailing newline."""
         container = MockContainer()
-        llm_client = AsyncMock(spec=llm_clients.LLMClient)
+        llm_client = mock.AsyncMock(spec=llm_clients.LLMClient)
 
         agent = terminus2_agent.Terminus2Agent(
             container=container,

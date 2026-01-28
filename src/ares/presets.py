@@ -58,7 +58,9 @@ class HarborSpec:
         """Return metadata about Harbor Verified."""
         return registry.EnvironmentInfo(
             name=f"{self.dataset_id}-{self.code_agent_id}",
-            description=f"{self.dataset_name} (through Harbor registry) with {self.code_agent_id}",
+            description=(
+                f"{self.dataset_name}@{self.dataset_version} (through Harbor registry) with {self.code_agent_id}"
+            ),
             num_tasks=len(self.ds_spec.tasks),
         )
 

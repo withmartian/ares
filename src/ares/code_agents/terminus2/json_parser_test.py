@@ -179,7 +179,7 @@ class TestJSONParserValidation:
 }"""
 
         parser = json_parser.Terminus2JSONParser()
-        result, error = parser.parse(response)
+        _result, error = parser.parse(response)
 
         assert error is not None
         assert "keystrokes" in error.lower()
@@ -199,7 +199,7 @@ class TestJSONParserValidation:
 }"""
 
         parser = json_parser.Terminus2JSONParser()
-        result, error = parser.parse(response)
+        _result, error = parser.parse(response)
 
         assert error is not None
         assert "duration" in error.lower()
@@ -214,7 +214,7 @@ class TestJSONParserValidation:
 }"""
 
         parser = json_parser.Terminus2JSONParser()
-        result, error = parser.parse(response)
+        _result, error = parser.parse(response)
 
         assert error is not None
         assert "array" in error.lower()
