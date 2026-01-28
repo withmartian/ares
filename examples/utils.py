@@ -5,6 +5,7 @@ from collections.abc import Awaitable
 import logging
 from typing import Any
 
+import ares
 from ares.environments import base
 from ares.llms import llm_clients
 import tqdm
@@ -14,7 +15,7 @@ _LOGGER = logging.getLogger(__name__)
 
 def print_step(
     step_count: int,
-    observation: llm_clients.LLMRequest | None,
+    observation: ares.LLMRequest | None,
     action: llm_clients.LLMResponse,
 ) -> None:
     """Print a step in the RL loop.

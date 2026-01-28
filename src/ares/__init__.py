@@ -46,12 +46,16 @@ All other functionality is available via submodules:
 # This must come before we expose make and info to ensure presets are available
 from ares import presets  # noqa: F401
 
+# Import commonly used types for external users
+from ares.llms.request import LLMRequest
+
 # Import registry functions to expose at top level
 from ares.registry import info
 from ares.registry import make
 
 # Define public API
 __all__ = [
+    "LLMRequest",
     "info",
     "make",
 ]
