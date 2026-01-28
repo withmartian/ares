@@ -12,6 +12,7 @@ import dataclasses
 import functools
 import logging
 
+from harbor.models import registry as harbor_registry
 from harbor.models.task import task as harbor_task
 
 from ares import registry
@@ -46,12 +47,17 @@ class HarborSpec:
     def ds(self) -> list[harbor_task.Task]:
         return code_env.load_harbor_dataset(name=self.dataset_name, version=self.dataset_version)
 
+    @functools.cached_property
+    def ds_spec(self) -> harbor_registry.DatasetSpec:
+        ds_client = code_env.get_harbor_dataset_client()
+        return ds_client.get_dataset_spec(name=self.dataset_name, version=self.dataset_version)
+
     def get_info(self) -> registry.EnvironmentInfo:
         """Return metadata about Harbor Verified."""
         return registry.EnvironmentInfo(
             name=f"{self.dataset_id}-{self.code_agent_id}",
             description=f"{self.dataset_name} (through Harbor registry) with {self.code_agent_id}",
-            num_tasks=len(self.ds),
+            num_tasks=len(self.ds_spec.tasks),
         )
 
     def get_env(

@@ -35,23 +35,23 @@ _LOGGER = logging.getLogger(__name__)
 
 
 @functools.lru_cache(maxsize=1)
-def _get_harbor_dataset_client() -> harbor_dataset_client.BaseRegistryClient:
+def get_harbor_dataset_client() -> harbor_dataset_client.BaseRegistryClient:
     return harbor_dataset_client.RegistryClientFactory.create()
 
 
 @functools.lru_cache(maxsize=250)
 def load_harbor_dataset(name: str, version: str) -> list[harbor_task.Task]:
-    client = _get_harbor_dataset_client()
+    client = get_harbor_dataset_client()
     return [
         harbor_task.Task(task_dir=task_item.downloaded_path)
         for task_item in client.download_dataset(name=name, version=version)
     ]
 
 
-@functools.lru_cache(maxsize=250)
-def list_harbor_datasets() -> list[harbor_registry.DatasetSpec]:
-    client = _get_harbor_dataset_client()
-    return client.get_datasets()
+@functools.lru_cache(maxsize=1)
+def list_harbor_datasets() -> tuple[harbor_registry.DatasetSpec, ...]:
+    client = get_harbor_dataset_client()
+    return tuple(client.get_datasets())
 
 
 class CodeEnvironment(base.Environment[llm_clients.LLMResponse, llm_clients.LLMRequest | None, float, float]):
