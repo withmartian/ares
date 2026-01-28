@@ -45,15 +45,8 @@ class _Config(pydantic_settings.BaseSettings):
     daytona_auto_stop_interval: int = 30  # Minutes.
     daytona_delete_on_stop: bool = True
 
-    # Docker registry configuration (optional).
-    # If set, ARES will attempt to authenticate with the Docker registry before builds.
-    docker_registry_username: str = ""
-    docker_registry_password: str = ""
-    docker_registry_url: str = ""  # Empty string means Docker Hub (default registry).
-
-    # Set to true to skip Docker Hub authentication entirely and use anonymous pulls.
-    # This is useful if you don't have a Docker Hub account or don't want to verify your email.
-    # Note: Anonymous pulls are rate-limited to 100 pulls per 6 hours per IP address.
+    # Set to true to skip Docker Hub authentication and use anonymous pulls.
+    # This avoids "email must be verified" errors with stored Docker credentials.
     docker_skip_auth: bool = False
 
 
