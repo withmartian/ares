@@ -37,6 +37,7 @@ def _make_harbor_dataset_id(name: str, version: str) -> str:
 @dataclasses.dataclass(frozen=True)
 class HarborSpec:
     """Environment spec for Harbor Verified with mini-swe-agent."""
+
     dataset_name: str
     dataset_version: str
     dataset_id: str
@@ -82,6 +83,7 @@ class HarborSpec:
             tracker=tracker,
         )
 
+
 def _register_default_presets() -> None:
     """Register all default ARES environment presets.
 
@@ -100,7 +102,7 @@ def _register_default_presets() -> None:
                     dataset_version=ds_spec.version,
                     dataset_id=ds_id,
                     code_agent_factory=code_agent_factory,
-                    code_agent_id=code_agent_id
+                    code_agent_id=code_agent_id,
                 ),
             )
 
