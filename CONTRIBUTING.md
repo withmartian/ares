@@ -99,6 +99,17 @@ Before submitting a PR:
 - **Comments explaining HOW:** Only add these when the implementation is genuinely complex or uses a non-standard approach that might confuse future maintainers.
 - **Follow existing patterns:** Look at similar code in the repository to match the established style.
 
+## Docs
+
+To build and view the docs locally:
+
+```bash
+uv sync --extra docs
+cd docs && uv run --extra docs make html
+```
+
+and open the resulting `docs/build/html/index.html` file in your browser.
+
 ## Questions?
 
 If you have questions or need help, feel free to open an issue or reach out to the maintainers.

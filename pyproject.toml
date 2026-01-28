@@ -41,6 +41,11 @@ dependencies = [
 tensorboard = ["tensorboard>=2.20.0", "torch>=2.9.1"]
 llamacpp = ["llama-cpp-python>=0.3.16"]
 eval-viz = ["rich>=13.7.0", "textual>=1.0.0"]
+docs = [
+    "sphinx>=7.0.0",
+    "sphinx-rtd-theme>=2.0.0",
+    "sphinx-autodoc-typehints>=1.25.0",
+]
 
 [project.urls]
 Homepage = "https://github.com/withmartian/ares"
