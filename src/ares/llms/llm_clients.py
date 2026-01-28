@@ -1,37 +1,25 @@
-"""Classes for making LLM requests."""
+"""LLM client protocols and response types."""
 
-from collections.abc import Iterable
 import dataclasses
 import time
-from typing import Any, Protocol
+from typing import Protocol
 import uuid
 
-from openai.types.chat import chat_completion as chat_completion_type
-from openai.types.chat import chat_completion_message_param
 import openai.types.chat.chat_completion
 import openai.types.chat.chat_completion_message
 import openai.types.completion_usage
 
-
-# TODO: expand the request/response model for LLM reqs.
-@dataclasses.dataclass(frozen=True)
-class LLMRequest:
-    messages: Iterable[chat_completion_message_param.ChatCompletionMessageParam]
-    temperature: float | None = None
-
-    def as_kwargs(self) -> dict[str, Any]:
-        """Converts the request to a dictionary of kwargs, filtering out None values."""
-        return {k: v for k, v in dataclasses.asdict(self).items() if v is not None}
+from ares.llms import request
 
 
 @dataclasses.dataclass(frozen=True)
 class LLMResponse:
-    chat_completion_response: chat_completion_type.ChatCompletion
+    chat_completion_response: openai.types.chat.chat_completion.ChatCompletion
     cost: float
 
 
 class LLMClient(Protocol):
-    async def __call__(self, request: LLMRequest) -> LLMResponse: ...
+    async def __call__(self, request: request.LLMRequest) -> LLMResponse: ...
 
 
 def build_openai_compatible_llm_response(

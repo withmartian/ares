@@ -4,6 +4,7 @@ from typing import Protocol
 
 from ares.containers import containers
 from ares.llms import llm_clients
+from ares.llms import request
 
 
 class CodeAgent(Protocol):
@@ -30,7 +31,7 @@ class TrivialCodeAgent(CodeAgent):
         del problem_statement  # Unused.
 
         for _ in range(50):
-            await self._llm_client(llm_clients.LLMRequest(messages=[{"role": "user", "content": "Print 'Yes' only."}]))
+            await self._llm_client(request.LLMRequest(messages=[{"role": "user", "content": "Print 'Yes' only."}]))
             await self._container.exec_run("sleep 1")
 
         return

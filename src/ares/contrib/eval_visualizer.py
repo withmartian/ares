@@ -34,6 +34,7 @@ from textual import widgets
 
 from ares.environments import base
 from ares.llms import llm_clients
+from ares.llms import request
 
 
 class TaskStatus(Enum):
@@ -89,7 +90,7 @@ class TrackedEnvironment[RewardType: base.Scalar, DiscountType: base.Scalar]:
 
     def __init__(
         self,
-        env: base.Environment[llm_clients.LLMResponse, llm_clients.LLMRequest, RewardType, DiscountType],
+        env: base.Environment[llm_clients.LLMResponse, request.LLMRequest, RewardType, DiscountType],
         task_id: int,
         dashboard: "EvaluationDashboard",
     ):
@@ -106,7 +107,7 @@ class TrackedEnvironment[RewardType: base.Scalar, DiscountType: base.Scalar]:
         self._step_count = 0
         self._total_cost = 0.0
 
-    async def reset(self) -> base.TimeStep[llm_clients.LLMRequest, RewardType, DiscountType]:
+    async def reset(self) -> base.TimeStep[request.LLMRequest, RewardType, DiscountType]:
         """Reset the environment and update dashboard."""
         self._dashboard.update_task(self._task_id, status=TaskStatus.RUNNING, log="Resetting environment")
         ts = await self._env.reset()
@@ -117,7 +118,7 @@ class TrackedEnvironment[RewardType: base.Scalar, DiscountType: base.Scalar]:
 
     async def step(
         self, action: llm_clients.LLMResponse
-    ) -> base.TimeStep[llm_clients.LLMRequest, RewardType, DiscountType]:
+    ) -> base.TimeStep[request.LLMRequest, RewardType, DiscountType]:
         """Step the environment and update dashboard."""
         self._step_count += 1
 
@@ -698,7 +699,7 @@ class EvaluationDashboard(app.App):
     def wrap[RewardType: base.Scalar, DiscountType: base.Scalar](
         self,
         task_id: int,
-        env: base.Environment[llm_clients.LLMResponse, llm_clients.LLMRequest, RewardType, DiscountType],
+        env: base.Environment[llm_clients.LLMResponse, request.LLMRequest, RewardType, DiscountType],
     ) -> TrackedEnvironment[RewardType, DiscountType]:
         """Wrap an ARES LLM environment with automatic dashboard tracking.
 

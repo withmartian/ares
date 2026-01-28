@@ -1,0 +1,601 @@
+"""Unit tests for request_lib.LLMRequest conversion methods."""
+
+from typing import Any
+
+from ares.llms import request as request_lib
+
+
+class TestLLMRequestChatCompletionConversion:
+    """Tests for Chat Completions API conversion."""
+
+    def test_to_chat_completion_minimal(self):
+        """Test minimal conversion to Chat Completions format."""
+        request = request_lib.LLMRequest(
+            model="gpt-4o",
+            messages=[{"role": "user", "content": "Hello"}],
+        )
+        kwargs = request.to_chat_completion_kwargs()
+
+        assert kwargs["model"] == "gpt-4o"
+        assert kwargs["messages"] == [{"role": "user", "content": "Hello"}]
+        assert "temperature" not in kwargs
+        assert "stream" not in kwargs
+
+    def test_to_chat_completion_all_params(self):
+        """Test conversion with all common parameters."""
+        request = request_lib.LLMRequest(
+            model="gpt-4o",
+            messages=[{"role": "user", "content": "Hello"}],
+            max_output_tokens=100,
+            temperature=0.7,
+            top_p=0.9,
+            stream=True,
+            tools=[{"type": "function", "function": {"name": "test"}}],
+            tool_choice="auto",
+            metadata={"user_id": "123"},
+            service_tier="default",
+            stop_sequences=["STOP", "END"],
+        )
+        kwargs = request.to_chat_completion_kwargs()
+
+        assert kwargs["model"] == "gpt-4o"
+        assert kwargs["max_completion_tokens"] == 100
+        assert kwargs["temperature"] == 0.7
+        assert kwargs["top_p"] == 0.9
+        assert kwargs["stream"] is True
+        assert kwargs["tools"] == [{"type": "function", "function": {"name": "test"}}]
+        assert kwargs["tool_choice"] == "auto"
+        assert kwargs["metadata"] == {"user_id": "123"}
+        assert kwargs["service_tier"] == "default"
+        assert kwargs["stop"] == ["STOP", "END"]
+
+    def test_to_chat_completion_with_system_prompt(self):
+        """Test system prompt is added as first message."""
+        request = request_lib.LLMRequest(
+            model="gpt-4o",
+            messages=[{"role": "user", "content": "Hello"}],
+            system_prompt="You are a helpful assistant.",
+        )
+        kwargs = request.to_chat_completion_kwargs()
+
+        assert len(kwargs["messages"]) == 2
+        assert kwargs["messages"][0] == {"role": "system", "content": "You are a helpful assistant."}
+        assert kwargs["messages"][1] == {"role": "user", "content": "Hello"}
+
+    def test_to_chat_completion_stop_sequences_truncated(self):
+        """Test that stop sequences are truncated to 4 (OpenAI limit)."""
+        request = request_lib.LLMRequest(
+            model="gpt-4o",
+            messages=[{"role": "user", "content": "Hello"}],
+            stop_sequences=["A", "B", "C", "D", "E", "F"],
+        )
+        kwargs = request.to_chat_completion_kwargs(strict=False)
+
+        assert kwargs["stop"] == ["A", "B", "C", "D"]
+
+    def test_to_chat_completion_excludes_top_k(self):
+        """Test that top_k (Claude-specific) is excluded."""
+        request = request_lib.LLMRequest(
+            model="gpt-4o",
+            messages=[{"role": "user", "content": "Hello"}],
+            top_k=40,
+        )
+        kwargs = request.to_chat_completion_kwargs(strict=False)
+
+        assert "top_k" not in kwargs
+
+    def test_to_chat_completion_excludes_standard_only_tier(self):
+        """Test that standard_only service tier is excluded."""
+        request = request_lib.LLMRequest(
+            model="gpt-4o",
+            messages=[{"role": "user", "content": "Hello"}],
+            service_tier="standard_only",
+        )
+        kwargs = request.to_chat_completion_kwargs(strict=False)
+
+        assert "service_tier" not in kwargs
+
+    def test_from_chat_completion_minimal(self):
+        """Test parsing minimal Chat Completions request."""
+        kwargs = {
+            "model": "gpt-4o",
+            "messages": [{"role": "user", "content": "Hello"}],
+        }
+        request = request_lib.LLMRequest.from_chat_completion(kwargs)
+
+        assert request.model == "gpt-4o"
+        assert list(request.messages) == [{"role": "user", "content": "Hello"}]
+        assert request.max_output_tokens is None
+        assert request.temperature is None
+
+    def test_from_chat_completion_all_params(self):
+        """Test parsing Chat Completions with all parameters."""
+        kwargs = {
+            "model": "gpt-4o",
+            "messages": [{"role": "user", "content": "Hello"}],
+            "max_completion_tokens": 100,
+            "temperature": 0.7,
+            "top_p": 0.9,
+            "stream": True,
+            "tools": [{"type": "function", "function": {"name": "test"}}],
+            "tool_choice": "auto",
+            "metadata": {"user_id": "123"},
+            "service_tier": "default",
+            "stop": ["STOP", "END"],
+        }
+        request = request_lib.LLMRequest.from_chat_completion(kwargs)
+
+        assert request.model == "gpt-4o"
+        assert request.max_output_tokens == 100
+        assert request.temperature == 0.7
+        assert request.top_p == 0.9
+        assert request.stream is True
+        assert request.tools == [{"type": "function", "function": {"name": "test"}}]
+        assert request.tool_choice == "auto"
+        assert request.metadata == {"user_id": "123"}
+        assert request.service_tier == "default"
+        assert request.stop_sequences == ["STOP", "END"]
+
+    def test_from_chat_completion_extracts_system_prompt(self):
+        """Test that system message is extracted to system_prompt."""
+        kwargs = {
+            "model": "gpt-4o",
+            "messages": [
+                {"role": "system", "content": "You are helpful."},
+                {"role": "user", "content": "Hello"},
+            ],
+        }
+        request = request_lib.LLMRequest.from_chat_completion(kwargs)
+
+        assert request.system_prompt == "You are helpful."
+        assert list(request.messages) == [{"role": "user", "content": "Hello"}]
+
+    def test_from_chat_completion_handles_max_tokens_fallback(self):
+        """Test that deprecated max_tokens is used as fallback."""
+        kwargs = {
+            "model": "gpt-4o",
+            "messages": [{"role": "user", "content": "Hello"}],
+            "max_tokens": 100,
+        }
+        request = request_lib.LLMRequest.from_chat_completion(kwargs)
+
+        assert request.max_output_tokens == 100
+
+    def test_roundtrip_chat_completion(self):
+        """Test that Chat Completions roundtrip preserves data."""
+        original = {
+            "model": "gpt-4o",
+            "messages": [{"role": "user", "content": "Hello"}],
+            "max_completion_tokens": 100,
+            "temperature": 0.7,
+            "top_p": 0.9,
+            "stream": True,
+            "tools": [{"type": "function", "function": {"name": "test"}}],
+            "tool_choice": "auto",
+            "metadata": {"user_id": "123"},
+        }
+        request = request_lib.LLMRequest.from_chat_completion(original)
+        converted = request.to_chat_completion_kwargs()
+
+        assert converted["model"] == original["model"]
+        assert converted["messages"] == original["messages"]
+        assert converted["max_completion_tokens"] == original["max_completion_tokens"]
+        assert converted["temperature"] == original["temperature"]
+        assert converted["top_p"] == original["top_p"]
+        assert converted["stream"] == original["stream"]
+        assert converted["tools"] == original["tools"]
+        assert converted["tool_choice"] == original["tool_choice"]
+        assert converted["metadata"] == original["metadata"]
+
+
+class TestLLMRequestResponsesConversion:
+    """Tests for Responses API conversion."""
+
+    def test_to_responses_minimal(self):
+        """Test minimal conversion to Responses format."""
+        request = request_lib.LLMRequest(
+            model="gpt-4o",
+            messages=[{"role": "user", "content": "Hello"}],
+        )
+        kwargs = request.to_responses_kwargs()
+
+        assert kwargs["model"] == "gpt-4o"
+        assert kwargs["input"] == [{"type": "message", "role": "user", "content": "Hello"}]
+        assert "temperature" not in kwargs
+
+    def test_to_responses_all_params(self):
+        """Test conversion with all common parameters."""
+        request = request_lib.LLMRequest(
+            model="gpt-4o",
+            messages=[{"role": "user", "content": "Hello"}],
+            max_output_tokens=100,
+            temperature=0.7,
+            top_p=0.9,
+            stream=True,
+            tools=[{"type": "function", "name": "test"}],
+            tool_choice="auto",
+            metadata={"user_id": "123"},
+            service_tier="default",
+        )
+        kwargs = request.to_responses_kwargs()
+
+        assert kwargs["model"] == "gpt-4o"
+        assert kwargs["max_output_tokens"] == 100
+        assert kwargs["temperature"] == 0.7
+        assert kwargs["top_p"] == 0.9
+        assert kwargs["stream"] is True
+        assert kwargs["tools"] == [{"type": "function", "name": "test"}]
+        assert kwargs["tool_choice"] == "auto"
+        assert kwargs["metadata"] == {"user_id": "123"}
+        assert kwargs["service_tier"] == "default"
+
+    def test_to_responses_with_instructions(self):
+        """Test system prompt is mapped to instructions."""
+        request = request_lib.LLMRequest(
+            model="gpt-4o",
+            messages=[{"role": "user", "content": "Hello"}],
+            system_prompt="You are a helpful assistant.",
+        )
+        kwargs = request.to_responses_kwargs()
+
+        assert kwargs["instructions"] == "You are a helpful assistant."
+
+    def test_to_responses_excludes_stop_sequences(self):
+        """Test that stop_sequences are not included (not supported)."""
+        request = request_lib.LLMRequest(
+            model="gpt-4o",
+            messages=[{"role": "user", "content": "Hello"}],
+            stop_sequences=["STOP"],
+        )
+        kwargs = request.to_responses_kwargs(strict=False)
+
+        assert "stop_sequences" not in kwargs
+        assert "stop" not in kwargs
+
+    def test_to_responses_excludes_top_k(self):
+        """Test that top_k is excluded."""
+        request = request_lib.LLMRequest(
+            model="gpt-4o",
+            messages=[{"role": "user", "content": "Hello"}],
+            top_k=40,
+        )
+        kwargs = request.to_responses_kwargs(strict=False)
+
+        assert "top_k" not in kwargs
+
+    def test_from_responses_minimal(self):
+        """Test parsing minimal Responses request."""
+        kwargs = {
+            "model": "gpt-4o",
+            "input": "Hello",
+        }
+        request = request_lib.LLMRequest.from_responses(kwargs)
+
+        assert request.model == "gpt-4o"
+        assert list(request.messages) == [{"role": "user", "content": "Hello"}]
+
+    def test_from_responses_all_params(self):
+        """Test parsing Responses with all parameters."""
+        kwargs = {
+            "model": "gpt-4o",
+            "input": [{"type": "message", "role": "user", "content": "Hello"}],
+            "max_output_tokens": 100,
+            "temperature": 0.7,
+            "top_p": 0.9,
+            "stream": True,
+            "tools": [{"type": "function", "name": "test"}],
+            "tool_choice": "auto",
+            "metadata": {"user_id": "123"},
+            "service_tier": "default",
+            "instructions": "You are helpful.",
+        }
+        request = request_lib.LLMRequest.from_responses(kwargs)
+
+        assert request.model == "gpt-4o"
+        assert request.max_output_tokens == 100
+        assert request.temperature == 0.7
+        assert request.top_p == 0.9
+        assert request.stream is True
+        assert request.tools == [{"type": "function", "name": "test"}]
+        assert request.tool_choice == "auto"
+        assert request.metadata == {"user_id": "123"}
+        assert request.service_tier == "default"
+        assert request.system_prompt == "You are helpful."
+
+    def test_from_responses_string_input(self):
+        """Test parsing Responses with string input."""
+        kwargs = {
+            "model": "gpt-4o",
+            "input": "Hello, world!",
+        }
+        request = request_lib.LLMRequest.from_responses(kwargs)
+
+        assert list(request.messages) == [{"role": "user", "content": "Hello, world!"}]
+
+    def test_from_responses_list_input(self):
+        """Test parsing Responses with list input."""
+        kwargs = {
+            "model": "gpt-4o",
+            "input": [
+                {"type": "message", "role": "user", "content": "Hello"},
+                {"type": "message", "role": "assistant", "content": "Hi!"},
+            ],
+        }
+        request = request_lib.LLMRequest.from_responses(kwargs)
+
+        assert list(request.messages) == [
+            {"role": "user", "content": "Hello"},
+            {"role": "assistant", "content": "Hi!"},
+        ]
+
+
+class TestLLMRequestMessagesConversion:
+    """Tests for Claude Messages API conversion."""
+
+    def test_to_messages_minimal(self):
+        """Test minimal conversion to Messages format."""
+        request = request_lib.LLMRequest(
+            model="claude-sonnet-4-5-20250929",
+            messages=[{"role": "user", "content": "Hello"}],
+        )
+        kwargs = request.to_messages_kwargs()
+
+        assert kwargs["model"] == "claude-sonnet-4-5-20250929"
+        assert kwargs["messages"] == [{"role": "user", "content": "Hello"}]
+        assert kwargs["max_tokens"] == 1024  # Default required by Claude
+
+    def test_to_messages_all_params(self):
+        """Test conversion with all common parameters."""
+        request = request_lib.LLMRequest(
+            model="claude-sonnet-4-5-20250929",
+            messages=[{"role": "user", "content": "Hello"}],
+            max_output_tokens=100,
+            temperature=1.4,  # Will be converted to 0.7
+            top_p=0.9,
+            top_k=40,
+            stream=True,
+            tools=[{"type": "custom", "name": "test"}],
+            tool_choice={"type": "auto"},
+            metadata={"user_id": "123"},
+            service_tier="auto",
+            stop_sequences=["STOP", "END"],
+        )
+        kwargs = request.to_messages_kwargs()
+
+        assert kwargs["model"] == "claude-sonnet-4-5-20250929"
+        assert kwargs["max_tokens"] == 100
+        assert kwargs["temperature"] == 0.7  # Converted from 1.4
+        assert kwargs["top_p"] == 0.9
+        assert kwargs["top_k"] == 40
+        assert kwargs["stream"] is True
+        assert kwargs["tools"] == [{"type": "custom", "name": "test"}]
+        assert kwargs["tool_choice"] == {"type": "auto"}
+        assert kwargs["metadata"] == {"user_id": "123"}
+        assert kwargs["service_tier"] == "auto"
+        assert kwargs["stop_sequences"] == ["STOP", "END"]
+
+    def test_to_messages_temperature_conversion(self):
+        """Test temperature conversion from OpenAI (0-2) to Claude (0-1) range."""
+        test_cases = [
+            (0.0, 0.0),
+            (1.0, 0.5),
+            (2.0, 1.0),
+            (0.5, 0.25),
+            (1.5, 0.75),
+        ]
+        for openai_temp, claude_temp in test_cases:
+            request = request_lib.LLMRequest(
+                model="claude-sonnet-4-5-20250929",
+                messages=[{"role": "user", "content": "Hello"}],
+                temperature=openai_temp,
+            )
+            kwargs = request.to_messages_kwargs()
+            assert kwargs["temperature"] == claude_temp
+
+    def test_to_messages_with_system_prompt(self):
+        """Test system prompt is mapped to system parameter."""
+        request = request_lib.LLMRequest(
+            model="claude-sonnet-4-5-20250929",
+            messages=[{"role": "user", "content": "Hello"}],
+            system_prompt="You are a helpful assistant.",
+        )
+        kwargs = request.to_messages_kwargs()
+
+        assert kwargs["system"] == "You are a helpful assistant."
+
+    def test_to_messages_excludes_invalid_service_tier(self):
+        """Test that non-Claude service tiers are excluded."""
+        request = request_lib.LLMRequest(
+            model="claude-sonnet-4-5-20250929",
+            messages=[{"role": "user", "content": "Hello"}],
+            service_tier="flex",  # Not supported by Claude
+        )
+        kwargs = request.to_messages_kwargs(strict=False)
+
+        assert "service_tier" not in kwargs
+
+    def test_to_messages_filters_system_messages(self):
+        """Test that system/developer messages are filtered out."""
+        request = request_lib.LLMRequest(
+            model="claude-sonnet-4-5-20250929",
+            messages=[
+                {"role": "system", "content": "System message"},
+                {"role": "user", "content": "Hello"},
+                {"role": "assistant", "content": "Hi"},
+            ],
+        )
+        kwargs = request.to_messages_kwargs(strict=False)
+
+        assert len(kwargs["messages"]) == 2
+        assert kwargs["messages"][0]["role"] == "user"
+        assert kwargs["messages"][1]["role"] == "assistant"
+
+    def test_to_messages_maps_tool_to_user(self):
+        """Test that tool/function roles are mapped to user."""
+        messages: list[dict[str, Any]] = [
+            {"role": "user", "content": "What's the weather?"},
+            {"role": "assistant", "content": "Let me check..."},
+            {"role": "tool", "content": "Sunny, 72°F"},
+        ]
+        request = request_lib.LLMRequest(
+            model="claude-sonnet-4-5-20250929",
+            messages=messages,  # type: ignore
+        )
+        kwargs = request.to_messages_kwargs()
+
+        assert kwargs["messages"][2]["role"] == "user"
+
+    def test_from_messages_minimal(self):
+        """Test parsing minimal Messages request."""
+        kwargs = {
+            "model": "claude-sonnet-4-5-20250929",
+            "messages": [{"role": "user", "content": "Hello"}],
+            "max_tokens": 100,
+        }
+        request = request_lib.LLMRequest.from_messages(kwargs)
+
+        assert request.model == "claude-sonnet-4-5-20250929"
+        assert list(request.messages) == [{"role": "user", "content": "Hello"}]
+        assert request.max_output_tokens == 100
+
+    def test_from_messages_all_params(self):
+        """Test parsing Messages with all parameters."""
+        kwargs = {
+            "model": "claude-sonnet-4-5-20250929",
+            "messages": [{"role": "user", "content": "Hello"}],
+            "max_tokens": 100,
+            "temperature": 0.7,  # Will be converted to 1.4
+            "top_p": 0.9,
+            "top_k": 40,
+            "stream": True,
+            "tools": [{"type": "custom", "name": "test"}],
+            "tool_choice": {"type": "auto"},
+            "metadata": {"user_id": "123"},
+            "service_tier": "auto",
+            "stop_sequences": ["STOP"],
+            "system": "You are helpful.",
+        }
+        request = request_lib.LLMRequest.from_messages(kwargs)
+
+        assert request.model == "claude-sonnet-4-5-20250929"
+        assert request.max_output_tokens == 100
+        assert request.temperature == 1.4  # Converted from 0.7
+        assert request.top_p == 0.9
+        assert request.top_k == 40
+        assert request.stream is True
+        assert request.tools == [{"type": "custom", "name": "test"}]
+        assert request.tool_choice == {"type": "auto"}
+        assert request.metadata == {"user_id": "123"}
+        assert request.service_tier == "auto"
+        assert request.stop_sequences == ["STOP"]
+        assert request.system_prompt == "You are helpful."
+
+    def test_from_messages_temperature_conversion(self):
+        """Test temperature conversion from Claude (0-1) to OpenAI (0-2) range."""
+        test_cases = [
+            (0.0, 0.0),
+            (0.5, 1.0),
+            (1.0, 2.0),
+            (0.25, 0.5),
+            (0.75, 1.5),
+        ]
+        for claude_temp, openai_temp in test_cases:
+            kwargs = {
+                "model": "claude-sonnet-4-5-20250929",
+                "messages": [{"role": "user", "content": "Hello"}],
+                "max_tokens": 100,
+                "temperature": claude_temp,
+            }
+            request = request_lib.LLMRequest.from_messages(kwargs)
+            assert request.temperature == openai_temp
+
+
+class TestLLMRequestCrossAPIConversion:
+    """Tests for converting between different APIs."""
+
+    def test_chat_to_responses_to_chat(self):
+        """Test Chat -> Responses -> Chat roundtrip."""
+        original_chat = {
+            "model": "gpt-4o",
+            "messages": [{"role": "user", "content": "Hello"}],
+            "max_completion_tokens": 100,
+            "temperature": 0.7,
+        }
+        request = request_lib.LLMRequest.from_chat_completion(original_chat)
+        responses_kwargs = request.to_responses_kwargs()
+        request2 = request_lib.LLMRequest.from_responses(responses_kwargs)
+        final_chat = request2.to_chat_completion_kwargs()
+
+        assert final_chat["model"] == original_chat["model"]
+        assert final_chat["max_completion_tokens"] == original_chat["max_completion_tokens"]
+        assert final_chat["temperature"] == original_chat["temperature"]
+
+    def test_chat_to_messages_temperature_conversion(self):
+        """Test Chat -> Messages converts temperature correctly."""
+        request = request_lib.LLMRequest.from_chat_completion(
+            {
+                "model": "gpt-4o",
+                "messages": [{"role": "user", "content": "Hello"}],
+                "temperature": 1.0,
+            }
+        )
+        claude_kwargs = request.to_messages_kwargs()
+
+        assert claude_kwargs["temperature"] == 0.5  # 1.0 / 2
+
+    def test_messages_to_chat_temperature_conversion(self):
+        """Test Messages -> Chat converts temperature correctly."""
+        request = request_lib.LLMRequest.from_messages(
+            {
+                "model": "claude-sonnet-4-5-20250929",
+                "messages": [{"role": "user", "content": "Hello"}],
+                "max_tokens": 100,
+                "temperature": 0.5,
+            }
+        )
+        chat_kwargs = request.to_chat_completion_kwargs()
+
+        assert chat_kwargs["temperature"] == 1.0  # 0.5 * 2
+
+    def test_all_apis_preserve_core_params(self):
+        """Test that core parameters are preserved across all conversions."""
+        # Create a request with all common parameters
+        original = request_lib.LLMRequest(
+            model="gpt-4o",
+            messages=[{"role": "user", "content": "Hello"}],
+            max_output_tokens=100,
+            temperature=1.0,
+            top_p=0.9,
+            stream=True,
+            metadata={"user_id": "123"},
+        )
+
+        # Convert to all formats
+        chat_kwargs = original.to_chat_completion_kwargs()
+        responses_kwargs = original.to_responses_kwargs()
+        messages_kwargs = original.to_messages_kwargs()
+
+        # Verify core params are present in all
+        assert chat_kwargs["model"] == "gpt-4o"
+        assert responses_kwargs["model"] == "gpt-4o"
+        assert messages_kwargs["model"] == "gpt-4o"
+
+        assert chat_kwargs["max_completion_tokens"] == 100
+        assert responses_kwargs["max_output_tokens"] == 100
+        assert messages_kwargs["max_tokens"] == 100
+
+        assert chat_kwargs["temperature"] == 1.0
+        assert responses_kwargs["temperature"] == 1.0
+        assert messages_kwargs["temperature"] == 0.5  # Converted
+
+        assert chat_kwargs["top_p"] == 0.9
+        assert responses_kwargs["top_p"] == 0.9
+        assert messages_kwargs["top_p"] == 0.9
+
+        assert chat_kwargs["stream"] is True
+        assert responses_kwargs["stream"] is True
+        assert messages_kwargs["stream"] is True
+
+        assert chat_kwargs["metadata"] == {"user_id": "123"}
+        assert responses_kwargs["metadata"] == {"user_id": "123"}
+        assert messages_kwargs["metadata"] == {"user_id": "123"}

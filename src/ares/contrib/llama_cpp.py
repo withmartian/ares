@@ -14,6 +14,7 @@ Required dependency group:
 Example usage:
     from ares.contrib import llama_cpp
     from ares.llms import llm_clients
+from ares.llms import request
 
     # Initialize with a local GGUF model file
     client = llama_cpp.LlamaCppLLMClient(
@@ -22,7 +23,7 @@ Example usage:
     )
 
     # Use like any other LLM client
-    request = llm_clients.LLMRequest(messages=[{"role": "user", "content": "Hello!"}])
+    request = request.LLMRequest(messages=[{"role": "user", "content": "Hello!"}])
     response = await client(request)
 
 Note: Download GGUF models from HuggingFace. For example:
@@ -38,6 +39,7 @@ import llama_cpp
 import openai.types.chat.chat_completion
 
 from ares.llms import llm_clients
+from ares.llms import request
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -71,7 +73,7 @@ class LlamaCppLLMClient(llm_clients.LLMClient):
             n_ctx=self.n_ctx,
         )
 
-    async def __call__(self, request: llm_clients.LLMRequest) -> llm_clients.LLMResponse:
+    async def __call__(self, request: request.LLMRequest) -> llm_clients.LLMResponse:
         """Generate a response using llama.cpp.
 
         Args:

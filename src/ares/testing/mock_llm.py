@@ -10,6 +10,7 @@ import openai.types.chat.chat_completion_message
 import openai.types.completion_usage
 
 from ares.llms import llm_clients
+from ares.llms import request
 
 
 @dataclasses.dataclass
@@ -27,13 +28,13 @@ class MockLLMClient:
         call_count: Number of times the client has been called.
     """
 
-    requests: list[llm_clients.LLMRequest] = dataclasses.field(default_factory=list)
+    requests: list[request.LLMRequest] = dataclasses.field(default_factory=list)
     responses: list[str] = dataclasses.field(default_factory=list)
-    response_handler: Callable[[llm_clients.LLMRequest], str] | None = None
+    response_handler: Callable[[request.LLMRequest], str] | None = None
     default_response: str = "Mock LLM response"
     call_count: int = 0
 
-    async def __call__(self, request: llm_clients.LLMRequest) -> llm_clients.LLMResponse:
+    async def __call__(self, request: request.LLMRequest) -> llm_clients.LLMResponse:
         """Process LLM request and return mock response.
 
         Args:
@@ -82,7 +83,7 @@ class MockLLMClient:
             cost=0.0,
         )
 
-    def get_last_request(self) -> llm_clients.LLMRequest | None:
+    def get_last_request(self) -> request.LLMRequest | None:
         """Get the most recent request, or None if no requests."""
         return self.requests[-1] if self.requests else None
 

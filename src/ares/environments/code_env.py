@@ -29,6 +29,7 @@ from ares.environments import base
 from ares.experiment_tracking import stat_tracker
 from ares.llms import llm_clients
 from ares.llms import queue_mediated_client
+from ares.llms import request
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -47,7 +48,7 @@ def load_harbor_dataset(name: str, version: str) -> list[harbor_task.Task]:
     ]
 
 
-class CodeEnvironment(base.Environment[llm_clients.LLMResponse, llm_clients.LLMRequest | None, float, float]):
+class CodeEnvironment(base.Environment[llm_clients.LLMResponse, request.LLMRequest | None, float, float]):
     """Environment for code agent datasets that computes reward at the end of an episode."""
 
     def __init__(
@@ -84,7 +85,7 @@ class CodeEnvironment(base.Environment[llm_clients.LLMResponse, llm_clients.LLMR
         # Register for cleanup on exit.
         _ENVIRONMENT_JANITOR.register_for_cleanup(self)
 
-    async def reset(self) -> base.TimeStep[llm_clients.LLMRequest, float, float]:
+    async def reset(self) -> base.TimeStep[request.LLMRequest, float, float]:
         reset_start_time = time.time()
         self._assert_active()
 
@@ -118,7 +119,7 @@ class CodeEnvironment(base.Environment[llm_clients.LLMResponse, llm_clients.LLMR
         self._tracker.scalar(f"{self._prefix}/reset", reset_end_time - reset_start_time)
         return result
 
-    async def step(self, action: llm_clients.LLMResponse) -> base.TimeStep[llm_clients.LLMRequest | None, float, float]:
+    async def step(self, action: llm_clients.LLMResponse) -> base.TimeStep[request.LLMRequest | None, float, float]:
         step_start_time = time.time()
         self._assert_active()
 
@@ -154,7 +155,7 @@ class CodeEnvironment(base.Environment[llm_clients.LLMResponse, llm_clients.LLMR
 
     async def _get_time_step(
         self,
-    ) -> base.TimeStep[llm_clients.LLMRequest | None, float, float]:
+    ) -> base.TimeStep[request.LLMRequest | None, float, float]:
         # Wait for the code agent to send another request or complete.
         _LOGGER.debug("[%d] Waiting for code agent or LLM request.", id(self))
         with self._tracker.timeit(f"{self._prefix}/get_from_queue"):

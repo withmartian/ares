@@ -26,6 +26,7 @@ from ares.code_agents import code_agent_base
 from ares.containers import containers
 from ares.experiment_tracking import stat_tracker
 from ares.llms import llm_clients
+from ares.llms import request
 
 # Ensure that MSWEA doesn't log its startup message on import.
 os.environ["MSWEA_SILENT_STARTUP"] = "1"
@@ -205,7 +206,7 @@ class MiniSWECodeAgent(code_agent_base.CodeAgent):
 
         with self.tracker.timeit("mswea/llm_request"):
             response = await self.llm_client(
-                llm_clients.LLMRequest(
+                request.LLMRequest(
                     messages=self._messages,
                     temperature=0.0,
                 )

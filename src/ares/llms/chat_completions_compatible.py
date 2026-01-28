@@ -12,6 +12,7 @@ import tenacity
 from ares import config
 from ares.llms import accounting
 from ares.llms import llm_clients
+from ares.llms import request
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -32,7 +33,7 @@ def _get_llm_client(base_url: str, api_key: str) -> openai.AsyncClient:
     before_sleep=tenacity.before_sleep_log(_LOGGER, logging.INFO),
 )
 async def _query_llm_with_retry(
-    llm_client: openai.AsyncClient, model: str, request: llm_clients.LLMRequest
+    llm_client: openai.AsyncClient, model: str, request: request.LLMRequest
 ) -> openai.types.chat.chat_completion.ChatCompletion:
     response = await llm_client.chat.completions.create(model=model, **request.as_kwargs())
     return response
@@ -44,7 +45,7 @@ class ChatCompletionCompatibleLLMClient(llm_clients.LLMClient):
     base_url: str = config.CONFIG.chat_completion_api_base_url
     api_key: str = config.CONFIG.chat_completion_api_key
 
-    async def __call__(self, request: llm_clients.LLMRequest) -> llm_clients.LLMResponse:
+    async def __call__(self, request: request.LLMRequest) -> llm_clients.LLMResponse:
         _LOGGER.debug("[%d] Requesting LLM.", id(self))
 
         # GPT-5 models don't support temperature.

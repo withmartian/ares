@@ -18,6 +18,7 @@ readme = "README.md"
 requires-python = ">=3.12"
 license = {file = "LICENSE"}
 dependencies = [
+    "anthropic>=0.76.0",
     "daytona>=0.125.0",
     "docker>=7.1.0",
     "frozendict>=2.4.7",
