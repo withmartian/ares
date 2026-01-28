@@ -104,8 +104,8 @@ Before submitting a PR:
 To build and view the docs locally:
 
 ```bash
-uv sync --group docs
-cd docs && uv run --group docs make html
+uv sync --extra docs
+cd docs && uv run --extra docs make html
 ```
 
 and open the resulting `docs/build/html/index.html` file in your browser.
