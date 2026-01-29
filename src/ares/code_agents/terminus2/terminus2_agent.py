@@ -189,39 +189,92 @@ class Terminus2Agent(code_agent_base.CodeAgent):
             return
 
         # Check if tmux is installed, install if needed
-        _LOGGER.debug("[%d] Checking if tmux is installed", id(self))
+        _LOGGER.info("[%d] Checking if tmux is installed", id(self))
         check_result = await self.container.exec_run("which tmux", timeout_s=_TMUX_OP_TIMEOUT_S)
 
         if check_result.exit_code != 0:
             _LOGGER.info("[%d] tmux not found, installing...", id(self))
             install_result = await self.container.exec_run(
-                "apt-get update -qq && apt-get install -y -qq tmux",
+                "apt-get update -qq && apt-get install -y -qq tmux 2>&1",
                 timeout_s=60.0,
             )
+            _LOGGER.info("[%d] Install result: exit_code=%s, output_length=%d",
+                        id(self), install_result.exit_code, len(install_result.output))
             if install_result.exit_code != 0:
                 _LOGGER.error("[%d] Failed to install tmux: %s", id(self), install_result.output)
                 raise RuntimeError(f"Could not install tmux: {install_result.output}")
-            _LOGGER.info("[%d] tmux installed successfully", id(self))
+
+            # Verify installation
+            verify_result = await self.container.exec_run("which tmux", timeout_s=_TMUX_OP_TIMEOUT_S)
+            if verify_result.exit_code != 0:
+                _LOGGER.error("[%d] tmux still not found after installation", id(self))
+                raise RuntimeError("tmux installation failed - command not found after apt-get install")
+
+            _LOGGER.info("[%d] tmux installed at: %s", id(self), verify_result.output.strip())
+
+            # Check tmux version
+            version_result = await self.container.exec_run("tmux -V 2>&1", timeout_s=_TMUX_OP_TIMEOUT_S)
+            _LOGGER.info("[%d] tmux version: %s (exit_code=%s)",
+                        id(self), version_result.output.strip(), version_result.exit_code)
         else:
-            _LOGGER.debug("[%d] tmux is already installed", id(self))
+            _LOGGER.info("[%d] tmux already installed at: %s", id(self), check_result.output.strip())
+
+        # Check environment before creating session
+        env_result = await self.container.exec_run(
+            "env | grep -E '(TERM|SHELL|HOME|USER)' 2>&1", timeout_s=_TMUX_OP_TIMEOUT_S
+        )
+        _LOGGER.info("[%d] Environment: %s", id(self), env_result.output.strip())
 
         _LOGGER.info("[%d] Creating tmux session: %s", id(self), self._tmux_session_name)
-        _LOGGER.debug("[%d] Tmux dimensions: %dx%d", id(self), self.tmux_pane_width, self.tmux_pane_height)
+        _LOGGER.info("[%d] Tmux dimensions: %dx%d", id(self), self.tmux_pane_width, self.tmux_pane_height)
 
         # Create detached tmux session with specific dimensions
-        try:
-            result = await self.container.exec_run(
-                f"tmux new-session -d -s {self._tmux_session_name} "
-                f"-x {self.tmux_pane_width} -y {self.tmux_pane_height}",
-                workdir="/testbed",
-                timeout_s=_TMUX_OP_TIMEOUT_S,
+        # NOTE: Don't use workdir parameter - the container's default_workdir will be used if set.
+        # Using an explicit workdir that doesn't exist yet causes exec_run to fail with exit code -1.
+        cmd = (
+            f"tmux new-session -d -s {self._tmux_session_name} "
+            f"-x {self.tmux_pane_width} -y {self.tmux_pane_height} 2>&1"
+        )
+        _LOGGER.info("[%d] Running command: %s", id(self), cmd)
+
+        result = await self.container.exec_run(
+            cmd,
+            timeout_s=_TMUX_OP_TIMEOUT_S,
+        )
+        _LOGGER.info("[%d] Tmux new-session result: exit_code=%s, output='%s'",
+                    id(self), result.exit_code, result.output)
+
+        if result.exit_code != 0:
+            _LOGGER.error("[%d] Failed to create tmux session", id(self))
+            _LOGGER.error("[%d] Exit code: %s", id(self), result.exit_code)
+            _LOGGER.error("[%d] Output: '%s'", id(self), result.output)
+
+            # Try to get more debug info
+            _LOGGER.info("[%d] Running diagnostic commands...", id(self))
+            diag1 = await self.container.exec_run("ls -la /tmp 2>&1", timeout_s=_TMUX_OP_TIMEOUT_S)
+            _LOGGER.info("[%d] /tmp contents: %s", id(self), diag1.output[:500])
+
+            diag2 = await self.container.exec_run("tmux list-sessions 2>&1", timeout_s=_TMUX_OP_TIMEOUT_S)
+            _LOGGER.info("[%d] Existing sessions: %s (exit_code=%s)", id(self), diag2.output, diag2.exit_code)
+
+            error_msg = (
+                f"Failed to create tmux session (exit_code={result.exit_code}): "
+                f"{result.output or '(no output)'}"
             )
-            _LOGGER.debug("[%d] Tmux new-session result: exit_code=%s", id(self), result.exit_code)
-            if result.exit_code != 0:
-                _LOGGER.error("[%d] Failed to create tmux session: %s", id(self), result.output)
-        except Exception as e:
-            _LOGGER.error("[%d] Error creating tmux session: %s", id(self), e)
-            raise
+            raise RuntimeError(error_msg)
+
+        # Verify session was created successfully
+        verify_result = await self.container.exec_run(
+            f"tmux has-session -t {self._tmux_session_name}",
+            timeout_s=_TMUX_OP_TIMEOUT_S,
+        )
+        if verify_result.exit_code != 0:
+            _LOGGER.error("[%d] Session verification failed. Listing all sessions:", id(self))
+            list_result = await self.container.exec_run("tmux list-sessions", timeout_s=_TMUX_OP_TIMEOUT_S)
+            _LOGGER.error("[%d] Available sessions: %s", id(self), list_result.output)
+            raise RuntimeError(f"Tmux session {self._tmux_session_name} was not created successfully")
+
+        _LOGGER.debug("[%d] Session verified successfully", id(self))
 
         # Change to testbed directory in the session
         try:
@@ -230,6 +283,8 @@ class Terminus2Agent(code_agent_base.CodeAgent):
                 timeout_s=_TMUX_OP_TIMEOUT_S,
             )
             _LOGGER.debug("[%d] Tmux cd command result: exit_code=%s", id(self), result.exit_code)
+            if result.exit_code != 0:
+                _LOGGER.warning("[%d] Failed to send cd command: %s", id(self), result.output)
         except Exception as e:
             _LOGGER.warning("[%d] Error sending cd to tmux: %s", id(self), e)
 
