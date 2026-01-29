@@ -233,7 +233,7 @@ class EnvironmentInfo:
 
     def __str__(self) -> str:
         """Return formatted preset information."""
-        return f"{self.name} ({self.num_tasks} tasks): {self.description}"
+        return f"{self.name} ({self.num_tasks} tasks):\n    {self.description}"
 
 
 class EnvironmentSpec(Protocol):
