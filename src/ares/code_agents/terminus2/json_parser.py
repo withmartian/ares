@@ -190,8 +190,8 @@ class Terminus2JSONParser:
         if thoughts_match:
             thoughts = thoughts_match.group(1).replace('\\"', '"').replace("\\n", "\n")
 
-        # Only return if we extracted at least some data
-        if commands or task_complete:
+        # Only return if we extracted at least some meaningful data
+        if commands or task_complete_match is not None or thoughts_match is not None:
             return ParsedResponse(commands=commands, task_complete=task_complete, thoughts=thoughts)
 
         return None
