@@ -102,24 +102,6 @@ def _tool_to_chat_completions(tool: Tool) -> openai.types.chat.ChatCompletionToo
     )
 
 
-def _tool_to_responses(tool: Tool) -> openai.types.responses.FunctionToolParam:
-    """Convert Tool from ARES internal format to OpenAI Responses format.
-
-    Args:
-        tool: Tool in ARES internal format (flat with input_schema)
-
-    Returns:
-        Tool in OpenAI Responses format (flat with type, name, description, parameters)
-    """
-    return openai.types.responses.FunctionToolParam(
-        type="function",
-        name=tool["name"],
-        description=tool["description"],
-        parameters=cast(dict[str, object], tool["input_schema"]),
-        strict=True,
-    )
-
-
 def _tool_from_chat_completions(chat_completions_tool: openai.types.chat.ChatCompletionToolParam) -> Tool:
     """Convert tool from OpenAI Chat Completions format to ARES internal format.
 
@@ -142,6 +124,24 @@ def _tool_from_chat_completions(chat_completions_tool: openai.types.chat.ChatCom
         name=function["name"],
         description=function.get("description", ""),
         input_schema=cast(JSONSchema, parameters),
+    )
+
+
+def _tool_to_responses(tool: Tool) -> openai.types.responses.FunctionToolParam:
+    """Convert Tool from ARES internal format to OpenAI Responses format.
+
+    Args:
+        tool: Tool in ARES internal format (flat with input_schema)
+
+    Returns:
+        Tool in OpenAI Responses format (flat with type, name, description, parameters)
+    """
+    return openai.types.responses.FunctionToolParam(
+        type="function",
+        name=tool["name"],
+        description=tool["description"],
+        parameters=cast(dict[str, object], tool["input_schema"]),
+        strict=True,
     )
 
 
