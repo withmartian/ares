@@ -235,7 +235,7 @@ class Terminus2JSONParser:
             warnings: List to append warnings to.
         """
         # Get keys in the actual JSON order, filtering to only expected fields
-        present_keys = [key for key in data.keys() if key in _EXPECTED_FIELD_ORDER]
+        present_keys = [key for key in data if key in _EXPECTED_FIELD_ORDER]
 
         if len(present_keys) < 2:
             # Not enough fields to check order
