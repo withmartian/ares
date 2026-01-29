@@ -695,11 +695,20 @@ class Terminus2Agent(code_agent_base.CodeAgent):
     async def _execute_commands(self, commands: list[json_parser.Command]) -> str:
         """Execute a list of commands via tmux and return the terminal output.
 
+        Commands are sent to tmux using literal mode (-l flag). Keystrokes must
+        explicitly include newlines (\n) to execute commands - there is no automatic
+        Enter addition. This matches terminal-bench reference behavior.
+
+        Example:
+            - Command(keystrokes="ls") → types "ls" but does NOT execute
+            - Command(keystrokes="ls\n") → types "ls" and executes
+
         Args:
-            commands: List of commands to execute.
+            commands: List of commands to execute. Each command's keystrokes should
+                     end with \n if execution is desired.
 
         Returns:
-            The terminal output after executing all commands.
+            The incremental terminal output (only new content since last call).
         """
         if not commands:
             return "(no commands executed)"
