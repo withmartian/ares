@@ -13,6 +13,7 @@ from ares.code_agents.terminus2 import terminus2_agent
 from ares.code_agents.terminus2.json_parser import Command
 from ares.containers import containers
 from ares.llms import llm_clients
+from ares.llms import response
 from ares.testing.mock_container import MockContainer
 
 
@@ -221,8 +222,10 @@ class TestTerminus2AgentIntegration:
         llm_client = mock.AsyncMock(spec=llm_clients.LLMClient)
 
         # First response: execute a command
-        response1 = mock.MagicMock()
-        response1.chat_completion_response.choices[0].message.content = """{
+        response1 = response.LLMResponse(
+            data=[
+                response.TextData(
+                    content="""{
   "analysis": "Need to list files",
   "plan": "Run ls command",
   "commands": [
@@ -233,27 +236,43 @@ class TestTerminus2AgentIntegration:
   ],
   "task_complete": false
 }"""
-        response1.chat_completion_response.usage = None
+                )
+            ],
+            cost=0.0,
+            usage=response.Usage(prompt_tokens=100, generated_tokens=50),
+        )
 
         # Second response: mark complete
-        response2 = mock.MagicMock()
-        response2.chat_completion_response.choices[0].message.content = """{
+        response2 = response.LLMResponse(
+            data=[
+                response.TextData(
+                    content="""{
   "analysis": "Files listed",
   "plan": "Task is done",
   "commands": [],
   "task_complete": true
 }"""
-        response2.chat_completion_response.usage = None
+                )
+            ],
+            cost=0.0,
+            usage=response.Usage(prompt_tokens=100, generated_tokens=50),
+        )
 
         # Third response: confirm completion
-        response3 = mock.MagicMock()
-        response3.chat_completion_response.choices[0].message.content = """{
+        response3 = response.LLMResponse(
+            data=[
+                response.TextData(
+                    content="""{
   "analysis": "Confirming completion",
   "plan": "Done",
   "commands": [],
   "task_complete": true
 }"""
-        response3.chat_completion_response.usage = None
+                )
+            ],
+            cost=0.0,
+            usage=response.Usage(prompt_tokens=100, generated_tokens=50),
+        )
 
         llm_client.side_effect = [response1, response2, response3]
 
