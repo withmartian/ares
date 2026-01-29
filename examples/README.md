@@ -21,6 +21,10 @@ It's helpful for most of the examples to have both a Martian API key (for an LLM
 1) write `DAYTONA_API_KEY={your-key}` in your `.env`
 1) write `DAYTONA_API_URL={api-url}` in your `.env`
 
+### Docker
+
+For some examples, [docker](https://docs.docker.com/engine/install/) should be installed and accessible.
+
 ## Running Examples
 
 Examples are **not packaged in the ARES wheel** and must be run from the ARES repository directory:

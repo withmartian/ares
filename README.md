@@ -23,13 +23,13 @@ It is a modern [gym](https://github.com/Farama-Foundation/Gymnasium): the enviro
 
 ### Getting Started
 
-Install with uv:
+Install with [uv](https://docs.astral.sh/uv/getting-started/installation/):
 
 ```
 uv add martian-ares
 ```
 
-ARES comes packaged with useful presets for different agent/environment configurations. List them with:
+ARES comes packaged with useful presets for different code agent & environment configurations. List them with:
 
 ```
 uv run python -c "import ares; print(ares.list_presets())"
@@ -78,4 +78,4 @@ Alternatively, you can use another chat completions-compatible endpoint by setti
 ### Next Steps
 
 1. Check out the [examples](https://github.com/withmartian/ares/tree/main/examples)
-1. Read the [docs](https://martian-ares.readthedocs.io/en/latest/)
+1. Read the [docs](https://martian-ares.readthedocs.io/en/latest/) to understand ARES and its key abstractions
