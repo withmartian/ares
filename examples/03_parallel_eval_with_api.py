@@ -144,6 +144,7 @@ async def main(args: Args):
     print(f"Total tasks: {num_tasks}")
     print(f"Successful: {int(total_successes)}")
     print(f"Failed: {num_tasks - int(total_successes)}")
+    print(f"Errors: {len([r for r in results if isinstance(r, Exception)])}")
 
 
 if __name__ == "__main__":

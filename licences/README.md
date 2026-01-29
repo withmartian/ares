@@ -1,0 +1,1 @@
+While ARES has an MIT license, we may need to include additional license text in our repo if we make use of other open-source source code.

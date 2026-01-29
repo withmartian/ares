@@ -123,7 +123,6 @@ class MiniSWECodeAgent(code_agent_base.CodeAgent):
         environment_config = self._config.get("environment", {})
         self._env_timeout = environment_config.get("timeout", None)
         self._environment_env_vars = environment_config.get("env", None)
-        self._environment_cwd = environment_config.get("cwd", "/testbed")
 
         # Somewhat frustratingly, minisweagent uses kwargs.
         # We handle this by inspecting whether an argument will be accepted by the agent config.
@@ -236,9 +235,10 @@ class MiniSWECodeAgent(code_agent_base.CodeAgent):
 
         with self.tracker.timeit("mswea/exec_run"):
             try:
+                # NOTE: Don't pass workdir - the container's default_workdir will be used if set.
+                # The _environment_cwd config is deprecated in favor of container-level default_workdir.
                 output = await self.container.exec_run(
                     action,
-                    workdir=self._environment_cwd,
                     timeout_s=self._env_timeout,
                     env=self._environment_env_vars,
                 )
