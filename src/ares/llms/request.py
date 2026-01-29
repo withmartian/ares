@@ -83,14 +83,14 @@ class ToolChoiceTool(TypedDict):
 ToolChoice = Literal["auto", "any", "none"] | ToolChoiceTool
 
 
-def _tool_to_openai(tool: Tool) -> openai.types.chat.ChatCompletionToolParam:
-    """Convert Tool from Claude format to OpenAI format.
+def _tool_to_chat_completions(tool: Tool) -> openai.types.chat.ChatCompletionToolParam:
+    """Convert Tool from ARES internal format to OpenAI Chat Completions format.
 
     Args:
-        tool: Tool in Claude format (flat with input_schema)
+        tool: Tool in ARES internal format (flat with input_schema)
 
     Returns:
-        Tool in OpenAI format (nested with type and function.parameters)
+        Tool in OpenAI Chat Completions format (nested with type and function.parameters)
     """
     return openai.types.chat.ChatCompletionToolParam(
         type="function",
@@ -102,16 +102,16 @@ def _tool_to_openai(tool: Tool) -> openai.types.chat.ChatCompletionToolParam:
     )
 
 
-def _tool_from_openai(openai_tool: openai.types.chat.ChatCompletionToolParam) -> Tool:
-    """Convert tool from OpenAI Chat Completions format to Claude format.
+def _tool_from_chat_completions(chat_completions_tool: openai.types.chat.ChatCompletionToolParam) -> Tool:
+    """Convert tool from OpenAI Chat Completions format to ARES internal format.
 
     Args:
-        openai_tool: Tool in OpenAI Chat Completions format (nested with type and function.parameters)
+        chat_completions_tool: Tool in OpenAI Chat Completions format (nested with type and function.parameters)
 
     Returns:
-        Tool in Claude format (flat with input_schema)
+        Tool in ARES internal format (flat with input_schema)
     """
-    function = openai_tool["function"]
+    function = chat_completions_tool["function"]
     parameters = function.get("parameters", {"type": "object", "properties": {}})
 
     # Validate that parameters is a valid JSONSchema
@@ -128,13 +128,13 @@ def _tool_from_openai(openai_tool: openai.types.chat.ChatCompletionToolParam) ->
 
 
 def _tool_from_responses(responses_tool: openai.types.responses.ToolParam) -> Tool:
-    """Convert tool from OpenAI Responses format to Claude format.
+    """Convert tool from OpenAI Responses format to ARES internal format.
 
     Args:
         responses_tool: Tool in OpenAI Responses format (flat with type, name, parameters)
 
     Returns:
-        Tool in Claude format (flat with input_schema)
+        Tool in ARES internal format (flat with input_schema)
 
     Note:
         Currently only supports FunctionToolParam. Other tool types are not converted.
@@ -163,13 +163,13 @@ def _tool_from_responses(responses_tool: openai.types.responses.ToolParam) -> To
 def _tool_from_anthropic(
     anthropic_tool: anthropic.types.ToolUnionParam,
 ) -> Tool:
-    """Convert tool from Anthropic Messages format to internal format.
+    """Convert tool from Anthropic Messages format to ARES internal format.
 
     Args:
         anthropic_tool: Tool in Anthropic format (ToolParam with type='custom'/None, or built-in tool types)
 
     Returns:
-        Tool in internal format
+        Tool in ARES internal format
 
     Raises:
         ValueError: If tool type is unsupported or required fields are missing
@@ -210,10 +210,10 @@ def _tool_from_anthropic(
 
 
 def _tool_choice_to_openai(tool_choice: ToolChoice | None) -> str | dict[str, Any] | None:
-    """Convert internal ToolChoice to OpenAI Chat Completions format.
+    """Convert ARES internal ToolChoice to OpenAI Chat Completions format.
 
     Args:
-        tool_choice: Internal tool choice
+        tool_choice: ARES internal tool choice
 
     Returns:
         Tool choice in OpenAI format:
@@ -428,7 +428,7 @@ class LLMRequest:
         if self.stream:
             kwargs["stream"] = True
         if self.tools:
-            kwargs["tools"] = [_tool_to_openai(tool) for tool in self.tools]
+            kwargs["tools"] = [_tool_to_chat_completions(tool) for tool in self.tools]
         if self.tool_choice is not None:
             kwargs["tool_choice"] = _tool_choice_to_openai(self.tool_choice)
         if self.metadata:
@@ -492,7 +492,7 @@ class LLMRequest:
         if self.stream:
             kwargs["stream"] = True
         if self.tools:
-            kwargs["tools"] = [_tool_to_openai(tool) for tool in self.tools]
+            kwargs["tools"] = [_tool_to_chat_completions(tool) for tool in self.tools]
         if self.tool_choice is not None:
             kwargs["tool_choice"] = _tool_choice_to_openai(self.tool_choice)
         if self.metadata:
@@ -706,7 +706,9 @@ class LLMRequest:
                         raise ValueError(f"Unsupported tool type: {tool_type}. Only 'function' tools are supported.")
                     _LOGGER.warning("Skipping tool with unsupported type: %s", tool_type)
                     continue
-                converted_tools.append(_tool_from_openai(cast(openai.types.chat.ChatCompletionToolParam, tool)))
+                converted_tools.append(
+                    _tool_from_chat_completions(cast(openai.types.chat.ChatCompletionToolParam, tool))
+                )
 
         # Handle stop sequences - convert single string to list
         stop_param = kwargs.get("stop")
