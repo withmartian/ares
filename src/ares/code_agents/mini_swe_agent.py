@@ -16,7 +16,7 @@ import logging
 import os
 import pathlib
 import re
-from typing import Literal
+from typing import Literal, assert_never
 
 import jinja2
 import yaml
@@ -141,13 +141,17 @@ class MiniSWECodeAgent(code_agent_base.CodeAgent):
         self._step_limit = self._agent_config.get("step_limit", 0)
         self._cost_limit = self._agent_config.get("cost_limit", 0.0)
 
+        self._system_prompt = _render_system_template(self._agent_config["system_template"])
         self._messages: list[request.Message] = []
         _LOGGER.debug("[%d] Initialized MiniSWECodeAgent.", id(self))
 
-    def _add_message(self, role: Literal["system", "user", "assistant"], content: str) -> None:
-        self._messages.append(
-            {"role": role, "content": content},  # type: ignore
-        )
+    def _add_message(self, role: Literal["user", "assistant"], content: str) -> None:
+        if role == "user":
+            self._messages.append(request.UserMessage(role="user", content=content))
+        elif role == "assistant":
+            self._messages.append(request.AssistantMessage(role="assistant", content=content))
+        else:
+            assert_never(role)
 
     async def run(self, task: str) -> None:
         """Run step() until agent is finished. Return exit status & message"""
@@ -162,7 +166,6 @@ class MiniSWECodeAgent(code_agent_base.CodeAgent):
 
             _LOGGER.debug("[%d] System information: %s %s %s %s", id(self), system, release, version, machine)
 
-            self._add_message("system", _render_system_template(self._agent_config["system_template"]))
             self._add_message(
                 "user",
                 _render_instance_template(
@@ -207,6 +210,7 @@ class MiniSWECodeAgent(code_agent_base.CodeAgent):
             response = await self.llm_client(
                 request.LLMRequest(
                     messages=self._messages,
+                    system_prompt=self._system_prompt,
                     temperature=0.0,
                 )
             )
