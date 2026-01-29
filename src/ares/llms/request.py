@@ -331,6 +331,38 @@ def _tool_choice_to_openai(tool_choice: ToolChoice | None) -> str | dict[str, An
     return None
 
 
+def _tool_choice_to_responses(tool_choice: ToolChoice | None) -> str | dict[str, Any] | None:
+    """Convert ARES internal ToolChoice to OpenAI Responses format.
+
+    Args:
+        tool_choice: ARES internal tool choice
+
+    Returns:
+        Tool choice in OpenAI Responses format:
+        - "auto": Model decides
+        - "required": Must use at least one tool
+        - "none": Must not use any tools
+        - {"type": "function", "name": "..."}: Specific function (flat structure)
+    """
+    if tool_choice is None:
+        return None
+
+    if tool_choice == "auto":
+        return "auto"
+    elif tool_choice == "any":
+        return "required"  # Map "any" to OpenAI's "required"
+    elif tool_choice == "none":
+        return "none"
+    elif isinstance(tool_choice, dict) and tool_choice.get("type") == "tool":
+        # Responses API uses flat structure: {"type": "function", "name": "..."}
+        return {
+            "type": "function",
+            "name": tool_choice["name"],
+        }
+
+    return None
+
+
 def _tool_choice_from_openai(
     tool_choice: str | dict[str, Any] | None,
 ) -> ToolChoice | None:
@@ -634,7 +666,7 @@ class LLMRequest:
         if self.tools:
             kwargs["tools"] = [_tool_to_responses(tool) for tool in self.tools]
         if self.tool_choice is not None:
-            kwargs["tool_choice"] = _tool_choice_to_openai(self.tool_choice)
+            kwargs["tool_choice"] = _tool_choice_to_responses(self.tool_choice)
         if self.metadata:
             kwargs["metadata"] = self.metadata
         if self.service_tier and self.service_tier != "standard_only":
