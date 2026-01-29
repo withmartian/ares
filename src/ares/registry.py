@@ -462,7 +462,7 @@ def info(name: str) -> EnvironmentInfo: ...
 
 
 @overload
-def info(name: None) -> Sequence[EnvironmentInfo]: ...
+def info(name: None = None) -> Sequence[EnvironmentInfo]: ...
 
 
 def info(name: str | None = None) -> EnvironmentInfo | Sequence[EnvironmentInfo]:
@@ -513,6 +513,15 @@ def info(name: str | None = None) -> EnvironmentInfo | Sequence[EnvironmentInfo]
         spec_infos.append(spec.get_info())
 
     return spec_infos
+
+
+def list_presets() -> str:
+    """A utility function to easily list all presets.
+
+    Returns:
+        A nicely formatted string of all presets.
+    """
+    return "\n".join([str(x) for x in info()])
 
 
 def make(

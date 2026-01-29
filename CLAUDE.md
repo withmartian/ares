@@ -33,7 +33,7 @@ uv run pytest src/ares/config_test.py
 uv run pytest -k "test_pattern_name"
 ```
 
-Tests follow the `*_test.py` or `test_*.py` naming pattern and are colocated with source files in `src/`.
+Unit tests follow the `*_test.py` naming pattern (preferred) or `test_*.py` and are colocated with source files in `src/`. Integration and end-to-end tests may live under `integration_tests/` at the root.
 
 ### Code Quality
 ```bash
@@ -227,6 +227,19 @@ Follow Google-style isort configuration:
 - No separation between `import` and `from ... import`
 - Sort within sections
 
+**Import Conventions (Google Style):**
+- **Always import modules, not classes or functions**
+- **External consumers** (examples, docs):
+  - ✅ Good: `import ares` → use `ares.make(...)`
+  - ✅ Good: `from ares import llms` → use `llms.LLMRequest`, `llms.TextData`
+  - ❌ Avoid: `from ares.llms import LLMRequest, TextData`
+- **Internal code**:
+  - ✅ Good: `from ares.llms import request` → use `request.LLMRequest`
+  - ✅ Good: `from ares.llms import response` → use `response.TextData`, `response.Usage`
+  - ❌ Avoid: `from ares.llms.request import LLMRequest`
+  - ❌ Avoid: `from ares.llms.response import TextData, Usage`
+- Rationale: Makes code more readable and explicit about where objects come from
+
 ### Comments
 - WHY over WHAT - explain reasoning, edge cases, non-obvious decisions
 - HOW only when implementation is genuinely complex
@@ -248,10 +261,12 @@ Create `.env` file from `.env.example`:
 
 ## Testing Patterns
 
-- Tests colocated with source: `*_test.py` or `test_*.py` in `src/`
+- Unit tests must be under `src/` and live next to their source files
+  - Naming: `*_test.py` (preferred) or `test_*.py`
+  - Mock external services (containers, API calls) in unit tests
+- Integration and end-to-end tests may live under `integration_tests/` at the root
 - Use pytest fixtures for common setup
 - Async tests use `pytest-asyncio`
-- Mock external services (containers, API calls) in unit tests
 
 ## CI/CD
 

@@ -16,16 +16,17 @@ import logging
 import os
 import pathlib
 import re
-from typing import Literal
+from typing import Literal, assert_never
 
 import jinja2
-from openai.types.chat import chat_completion_message_param
 import yaml
 
 from ares.code_agents import code_agent_base
 from ares.containers import containers
 from ares.experiment_tracking import stat_tracker
 from ares.llms import llm_clients
+from ares.llms import request
+from ares.llms import response
 
 # Ensure that MSWEA doesn't log its startup message on import.
 os.environ["MSWEA_SILENT_STARTUP"] = "1"
@@ -123,7 +124,6 @@ class MiniSWECodeAgent(code_agent_base.CodeAgent):
         environment_config = self._config.get("environment", {})
         self._env_timeout = environment_config.get("timeout", None)
         self._environment_env_vars = environment_config.get("env", None)
-        self._environment_cwd = environment_config.get("cwd", "/testbed")
 
         # Somewhat frustratingly, minisweagent uses kwargs.
         # We handle this by inspecting whether an argument will be accepted by the agent config.
@@ -141,19 +141,23 @@ class MiniSWECodeAgent(code_agent_base.CodeAgent):
         self._step_limit = self._agent_config.get("step_limit", 0)
         self._cost_limit = self._agent_config.get("cost_limit", 0.0)
 
-        self._messages: list[chat_completion_message_param.ChatCompletionMessageParam] = []
+        self._system_prompt = _render_system_template(self._agent_config["system_template"])
+        self._messages: list[request.Message] = []
         _LOGGER.debug("[%d] Initialized MiniSWECodeAgent.", id(self))
 
-    def _add_message(self, role: Literal["system", "user", "assistant"], content: str) -> None:
-        self._messages.append(
-            {"role": role, "content": content},  # type: ignore
-        )
+    def _add_message(self, role: Literal["user", "assistant"], content: str) -> None:
+        if role == "user":
+            self._messages.append(request.UserMessage(role="user", content=content))
+        elif role == "assistant":
+            self._messages.append(request.AssistantMessage(role="assistant", content=content))
+        else:
+            assert_never(role)
 
     async def run(self, task: str) -> None:
         """Run step() until agent is finished. Return exit status & message"""
         # Get system information from the container.
         with self.tracker.timeit("mswea/setup"):
-            _LOGGER.debug("[%d] Starting miniswe-agent run.", id(self))
+            _LOGGER.debug("[%d] Starting mini-swe-agent run.", id(self))
 
             system = (await self.container.exec_run("uname -a", env=self._environment_env_vars)).output.strip()
             release = (await self.container.exec_run("uname -r", env=self._environment_env_vars)).output.strip()
@@ -162,7 +166,6 @@ class MiniSWECodeAgent(code_agent_base.CodeAgent):
 
             _LOGGER.debug("[%d] System information: %s %s %s %s", id(self), system, release, version, machine)
 
-            self._add_message("system", _render_system_template(self._agent_config["system_template"]))
             self._add_message(
                 "user",
                 _render_instance_template(
@@ -192,7 +195,7 @@ class MiniSWECodeAgent(code_agent_base.CodeAgent):
         llm_response = await self.query()
         await self.execute_action(llm_response)
 
-    async def query(self) -> llm_clients.LLMResponse:
+    async def query(self) -> response.LLMResponse:
         """Query the model and return the response."""
         # Check step limit before making LLM call
         if 0 < self._step_limit <= self._n_calls:
@@ -205,8 +208,9 @@ class MiniSWECodeAgent(code_agent_base.CodeAgent):
 
         with self.tracker.timeit("mswea/llm_request"):
             response = await self.llm_client(
-                llm_clients.LLMRequest(
+                request.LLMRequest(
                     messages=self._messages,
+                    system_prompt=self._system_prompt,
                     temperature=0.0,
                 )
             )
@@ -215,26 +219,27 @@ class MiniSWECodeAgent(code_agent_base.CodeAgent):
         self._n_calls += 1
         self._total_cost += response.cost
 
-        message_content = response.chat_completion_response.choices[0].message.content
+        message_content = response.data[0].content
         assert message_content is not None
 
         self._add_message("assistant", message_content)
 
         return response
 
-    async def execute_action(self, response: llm_clients.LLMResponse) -> None:
+    async def execute_action(self, response: response.LLMResponse) -> None:
         """Execute the action and return the observation."""
         _LOGGER.debug("[%d] Executing action.", id(self))
-        response_text = response.chat_completion_response.choices[0].message.content
+        response_text = response.data[0].content
         assert response_text is not None
 
         action = self.parse_action(response_text)
 
         with self.tracker.timeit("mswea/exec_run"):
             try:
+                # NOTE: Don't pass workdir - the container's default_workdir will be used if set.
+                # The _environment_cwd config is deprecated in favor of container-level default_workdir.
                 output = await self.container.exec_run(
                     action,
-                    workdir=self._environment_cwd,
                     timeout_s=self._env_timeout,
                     env=self._environment_env_vars,
                 )

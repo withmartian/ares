@@ -1,0 +1,18 @@
+You are helping to summarize a conversation between an AI agent and a terminal environment.
+
+The agent is working on the following task:
+{original_instruction}
+
+Below is the conversation history that needs to be summarized. Please create a concise summary that captures:
+1. What the agent has tried so far
+2. What worked and what didn't
+3. The current state of the task
+4. Any important findings or context
+
+Keep the summary focused and under 500 words.
+
+CONVERSATION HISTORY:
+{conversation_history}
+
+Please provide a concise summary:
+

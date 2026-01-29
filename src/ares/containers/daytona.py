@@ -69,6 +69,7 @@ class DaytonaContainer(containers.Container):
     dockerfile_path: pathlib.Path | str | None = None
     name: str | None = None
     resources: containers.Resources | None = None
+    default_workdir: str | None = None
 
     def __post_init__(self):
         self._sbx: daytona.AsyncSandbox | None = None
@@ -129,6 +130,10 @@ class DaytonaContainer(containers.Container):
     ) -> containers.ExecResult:
         if self._sbx is None:
             raise RuntimeError("Sandbox not started, exec_run is not possible.")
+
+        # Use default_workdir if workdir is not explicitly provided
+        if workdir is None:
+            workdir = self.default_workdir
 
         _LOGGER.debug("[%d] Executing command: %s", id(self), command)
         # Note: we only retry on DaytonaErrors.
@@ -212,8 +217,9 @@ class DaytonaContainer(containers.Container):
         image: str,
         name: str | None = None,
         resources: containers.Resources | None = None,
+        default_workdir: str | None = None,
     ) -> "DaytonaContainer":
-        return DaytonaContainer(image=image, name=name, resources=resources)
+        return DaytonaContainer(image=image, name=name, resources=resources, default_workdir=default_workdir)
 
     @classmethod
     def from_dockerfile(
@@ -222,5 +228,8 @@ class DaytonaContainer(containers.Container):
         dockerfile_path: pathlib.Path | str,
         name: str | None = None,
         resources: containers.Resources | None = None,
+        default_workdir: str | None = None,
     ) -> "DaytonaContainer":
-        return DaytonaContainer(dockerfile_path=dockerfile_path, name=name, resources=resources)
+        return DaytonaContainer(
+            dockerfile_path=dockerfile_path, name=name, resources=resources, default_workdir=default_workdir
+        )

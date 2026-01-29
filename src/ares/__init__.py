@@ -45,13 +45,21 @@ All other functionality is available via submodules:
 # Import presets first to register defaults
 # This must come before we expose make and info to ensure presets are available
 from ares import presets  # noqa: F401
+from ares.environments.base import Environment
+from ares.environments.base import TimeStep
+from ares.registry import EnvironmentInfo
 
 # Import registry functions to expose at top level
 from ares.registry import info
+from ares.registry import list_presets
 from ares.registry import make
 
 # Define public API
 __all__ = [
+    "Environment",
+    "EnvironmentInfo",
+    "TimeStep",
     "info",
+    "list_presets",
     "make",
 ]

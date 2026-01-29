@@ -28,8 +28,9 @@ from ares.containers import containers
 from ares.containers import daytona as ares_daytona
 from ares.environments import base
 from ares.experiment_tracking import stat_tracker
-from ares.llms import llm_clients
 from ares.llms import queue_mediated_client
+from ares.llms import request
+from ares.llms import response
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -54,7 +55,7 @@ def list_harbor_datasets() -> tuple[harbor_registry.DatasetSpec, ...]:
     return tuple(client.get_datasets())
 
 
-class CodeEnvironment(base.Environment[llm_clients.LLMResponse, llm_clients.LLMRequest | None, float, float]):
+class CodeEnvironment(base.Environment[response.LLMResponse, request.LLMRequest | None, float, float]):
     """Environment for code agent datasets that computes reward at the end of an episode."""
 
     def __init__(
@@ -63,7 +64,7 @@ class CodeEnvironment(base.Environment[llm_clients.LLMResponse, llm_clients.LLMR
         *,
         container_factory: containers.ContainerFactory = ares_daytona.DaytonaContainer,
         code_agent_factory: code_agent_base.CodeAgentFactory = mini_swe_agent.MiniSWECodeAgent,
-        step_limit: int = 250,  # Same as MiniSWEAgent default.
+        step_limit: int = 250,  # Same as mini-swe-agent default.
         prefix: str = "harbor_env",
         tracker: stat_tracker.StatTracker | None = None,
     ):
@@ -78,7 +79,7 @@ class CodeEnvironment(base.Environment[llm_clients.LLMResponse, llm_clients.LLMR
         # we can return LLM requests in the reset and step methods.
         # We should never allow a user to pass a different LLM client.
         self._llm_client = queue_mediated_client.QueueMediatedLLMClient(q=asyncio.Queue())
-        self._llm_req_future: asyncio.Future[llm_clients.LLMResponse] | None = None
+        self._llm_req_future: asyncio.Future[response.LLMResponse] | None = None
 
         # State.
         self._is_active = False
@@ -91,7 +92,7 @@ class CodeEnvironment(base.Environment[llm_clients.LLMResponse, llm_clients.LLMR
         # Register for cleanup on exit.
         _ENVIRONMENT_JANITOR.register_for_cleanup(self)
 
-    async def reset(self) -> base.TimeStep[llm_clients.LLMRequest, float, float]:
+    async def reset(self) -> base.TimeStep[request.LLMRequest, float, float]:
         reset_start_time = time.time()
         self._assert_active()
 
@@ -125,7 +126,7 @@ class CodeEnvironment(base.Environment[llm_clients.LLMResponse, llm_clients.LLMR
         self._tracker.scalar(f"{self._prefix}/reset", reset_end_time - reset_start_time)
         return result
 
-    async def step(self, action: llm_clients.LLMResponse) -> base.TimeStep[llm_clients.LLMRequest | None, float, float]:
+    async def step(self, action: response.LLMResponse) -> base.TimeStep[request.LLMRequest | None, float, float]:
         step_start_time = time.time()
         self._assert_active()
 
@@ -161,7 +162,7 @@ class CodeEnvironment(base.Environment[llm_clients.LLMResponse, llm_clients.LLMR
 
     async def _get_time_step(
         self,
-    ) -> base.TimeStep[llm_clients.LLMRequest | None, float, float]:
+    ) -> base.TimeStep[request.LLMRequest | None, float, float]:
         # Wait for the code agent to send another request or complete.
         _LOGGER.debug("[%d] Waiting for code agent or LLM request.", id(self))
         with self._tracker.timeit(f"{self._prefix}/get_from_queue"):

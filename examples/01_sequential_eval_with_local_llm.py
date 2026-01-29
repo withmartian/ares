@@ -1,7 +1,7 @@
 """Minimal example of using ARES with SWE-bench environment.
 
 No API keys required - just local Docker containers and a local LLM.
-It runs a few steps of the first task in SWEBench Verified.
+It runs a few steps of the first task in SWE-bench Verified.
 
 This example shows the basic way of interacting with an ARES environment.
 
@@ -36,7 +36,7 @@ async def main():
     # Load Qwen2-0.5B-Instruct using a Llama CPP-backed LLM client.
     agent = llama_cpp.create_qwen2_0_5b_instruct_llama_cpp_client(n_ctx=32_768)
 
-    # `sbv-mswea` is SWEBench Verified with mini-swe-agent.
+    # `sbv-mswea` is SWE-bench Verified with mini-swe-agent.
     # `:0` means load only the first task.
     # By default, ares.make will use local Docker containers.
     async with ares.make("sbv-mswea:0") as env:

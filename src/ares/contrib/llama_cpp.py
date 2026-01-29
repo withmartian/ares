@@ -14,6 +14,7 @@ Required dependency group:
 Example usage:
     from ares.contrib import llama_cpp
     from ares.llms import llm_clients
+from ares.llms import request
 
     # Initialize with a local GGUF model file
     client = llama_cpp.LlamaCppLLMClient(
@@ -22,7 +23,7 @@ Example usage:
     )
 
     # Use like any other LLM client
-    request = llm_clients.LLMRequest(messages=[{"role": "user", "content": "Hello!"}])
+    request = request.LLMRequest(messages=[{"role": "user", "content": "Hello!"}])
     response = await client(request)
 
 Note: Download GGUF models from HuggingFace. For example:
@@ -38,6 +39,8 @@ import llama_cpp
 import openai.types.chat.chat_completion
 
 from ares.llms import llm_clients
+from ares.llms import request
+from ares.llms import response
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -71,7 +74,7 @@ class LlamaCppLLMClient(llm_clients.LLMClient):
             n_ctx=self.n_ctx,
         )
 
-    async def __call__(self, request: llm_clients.LLMRequest) -> llm_clients.LLMResponse:
+    async def __call__(self, req: request.LLMRequest) -> response.LLMResponse:
         """Generate a response using llama.cpp.
 
         Args:
@@ -82,7 +85,7 @@ class LlamaCppLLMClient(llm_clients.LLMClient):
         """
         _LOGGER.debug("[%d] Requesting LLM.", id(self))
 
-        completion_kwargs = request.as_kwargs()
+        completion_kwargs = req.to_chat_completion_kwargs()
         # Since llama-cpp-python sets default temperature to 0.2, we explicitly
         # override it to 1.0 if it's not provided by the request.
         completion_kwargs.setdefault("temperature", 1.0)
@@ -93,7 +96,12 @@ class LlamaCppLLMClient(llm_clients.LLMClient):
 
         _LOGGER.debug("[%d] LLM response received.", id(self))
 
-        return llm_clients.LLMResponse(chat_completion_response=chat_completion, cost=0.0)
+        content = chat_completion.choices[0].message.content or ""
+        usage = response.Usage(
+            prompt_tokens=chat_completion.usage.prompt_tokens if chat_completion.usage else 0,
+            generated_tokens=chat_completion.usage.completion_tokens if chat_completion.usage else 0,
+        )
+        return response.LLMResponse(data=[response.TextData(content=content)], cost=0.0, usage=usage)
 
 
 create_qwen2_0_5b_instruct_llama_cpp_client = functools.partial(

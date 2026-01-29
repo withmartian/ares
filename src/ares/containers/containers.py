@@ -48,7 +48,8 @@ class Container(Protocol):
         Args:
             command: The command to execute.
             workdir: The working directory to execute the command in.
-                If None, uses the default working directory.
+                If None, uses the container's default_workdir if set, otherwise
+                uses the container image's default working directory.
             env: The environment variables to set in the container, if any.
             timeout_s: The timeout in seconds for the command, if any.
 
@@ -131,6 +132,12 @@ class Container(Protocol):
 
 
 class ContainerFactory(Protocol):
+    """Protocol for creating containers from images or Dockerfiles.
+
+    The factory pattern allows different container implementations (Docker, Daytona, etc.)
+    to be swapped out easily.
+    """
+
     @classmethod
     def from_image(
         cls,
@@ -138,7 +145,22 @@ class ContainerFactory(Protocol):
         image: str,
         name: str | None = None,
         resources: Resources | None = None,
-    ) -> Container: ...
+        default_workdir: str | None = None,
+    ) -> Container:
+        """Create a container from a pre-built image.
+
+        Args:
+            image: The image name or ID to use.
+            name: Optional name for the container.
+            resources: Optional resource constraints (CPU, memory, disk, GPU).
+            default_workdir: Optional default working directory for commands.
+                If None, the container will use the image's default WORKDIR.
+                This is used when exec_run() is called without an explicit workdir.
+
+        Returns:
+            A Container instance.
+        """
+        ...
 
     @classmethod
     def from_dockerfile(
@@ -147,4 +169,19 @@ class ContainerFactory(Protocol):
         dockerfile_path: pathlib.Path | str,
         name: str | None = None,
         resources: Resources | None = None,
-    ) -> Container: ...
+        default_workdir: str | None = None,
+    ) -> Container:
+        """Create a container by building from a Dockerfile.
+
+        Args:
+            dockerfile_path: Path to the Dockerfile to build.
+            name: Optional name for the container.
+            resources: Optional resource constraints (CPU, memory, disk, GPU).
+            default_workdir: Optional default working directory for commands.
+                If None, the container will use the Dockerfile's WORKDIR directive.
+                This is used when exec_run() is called without an explicit workdir.
+
+        Returns:
+            A Container instance.
+        """
+        ...
