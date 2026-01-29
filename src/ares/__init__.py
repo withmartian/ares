@@ -47,6 +47,7 @@ All other functionality is available via submodules:
 from ares import presets  # noqa: F401
 from ares.environments.base import Environment
 from ares.environments.base import TimeStep
+from ares.registry import EnvironmentInfo
 
 # Import registry functions to expose at top level
 from ares.registry import info
@@ -55,6 +56,7 @@ from ares.registry import make
 # Define public API
 __all__ = [
     "Environment",
+    "EnvironmentInfo",
     "TimeStep",
     "info",
     "make",

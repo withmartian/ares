@@ -46,10 +46,8 @@ import logging
 from typing import Any, Literal
 
 import ares
-from ares import registry
-from ares.containers import daytona
-from ares.environments import base
-from ares.llms import llm_clients
+from ares import containers
+from ares import llms
 import chz
 import frozendict
 import numpy as np
@@ -122,7 +120,7 @@ class TinkerCompatibleEnv(tinker_types.Env):
 
     def __init__(
         self,
-        env: base.Environment[llm_clients.LLMResponse, llm_clients.LLMRequest, float, float],
+        env: ares.Environment[llms.LLMResponse, llms.LLMRequest, float, float],
         renderer: renderers.Renderer,
         convo_prefix: list[renderers.Message] | None,
         max_tokens: int,
@@ -133,7 +131,7 @@ class TinkerCompatibleEnv(tinker_types.Env):
         self.max_tokens = max_tokens
 
     def _get_tinker_observation(
-        self, ts: base.TimeStep[llm_clients.LLMRequest | None, float, float]
+        self, ts: ares.TimeStep[llms.LLMRequest | None, float, float]
     ) -> tinker_types.Observation:
         if ts.observation is None:
             return tinker.ModelInput.empty()
@@ -150,17 +148,15 @@ class TinkerCompatibleEnv(tinker_types.Env):
 
         return model_input
 
-    def _get_ares_action(self, action: tinker_types.Action) -> llm_clients.LLMResponse:
+    def _get_ares_action(self, action: tinker_types.Action) -> llms.LLMResponse:
         message, parse_success = self.renderer.parse_response(action)
         if not parse_success:
             _LOGGER.warning("Failed to parse response: %s", message)
 
-        return llm_clients.build_openai_compatible_llm_response(
-            output_text=_get_text_content(message),
-            num_input_tokens=-1,
-            num_output_tokens=-1,
-            model="tinker",
+        return llms.LLMResponse(
+            data=[llms.TextData(content=_get_text_content(message))],
             cost=0.0,
+            usage=llms.Usage(prompt_tokens=-1, generated_tokens=-1),
         )
 
     @property
@@ -268,8 +264,8 @@ class TinkerDataset(tinker_types.RLDataset):
         return dict(enumerate(shuffled_indices[: self.num_tasks]))
 
     @functools.cached_property
-    def env_info(self) -> registry.EnvironmentInfo:
-        return registry.info(self.env_preset_name)
+    def env_info(self) -> ares.EnvironmentInfo:
+        return ares.info(self.env_preset_name)
 
     def get_batch(self, index: int) -> Sequence[TinkerEnvGroupBuilder]:
         start = index * self.batch_size
@@ -380,7 +376,7 @@ class CLIConfig:
     num_tasks: int | None = 20
     # Additional kwargs passed to ares.make() (e.g., container factory, resources)
     env_make_kwargs: frozendict.frozendict[str, Any] = frozendict.frozendict(
-        {"container_factory": daytona.DaytonaContainer}
+        {"container_factory": containers.DaytonaContainer}
     )
 
     # === Training Hyperparameters ===
