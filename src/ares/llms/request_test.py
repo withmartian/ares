@@ -262,15 +262,14 @@ class TestLLMRequestResponsesConversion:
         assert kwargs["temperature"] == 0.7
         assert kwargs["top_p"] == 0.9
         assert kwargs["stream"] is True
-        # Tools should be converted to OpenAI format
+        # Tools should be converted to Responses format (flat structure)
         assert kwargs["tools"] == [
             {
                 "type": "function",
-                "function": {
-                    "name": "test",
-                    "description": "A test function",
-                    "parameters": {"type": "object", "properties": {}},
-                },
+                "name": "test",
+                "description": "A test function",
+                "parameters": {"type": "object", "properties": {}},
+                "strict": True,
             }
         ]
         assert kwargs["tool_choice"] == "auto"
