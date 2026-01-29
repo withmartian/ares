@@ -79,7 +79,7 @@ class HarborSpec:
             tasks=selected_tasks,
             container_factory=container_factory,
             code_agent_factory=self.code_agent_factory,
-            step_limit=250,  # Same as MiniSWEAgent default.
+            step_limit=250,  # Same as mini-swe-agent default.
             tracker=tracker,
         )
 
