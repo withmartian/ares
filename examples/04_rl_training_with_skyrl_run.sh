@@ -1,14 +1,15 @@
 # My key
 export DAYTONA_API_KEY=YOUR_KEY_HERE
 export WANDB_API_KEY=YOUR_KEY_HERE
+export FLASHINFER_DISABLE_VERSION_CHECK=1
 
 CKPTS_DIR=YOUR_CKPTS_DIR_HERE
 EXPORTS_DIR=YOUR_EXPORTS_DIR_HERE
 
 # Run SkyRL command
 uv run --isolated --extra vllm --extra harbor -m examples.04_rl_training_with_skyrl \
-  data.ares_preset_name_train=sbv-mswea \
-  data.ares_preset_name_val=tbench-mswea \
+  +data.ares_preset_name_train=sbv-mswea \
+  +data.ares_preset_name_val=tbench-mswea \
   trainer.policy.model.path=Qwen/Qwen3-4B-Instruct-2507 \
   generator.served_model_name=Qwen3-4B-Instruct-2507 \
   trainer.export_path=$EXPORTS_DIR \
