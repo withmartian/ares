@@ -7,7 +7,6 @@ from typing import Any
 
 import ares
 from ares.environments import base
-from ares.llms import llm_clients
 import tqdm
 
 _LOGGER = logging.getLogger(__name__)
@@ -16,7 +15,7 @@ _LOGGER = logging.getLogger(__name__)
 def print_step(
     step_count: int,
     observation: ares.LLMRequest | None,
-    action: llm_clients.LLMResponse,
+    action: ares.LLMResponse,
 ) -> None:
     """Print a step in the RL loop.
 

@@ -13,6 +13,7 @@ from ares import config
 from ares.llms import accounting
 from ares.llms import llm_clients
 from ares.llms import request
+from ares.llms import response
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -45,17 +46,17 @@ class ChatCompletionCompatibleLLMClient(llm_clients.LLMClient):
     base_url: str = config.CONFIG.chat_completion_api_base_url
     api_key: str = config.CONFIG.chat_completion_api_key
 
-    async def __call__(self, request: request.LLMRequest) -> llm_clients.LLMResponse:
+    async def __call__(self, request: request.LLMRequest) -> response.LLMResponse:
         _LOGGER.debug("[%d] Requesting LLM.", id(self))
 
         # GPT-5 models don't support temperature.
         if self.model.startswith("openai/gpt-5"):
             request = dataclasses.replace(request, temperature=None)
 
-        response = await _query_llm_with_retry(_get_llm_client(self.base_url, self.api_key), self.model, request)
+        resp = await _query_llm_with_retry(_get_llm_client(self.base_url, self.api_key), self.model, request)
         _LOGGER.debug("[%d] LLM response received.", id(self))
 
-        cost = accounting.get_llm_cost(self.model, response, cost_mapping=accounting.martian_cost_list())
+        cost = accounting.get_llm_cost(self.model, resp, cost_mapping=accounting.martian_cost_list())
         cost = float(cost)
 
-        return llm_clients.LLMResponse(chat_completion_response=response, cost=cost)
+        return response.LLMResponse(chat_completion_response=resp, cost=cost)

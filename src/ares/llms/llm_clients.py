@@ -10,16 +10,11 @@ import openai.types.chat.chat_completion_message
 import openai.types.completion_usage
 
 from ares.llms import request
-
-
-@dataclasses.dataclass(frozen=True)
-class LLMResponse:
-    chat_completion_response: openai.types.chat.chat_completion.ChatCompletion
-    cost: float
+from ares.llms import response
 
 
 class LLMClient(Protocol):
-    async def __call__(self, request: request.LLMRequest) -> LLMResponse: ...
+    async def __call__(self, request: request.LLMRequest) -> response.LLMResponse: ...
 
 
 def build_openai_compatible_llm_response(
@@ -28,7 +23,7 @@ def build_openai_compatible_llm_response(
     num_output_tokens: int,
     model: str,
     cost: float = 0.0,
-) -> LLMResponse:
+) -> response.LLMResponse:
     """Build an LLMResponse from raw generation outputs in OpenAI-compatible format.
 
     This helper constructs a complete OpenAI ChatCompletion-compatible LLMResponse
@@ -53,7 +48,7 @@ def build_openai_compatible_llm_response(
         ...     model="Qwen/Qwen2.5-3B-Instruct",
         ... )
     """
-    return LLMResponse(
+    return response.LLMResponse(
         chat_completion_response=openai.types.chat.chat_completion.ChatCompletion(
             id=str(uuid.uuid4()),
             choices=[

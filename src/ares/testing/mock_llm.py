@@ -11,6 +11,7 @@ import openai.types.completion_usage
 
 from ares.llms import llm_clients
 from ares.llms import request
+from ares.llms import response
 
 
 @dataclasses.dataclass
@@ -34,7 +35,7 @@ class MockLLMClient:
     default_response: str = "Mock LLM response"
     call_count: int = 0
 
-    async def __call__(self, request: request.LLMRequest) -> llm_clients.LLMResponse:
+    async def __call__(self, request: request.LLMRequest) -> response.LLMResponse:
         """Process LLM request and return mock response.
 
         Args:
@@ -78,7 +79,7 @@ class MockLLMClient:
             ),
         )
 
-        return llm_clients.LLMResponse(
+        return response.LLMResponse(
             chat_completion_response=chat_completion,
             cost=0.0,
         )

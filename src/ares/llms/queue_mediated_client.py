@@ -6,6 +6,7 @@ import dataclasses
 from ares import async_utils
 from ares.llms import llm_clients
 from ares.llms import request
+from ares.llms import response
 
 
 @dataclasses.dataclass(frozen=True)
@@ -39,11 +40,11 @@ class QueueMediatedLLMClient(llm_clients.LLMClient):
             awaiting __call__ will block forever.
     """
 
-    q: asyncio.Queue[async_utils.ValueAndFuture[request.LLMRequest, llm_clients.LLMResponse]] = dataclasses.field(
+    q: asyncio.Queue[async_utils.ValueAndFuture[request.LLMRequest, response.LLMResponse]] = dataclasses.field(
         default_factory=asyncio.Queue
     )
 
-    async def __call__(self, req: request.LLMRequest) -> llm_clients.LLMResponse:
-        future = asyncio.Future[llm_clients.LLMResponse]()
+    async def __call__(self, req: request.LLMRequest) -> response.LLMResponse:
+        future = asyncio.Future[response.LLMResponse]()
         await self.q.put(async_utils.ValueAndFuture(value=req, future=future))
         return await future

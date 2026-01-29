@@ -28,9 +28,9 @@ from ares.containers import containers
 from ares.containers import daytona as ares_daytona
 from ares.environments import base
 from ares.experiment_tracking import stat_tracker
-from ares.llms import llm_clients
 from ares.llms import queue_mediated_client
 from ares.llms import request
+from ares.llms import response
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -55,7 +55,7 @@ def list_harbor_datasets() -> tuple[harbor_registry.DatasetSpec, ...]:
     return tuple(client.get_datasets())
 
 
-class CodeEnvironment(base.Environment[llm_clients.LLMResponse, request.LLMRequest | None, float, float]):
+class CodeEnvironment(base.Environment[response.LLMResponse, request.LLMRequest | None, float, float]):
     """Environment for code agent datasets that computes reward at the end of an episode."""
 
     def __init__(
@@ -79,7 +79,7 @@ class CodeEnvironment(base.Environment[llm_clients.LLMResponse, request.LLMReque
         # we can return LLM requests in the reset and step methods.
         # We should never allow a user to pass a different LLM client.
         self._llm_client = queue_mediated_client.QueueMediatedLLMClient(q=asyncio.Queue())
-        self._llm_req_future: asyncio.Future[llm_clients.LLMResponse] | None = None
+        self._llm_req_future: asyncio.Future[response.LLMResponse] | None = None
 
         # State.
         self._is_active = False
@@ -126,7 +126,7 @@ class CodeEnvironment(base.Environment[llm_clients.LLMResponse, request.LLMReque
         self._tracker.scalar(f"{self._prefix}/reset", reset_end_time - reset_start_time)
         return result
 
-    async def step(self, action: llm_clients.LLMResponse) -> base.TimeStep[request.LLMRequest | None, float, float]:
+    async def step(self, action: response.LLMResponse) -> base.TimeStep[request.LLMRequest | None, float, float]:
         step_start_time = time.time()
         self._assert_active()
 
