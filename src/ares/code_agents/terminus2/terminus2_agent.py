@@ -9,7 +9,9 @@
 Based on the Terminal-Bench Terminus 2 implementation with modifications for ARES:
 - Async container operations using ARES container interface
 - Integration with ARES LLM client and stat tracking
-- Removed blocking operations and added comprehensive logging
+- Incremental output tracking (stores previous buffer, returns only new content)
+- 50,000 line tmux history limit for reliable buffer comparison
+- 10KB output limit and 1M max turns matching reference behavior
 - Enhanced parser validation and auto-fixes
 
 Uses tmux for persistent terminal sessions to maintain shell state across commands.
@@ -38,7 +40,8 @@ _LOGGER = logging.getLogger(__name__)
 _DEFAULT_TIMEOUT_S = 180.0
 
 # Maximum output length to prevent overwhelming the context
-_MAX_OUTPUT_BYTES = 200_000 * 3
+# Match terminal-bench reference implementation (10KB limit)
+_MAX_OUTPUT_BYTES = 10_000
 
 # Timeout for tmux operations (send-keys, capture-pane, etc.)
 # These should be quick, but need to account for network latency with remote containers
@@ -142,7 +145,7 @@ class Terminus2Agent(code_agent_base.CodeAgent):
     # TODO: Actually use the stat tracker in the agent.
     tracker: stat_tracker.StatTracker = dataclasses.field(default_factory=stat_tracker.NullStatTracker)
     parser_format: Literal["json", "xml"] = "json"
-    max_turns: int = 50
+    max_turns: int = 1_000_000  # Match terminal-bench reference (effectively unlimited)
     timeout_s: float = _DEFAULT_TIMEOUT_S
     enable_summarization: bool = True
     tmux_pane_width: int = 160
@@ -184,6 +187,7 @@ class Terminus2Agent(code_agent_base.CodeAgent):
         self._tmux_session_name = f"terminus2_{id(self)}"
         self._tmux_initialized = False
         self._session_alive = True  # Track if session is still alive
+        self._previous_buffer: str | None = None  # Track previous buffer for incremental output
 
         _LOGGER.debug("[%d] Initialized Terminus2Agent with %s format.", id(self), self.parser_format)
 
@@ -293,6 +297,19 @@ class Terminus2Agent(code_agent_base.CodeAgent):
 
         _LOGGER.debug("[%d] Session verified successfully", id(self))
 
+        # Set large history limit (50,000 lines) to support incremental output tracking
+        history_result = await self.container.exec_run(
+            f"tmux set-option -t {self._tmux_session_name} history-limit 50000",
+            timeout_s=_TMUX_OP_TIMEOUT_S,
+        )
+        if history_result.exit_code != 0:
+            _LOGGER.warning(
+                "[%d] Failed to set history-limit: exit_code=%s, output=%s",
+                id(self),
+                history_result.exit_code,
+                history_result.output,
+            )
+
         # Small delay to let session initialize
         await asyncio.sleep(0.2)
 
@@ -380,6 +397,56 @@ class Terminus2Agent(code_agent_base.CodeAgent):
             _LOGGER.warning("[%d] Failed to capture visible screen: %s", id(self), e)
             return "(error capturing terminal screen)"
 
+    async def _get_incremental_output(self) -> str:
+        """Get only new terminal output since the last call.
+
+        Uses the same approach as terminal-bench reference: stores previous buffer
+        and returns only content that appears after it. Falls back to visible screen
+        if buffer comparison fails.
+
+        Returns:
+            New terminal output since last call, or current visible screen on first call.
+        """
+        if not self._tmux_initialized:
+            return "(terminal not initialized)"
+
+        try:
+            # Capture entire buffer history (up to 50k lines)
+            result = await self.container.exec_run(
+                f"tmux capture-pane -t {self._tmux_session_name} -p -S -",
+                timeout_s=_TMUX_OP_TIMEOUT_S,
+            )
+            current_buffer = result.output
+
+            # First call: return visible screen with prefix
+            if self._previous_buffer is None:
+                self._previous_buffer = current_buffer
+                visible = await self._get_visible_screen()
+                return f"Current Terminal Screen:\n{visible}"
+
+            # Find where previous buffer ends in current buffer
+            if self._previous_buffer in current_buffer:
+                # Find the index after the last newline in previous buffer
+                prev_last_newline = self._previous_buffer.rfind("\n")
+                if prev_last_newline != -1:
+                    # Find this position in current buffer
+                    match_idx = current_buffer.find(self._previous_buffer)
+                    if match_idx != -1:
+                        new_content_start = match_idx + prev_last_newline + 1
+                        new_content = current_buffer[new_content_start:]
+                        self._previous_buffer = current_buffer
+                        return new_content
+
+            # Fallback: buffer comparison failed (likely scrolled off), show visible screen
+            _LOGGER.debug("[%d] Buffer comparison failed, falling back to visible screen", id(self))
+            self._previous_buffer = current_buffer
+            visible = await self._get_visible_screen()
+            return visible
+
+        except Exception as e:
+            _LOGGER.warning("[%d] Failed to get incremental output: %s", id(self), e)
+            return "(error capturing terminal output)"
+
     async def _cleanup_tmux_session(self) -> None:
         """Clean up tmux session on shutdown."""
         if not self._tmux_initialized:
@@ -406,10 +473,10 @@ class Terminus2Agent(code_agent_base.CodeAgent):
         # Initialize tmux session to capture initial terminal state
         await self._ensure_tmux_session()
 
-        # Capture initial terminal state (matches terminal-bench behavior)
-        # On first call, show the visible screen with the actual prompt and directory
-        visible_screen = await self._get_visible_screen()
-        initial_terminal_state = f"Current Terminal Screen:\n{self._limit_output_length(visible_screen)}"
+        # Capture initial terminal state using incremental output
+        # First call returns "Current Terminal Screen:\n{visible}" automatically
+        initial_terminal_state = await self._get_incremental_output()
+        initial_terminal_state = self._limit_output_length(initial_terminal_state)
 
         # Create initial prompt
         initial_prompt = self._prompt_template.format(
@@ -703,18 +770,12 @@ class Terminus2Agent(code_agent_base.CodeAgent):
                 _LOGGER.error("[%d] Error sending command %d: %s", id(self), i + 1, e)
                 # Continue to next command - tmux session may still be alive
 
-        # Capture terminal output after all commands
+        # Capture terminal output after all commands (incremental only)
         try:
-            _LOGGER.debug("[%d] Capturing terminal output from tmux", id(self))
-            result = await self.container.exec_run(
-                f"tmux capture-pane -t {self._tmux_session_name} -p",
-                timeout_s=_TMUX_OP_TIMEOUT_S,
-            )
-            _LOGGER.debug(
-                "[%d] Capture result: exit_code=%s, output_length=%d", id(self), result.exit_code, len(result.output)
-            )
-            terminal_output = result.output
+            _LOGGER.debug("[%d] Capturing incremental terminal output from tmux", id(self))
+            terminal_output = await self._get_incremental_output()
             self._last_output = terminal_output
+            _LOGGER.debug("[%d] Incremental output length=%d", id(self), len(terminal_output))
 
             # Add timeout feedback if any command timed out
             if timeout_occurred:
@@ -930,8 +991,8 @@ class Terminus2Agent(code_agent_base.CodeAgent):
         if len(output_bytes) <= _MAX_OUTPUT_BYTES:
             return output
 
-        # Take first and last portions (half each)
-        portion_size = _MAX_OUTPUT_BYTES // 8
+        # Take first and last portions (half each) - matches terminal-bench reference
+        portion_size = _MAX_OUTPUT_BYTES // 2
 
         # Get first portion
         first_portion = output_bytes[:portion_size].decode("utf-8", errors="ignore")
