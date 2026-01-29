@@ -19,25 +19,26 @@ Usage:
 
     # Train with custom model and hyperparameters
     uv run -m examples.05_tinker_train \
-        --model_name meta-llama/Llama-3.1-8B-Instruct \
-        --learning_rate 5e-7 \
-        --lora_rank 64 \
-        --num_tasks 100
+        model_name=meta-llama/Llama-3.1-8B-Instruct \
+        learning_rate=5e-7 \
+        lora_rank=64 \
+        num_tasks=100
 
     # Enable WandB logging
     uv run -m examples.05_tinker_train \
-        --wandb_project ares-rl \
-        --wandb_name my-experiment
+        wandb_project=ares-rl \
+        wandb_name=my-experiment
 
     # Continue from checkpoint
     uv run -m examples.05_tinker_train \
-        --load_checkpoint_path /path/to/checkpoint
+        load_checkpoint_path=/path/to/checkpoint
 
 Implementation heavily inspired by:
 - https://github.com/thinking-machines-lab/tinker-cookbook/blob/main/tinker_cookbook/recipes/code_rl/code_env.py
 - https://github.com/thinking-machines-lab/tinker-cookbook/blob/main/tinker_cookbook/recipes/code_rl/train.py
 """
 
+import argparse
 import asyncio
 from collections.abc import Sequence
 import datetime as dt
@@ -249,7 +250,11 @@ class TinkerDataset(tinker_types.RLDataset):
 
     @property
     def num_tasks(self) -> int:
-        return self.max_num_tasks or self.env_info.num_tasks
+        return (
+            self.env_info.num_tasks
+            if self.max_num_tasks is None
+            else min(self.max_num_tasks, self.env_info.num_tasks)
+        )
 
     @functools.cached_property
     def idx_map(self) -> dict[int, int]:
@@ -353,7 +358,7 @@ class CLIConfig:
     """Command-line configuration for ARES + Tinker RL training.
 
     All fields can be overridden via command-line arguments.
-    Example: --model_name meta-llama/Llama-3.1-8B-Instruct --learning_rate 5e-7
+    Example: model_name=meta-llama/Llama-3.1-8B-Instruct learning_rate=5e-7
     """
 
     # === Model Configuration ===
@@ -504,5 +509,5 @@ async def main(cli_config: CLIConfig):
 
 
 if __name__ == "__main__":
-    cli_config = chz.entrypoint(CLIConfig)
+    cli_config = chz.entrypoint(CLIConfig, allow_hyphens=True)
     asyncio.run(main(cli_config))
