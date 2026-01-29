@@ -45,7 +45,7 @@ Note: to run this particular example you will need:
 - Docker (with the daemon running)
 - A Martian API key (see below)
 
-```
+```python
 import asyncio
 
 import ares
