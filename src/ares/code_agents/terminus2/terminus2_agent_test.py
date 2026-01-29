@@ -124,7 +124,7 @@ class TestTerminus2AgentBasics:
         )
 
         assert agent.parser_format == "json"
-        assert agent.max_turns == 50
+        assert agent.max_turns == 1_000_000
         assert agent.tmux_pane_width == 160
         assert agent.tmux_pane_height == 40
 
