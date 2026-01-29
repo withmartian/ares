@@ -174,6 +174,7 @@ class Terminus2Agent(code_agent_base.CodeAgent):
 
         # Conversation history
         self._messages: list[request.Message] = []
+        self._system_prompt: str | None = None  # Set during run()
 
         # State tracking
         self._turn_count = 0
@@ -483,9 +484,7 @@ class Terminus2Agent(code_agent_base.CodeAgent):
             instruction=task,
             terminal_state=initial_terminal_state,
         )
-
-        # Add system message
-        self._add_message("system", initial_prompt)
+        self._system_prompt = initial_prompt
 
         # Main agent loop
         while self._turn_count < self.max_turns:
@@ -622,6 +621,10 @@ class Terminus2Agent(code_agent_base.CodeAgent):
         # Cleanup tmux session
         await self._cleanup_tmux_session()
 
+    def _get_total_chars(self) -> int:
+        """Get the total number of characters in the conversation history and system prompt."""
+        return sum(len(str(msg.get("content", ""))) for msg in self._messages) + len(self._system_prompt or "")
+
     async def _query_llm(self) -> llm_clients.LLMResponse:
         """Query the LLM with the current conversation history.
 
@@ -633,7 +636,7 @@ class Terminus2Agent(code_agent_base.CodeAgent):
         # Proactive summarization: Estimate token count and summarize if approaching limit
         # Rough estimate: 1 token ≈ 2 characters
         if self.enable_summarization and len(self._messages) > 3:
-            total_chars = sum(len(str(msg.get("content", ""))) for msg in self._messages)
+            total_chars = self._get_total_chars()
             estimated_tokens = total_chars // 2
 
             # Trigger summarization if we're approaching 200k tokens (leave buffer for response)
@@ -647,14 +650,16 @@ class Terminus2Agent(code_agent_base.CodeAgent):
                 self._add_message("user", handoff_prompt)
 
                 # Recalculate after summarization
-                total_chars_after = sum(len(str(msg.get("content", ""))) for msg in self._messages)
+                total_chars_after = self._get_total_chars()
                 estimated_tokens_after = total_chars_after // 4
                 _LOGGER.info(
                     "[%d] After proactive summarization: ~%d estimated tokens", id(self), estimated_tokens_after
                 )
 
         try:
-            response = await self.llm_client(request.LLMRequest(messages=self._messages))
+            response = await self.llm_client(
+                request.LLMRequest(messages=self._messages, system_prompt=self._system_prompt)
+            )
             _LOGGER.debug("[%d] Received LLM response", id(self))
             return response
 
@@ -685,7 +690,9 @@ class Terminus2Agent(code_agent_base.CodeAgent):
                 _LOGGER.info("[%d] Retrying query with summarized context (%d messages)", id(self), len(self._messages))
 
                 # Retry the query with summarized context
-                response = await self.llm_client(request.LLMRequest(messages=self._messages))
+                response = await self.llm_client(
+                    request.LLMRequest(messages=self._messages, system_prompt=self._system_prompt)
+                )
                 _LOGGER.debug("[%d] Received LLM response after summarization", id(self))
                 return response
 
@@ -818,7 +825,7 @@ class Terminus2Agent(code_agent_base.CodeAgent):
                 return self._last_output
             return f"(error capturing terminal output: {e})"
 
-    def _add_message(self, role: str, content: str) -> None:
+    def _add_message(self, role: Literal["user", "assistant"], content: str) -> None:
         """Add a message to the conversation history.
 
         Args:
@@ -827,7 +834,7 @@ class Terminus2Agent(code_agent_base.CodeAgent):
         """
         # Sanitize content before adding
         sanitized = _sanitize_content(content)
-        assert role in ("system", "user", "assistant")
+        assert role in ("user", "assistant")
         self._messages.append(cast(request.Message, {"role": role, "content": sanitized}))
 
     async def _summarize(self) -> str:
@@ -852,7 +859,9 @@ class Terminus2Agent(code_agent_base.CodeAgent):
             summary_messages = list(self._messages)
             summary_messages.append({"role": "user", "content": summary_prompt})
 
-            summary_response = await self.llm_client(request.LLMRequest(messages=summary_messages))
+            summary_response = await self.llm_client(
+                request.LLMRequest(messages=summary_messages, system_prompt=self._system_prompt)
+            )
 
             summary_content = summary_response.chat_completion_response.choices[0].message.content
             assert summary_content is not None
@@ -874,7 +883,9 @@ class Terminus2Agent(code_agent_base.CodeAgent):
                 try:
                     summary_messages = [self._messages[0], *self._messages[-20:]]
                     summary_messages.append({"role": "user", "content": summary_prompt})
-                    summary_response = await self.llm_client(request.LLMRequest(messages=summary_messages))
+                    summary_response = await self.llm_client(
+                        request.LLMRequest(messages=summary_messages, system_prompt=self._system_prompt)
+                    )
                     summary_content = summary_response.chat_completion_response.choices[0].message.content
                     assert summary_content is not None
                     usage = summary_response.chat_completion_response.usage
@@ -930,7 +941,9 @@ class Terminus2Agent(code_agent_base.CodeAgent):
             answer_messages = list(self._messages)
             answer_messages.append({"role": "user", "content": answer_request_prompt})
 
-            answers_response = await self.llm_client(request.LLMRequest(messages=answer_messages))
+            answers_response = await self.llm_client(
+                request.LLMRequest(messages=answer_messages, system_prompt=self._system_prompt)
+            )
 
             answers_content = answers_response.chat_completion_response.choices[0].message.content
             assert answers_content is not None
@@ -949,9 +962,11 @@ class Terminus2Agent(code_agent_base.CodeAgent):
             if "context_length_exceeded" in error_str or "context length" in error_str or "tokens exceed" in error_str:
                 _LOGGER.warning("[%d] Answer generation hit context limit, using last 20 messages only", id(self))
                 try:
-                    answer_messages = [self._messages[0], *self._messages[-20:]]
+                    answer_messages = [*self._messages[-20:]]
                     answer_messages.append({"role": "user", "content": answer_request_prompt})
-                    answers_response = await self.llm_client(request.LLMRequest(messages=answer_messages))
+                    answers_response = await self.llm_client(
+                        request.LLMRequest(messages=answer_messages, system_prompt=self._system_prompt)
+                    )
                     answers_content = answers_response.chat_completion_response.choices[0].message.content
                     assert answers_content is not None
                     usage = answers_response.chat_completion_response.usage
@@ -975,10 +990,8 @@ class Terminus2Agent(code_agent_base.CodeAgent):
             "You can no longer ask questions. Please follow the spec to interact with the terminal."
         )
 
-        # Update chat history: keep only system message
-        self._messages = [
-            self._messages[0],  # Keep system message with terminal instructions
-        ]
+        # Update chat history: system prompt is kept separately.
+        self._messages = []
 
         _LOGGER.info(
             "[%d] Summarization complete. Subagent tokens: prompt=%d, completion=%d",
