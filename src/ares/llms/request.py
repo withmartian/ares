@@ -1122,7 +1122,17 @@ class LLMRequest:
         tools_param = kwargs.get("tools")
         converted_tools: list[Tool] | None = None
         if tools_param:
-            converted_tools = [_tool_from_responses(tool) for tool in tools_param]
+            temp_tools: list[Tool] = []
+            for tool in tools_param:
+                try:
+                    temp_tools.append(_tool_from_responses(tool))
+                except ValueError as e:
+                    if strict:
+                        raise
+                    _LOGGER.warning("Skipping tool that cannot be converted: %s", e)
+            # Only set converted_tools if we successfully converted at least one tool
+            if temp_tools:
+                converted_tools = temp_tools
 
         return cls(
             messages=filtered_messages,

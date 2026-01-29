@@ -681,6 +681,62 @@ class TestLLMRequestResponsesConversion:
         tool_msg = cast(request_lib.ToolCallResponseMessage, request2.messages[1])
         assert tool_msg["tool_call_id"] == "call_789"
 
+    def test_from_responses_unsupported_tool_type_strict(self):
+        """Test that unsupported tool type raises error in strict mode."""
+        # Create a tool with unsupported type (not "function")
+        unsupported_tool: dict[str, str] = {"type": "browser_tool", "name": "search_web"}
+
+        kwargs: openai.types.responses.response_create_params.ResponseCreateParams = {
+            "model": "gpt-4o",
+            "input": "Hello",
+            "tools": [unsupported_tool],  # type: ignore[list-item]
+        }
+
+        with pytest.raises(ValueError, match=r"Unsupported tool type for conversion"):
+            request_lib.LLMRequest.from_responses(kwargs, strict=True)
+
+    def test_from_responses_unsupported_tool_type_non_strict(self):
+        """Test that unsupported tool type is skipped in non-strict mode."""
+        # Mix of supported and unsupported tools
+        supported_tool: openai.types.responses.FunctionToolParam = openai.types.responses.FunctionToolParam(
+            type="function",
+            name="valid_tool",
+            description="A valid function tool",
+            parameters={"type": "object", "properties": {}},
+            strict=None,
+        )
+        unsupported_tool: dict[str, str] = {"type": "browser_tool", "name": "search_web"}
+
+        kwargs: openai.types.responses.response_create_params.ResponseCreateParams = {
+            "model": "gpt-4o",
+            "input": "Hello",
+            "tools": [supported_tool, unsupported_tool],  # type: ignore[list-item]
+        }
+
+        # Should not raise, but only include the supported tool
+        request = request_lib.LLMRequest.from_responses(kwargs, strict=False)
+
+        assert request.tools is not None
+        assert len(request.tools) == 1
+        assert request.tools[0]["name"] == "valid_tool"
+
+    def test_from_responses_all_unsupported_tools_non_strict(self):
+        """Test that tools is None when all tools are unsupported in non-strict mode."""
+        # Only unsupported tools
+        unsupported_tool1: dict[str, str] = {"type": "browser_tool", "name": "search_web"}
+        unsupported_tool2: dict[str, str] = {"type": "computer_tool", "name": "run_code"}
+
+        kwargs: openai.types.responses.response_create_params.ResponseCreateParams = {
+            "model": "gpt-4o",
+            "input": "Hello",
+            "tools": [unsupported_tool1, unsupported_tool2],  # type: ignore[list-item]
+        }
+
+        # Should not raise, but tools should be None since no valid tools were converted
+        request = request_lib.LLMRequest.from_responses(kwargs, strict=False)
+
+        assert request.tools is None
+
 
 class TestLLMRequestMessagesConversion:
     """Tests for Claude Messages API conversion."""
