@@ -44,3 +44,4 @@ Each example file contains a detailed docstring at the top explaining what it do
 - **01_sequential_eval_with_local_llm.py** - Demonstrates the basic ARES RL loop using a local LLM (Qwen2-0.5B) and local Docker containers.
 - **02_sequential_eval_with_api.py** - Shows how to swap the local LLM for a frontier model accessed via API (GPT-5-mini through Martian).
 - **03_parallel_eval_with_api.py** - Demonstrates parallel evaluation of all SWE-bench Verified tasks using cloud containers (Daytona) for scalability.
+- **05_tinker_train.py** - Shows how to train code agents using RL with ARES environments and Tinker's training infrastructure, featuring LoRA fine-tuning, async parallel rollouts, and WandB logging.
