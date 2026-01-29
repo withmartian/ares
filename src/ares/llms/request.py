@@ -581,7 +581,7 @@ class LLMRequest:
             _LOGGER.warning(msg)
 
         kwargs: dict[str, Any] = {
-            "messages": self._messages_to_claude_format(),
+            "messages": self._messages_to_claude_format(strict=strict),
             "max_tokens": self.max_output_tokens or 1024,  # max_tokens is required by Claude
         }
 
@@ -631,17 +631,27 @@ class LLMRequest:
             )
         return input_items
 
-    def _messages_to_claude_format(self) -> list[dict[str, Any]]:
+    def _messages_to_claude_format(self, *, strict: bool = True) -> list[dict[str, Any]]:
         """Convert messages from Chat format to Claude alternating format.
+
+        Args:
+            strict: If True, raise ValueError on non-alternating messages. If False, drop
+                   consecutive messages with the same role (keeping first) with a warning.
 
         Returns:
             List of messages in Claude format (user/assistant alternating)
+
+        Raises:
+            ValueError: If strict=True and messages don't alternate roles
 
         Note:
             Claude requires strict alternation. This method filters out system/developer
             messages (should be in system_prompt) and ensures alternation.
         """
         claude_messages = []
+        last_role = None
+        dropped_count = 0
+
         for msg in self.messages:
             msg_dict = dict(msg)  # Convert to regular dict for type safety
             role = msg_dict["role"]
@@ -651,6 +661,25 @@ class LLMRequest:
             # Map tool/function to user role (tool results)
             if role in ("tool", "function"):
                 role = "user"
+
+            # Check for alternation
+            if last_role == role:
+                content = str(msg_dict.get("content", ""))[:50]
+                if strict:
+                    raise ValueError(
+                        f"Messages must alternate between user and assistant roles for Claude API. "
+                        f"Found consecutive '{role}' messages. Message content: {content}..."
+                    )
+                else:
+                    _LOGGER.warning(
+                        "Dropping non-alternating message with role '%s' (content: %s...). "
+                        "Claude requires strict alternation between user and assistant.",
+                        role,
+                        content,
+                    )
+                    dropped_count += 1
+                    continue
+
             # Keep user/assistant as-is
             claude_messages.append(
                 {
@@ -658,6 +687,11 @@ class LLMRequest:
                     "content": msg_dict.get("content", ""),
                 }
             )
+            last_role = role
+
+        if dropped_count > 0 and not strict:
+            _LOGGER.warning("Dropped %d non-alternating message(s) when converting to Claude format", dropped_count)
+
         return claude_messages
 
     @classmethod

@@ -7,6 +7,7 @@ import openai.types.chat
 import openai.types.chat.completion_create_params
 import openai.types.responses.response_create_params
 import openai.types.shared_params
+import pytest
 
 from ares.llms import request as request_lib
 
@@ -580,6 +581,36 @@ class TestLLMRequestMessagesConversion:
             }
             request = request_lib.LLMRequest.from_messages(kwargs)
             assert request.temperature == openai_temp
+
+    def test_to_messages_strict_alternation_error(self):
+        """Test that non-alternating messages raise error in strict mode."""
+        request = request_lib.LLMRequest(
+            messages=[
+                request_lib.UserMessage(role="user", content="Hello"),
+                request_lib.UserMessage(role="user", content="How are you?"),
+            ],
+        )
+        with pytest.raises(ValueError, match="Messages must alternate"):
+            request.to_messages_kwargs(strict=True)
+
+    def test_to_messages_non_strict_drops_duplicates(self):
+        """Test that non-alternating messages are dropped in non-strict mode."""
+        request = request_lib.LLMRequest(
+            messages=[
+                request_lib.UserMessage(role="user", content="Hello"),
+                request_lib.UserMessage(role="user", content="How are you?"),
+                request_lib.AssistantMessage(role="assistant", content="I'm fine"),
+                request_lib.AssistantMessage(role="assistant", content="Thanks"),
+                request_lib.UserMessage(role="user", content="Great"),
+            ],
+        )
+        kwargs = request.to_messages_kwargs(strict=False)
+
+        # Should keep first of each consecutive group
+        assert len(kwargs["messages"]) == 3
+        assert kwargs["messages"][0] == {"role": "user", "content": "Hello"}
+        assert kwargs["messages"][1] == {"role": "assistant", "content": "I'm fine"}
+        assert kwargs["messages"][2] == {"role": "user", "content": "Great"}
 
 
 class TestLLMRequestCrossAPIConversion:
