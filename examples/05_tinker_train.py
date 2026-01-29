@@ -18,19 +18,19 @@ Usage:
     uv run -m examples.05_tinker_train
 
     # Train with custom model and hyperparameters
-    uv run -m examples.05_tinker_train \\
-        --model_name meta-llama/Llama-3.1-8B-Instruct \\
-        --learning_rate 5e-7 \\
-        --lora_rank 64 \\
+    uv run -m examples.05_tinker_train \
+        --model_name meta-llama/Llama-3.1-8B-Instruct \
+        --learning_rate 5e-7 \
+        --lora_rank 64 \
         --num_tasks 100
 
     # Enable WandB logging
-    uv run -m examples.05_tinker_train \\
-        --wandb_project ares-rl \\
+    uv run -m examples.05_tinker_train \
+        --wandb_project ares-rl \
         --wandb_name my-experiment
 
     # Continue from checkpoint
-    uv run -m examples.05_tinker_train \\
+    uv run -m examples.05_tinker_train \
         --load_checkpoint_path /path/to/checkpoint
 
 Implementation heavily inspired by:
@@ -40,7 +40,7 @@ Implementation heavily inspired by:
 
 import asyncio
 from collections.abc import Sequence
-from datetime import datetime
+import datetime as dt
 import functools
 import logging
 from typing import Any, Literal
@@ -113,6 +113,9 @@ class TinkerCompatibleEnv(tinker_types.Env):
     - ARES TimeStep -> Tinker StepResult
 
     This enables using any ARES environment with Tinker's training infrastructure.
+
+    NOTE: Sandbox cleanup is not great here, and we are mostly relying on the Janitor in
+          src/ares/environments/code_env.py to clean up extra sandboxes in the case of errors.
     """
 
     def __init__(
@@ -161,8 +164,8 @@ class TinkerCompatibleEnv(tinker_types.Env):
         return self.renderer.get_stop_sequences()
 
     async def initial_observation(self) -> tuple[tinker_types.Observation, tinker_types.StopCondition]:
-        # Hack to set is_active without context manager
-        self.env._is_active = True  # type: ignore
+        # Hack to approximate a context manager
+        await self.env.__aenter__()
         ts = await self.env.reset()
         return self._get_tinker_observation(ts), self.stop_condition
 
@@ -171,7 +174,8 @@ class TinkerCompatibleEnv(tinker_types.Env):
         ts = await self.env.step(ares_action)
 
         if ts.last():
-            await self.env.close()
+            # Hack to approximate a context manager
+            await self.env.__aexit__(None, None, None)
 
         return tinker_types.StepResult(
             reward=ts.reward or 0.0,
@@ -437,7 +441,7 @@ async def main(cli_config: CLIConfig):
         f"ares-tinker-{model_tag}-{cli_config.lora_rank}rank-"
         f"{cli_config.learning_rate}lr-{cli_config.group_size}group-"
         f"{cli_config.groups_per_batch}batch-seed{cli_config.seed}-"
-        f"{datetime.now().strftime('%Y-%m-%d-%H-%M')}"
+        f"{dt.datetime.now().strftime('%Y-%m-%d-%H-%M')}"
     )
 
     # Set log path (use provided or auto-generate)
