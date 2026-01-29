@@ -425,9 +425,10 @@ class TestLLMRequestMessagesConversion:
         assert kwargs["top_p"] == 0.9
         assert kwargs["top_k"] == 40
         assert kwargs["stream"] is True
-        # Tools stay in Claude format (no conversion needed)
+        # Tools are converted to Anthropic format (explicit type: "custom")
         assert kwargs["tools"] == [
             {
+                "type": "custom",
                 "name": "test",
                 "description": "A test function",
                 "input_schema": {"type": "object", "properties": {}},

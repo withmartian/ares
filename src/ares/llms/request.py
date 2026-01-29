@@ -178,6 +178,23 @@ def _tool_from_responses(responses_tool: openai.types.responses.ToolParam) -> To
     raise ValueError(f"Unsupported tool type for conversion: {responses_tool.get('type')}")
 
 
+def _tool_to_anthropic(tool: Tool) -> anthropic.types.ToolParam:
+    """Convert Tool from ARES internal format to Anthropic Messages format.
+
+    Args:
+        tool: Tool in ARES internal format (flat with input_schema)
+
+    Returns:
+        Tool in Anthropic Messages format (custom tool with type, name, description, input_schema)
+    """
+    return anthropic.types.ToolParam(
+        type="custom",
+        name=tool["name"],
+        description=tool["description"],
+        input_schema=cast(dict[str, object], tool["input_schema"]),
+    )
+
+
 def _tool_from_anthropic(
     anthropic_tool: anthropic.types.ToolUnionParam,
 ) -> Tool:
@@ -581,8 +598,8 @@ class LLMRequest:
         if self.stream:
             kwargs["stream"] = True
         if self.tools:
-            # Tools are already in Claude format internally, just pass through
-            kwargs["tools"] = self.tools
+            # Convert tools to Anthropic format (adds explicit type: "custom")
+            kwargs["tools"] = [_tool_to_anthropic(tool) for tool in self.tools]
         if self.tool_choice is not None:
             kwargs["tool_choice"] = _tool_choice_to_anthropic(self.tool_choice)
         if self.metadata:
