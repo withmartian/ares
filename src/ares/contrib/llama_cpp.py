@@ -40,6 +40,7 @@ import openai.types.chat.chat_completion
 
 from ares.llms import llm_clients
 from ares.llms import request
+from ares.llms import response
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -73,7 +74,7 @@ class LlamaCppLLMClient(llm_clients.LLMClient):
             n_ctx=self.n_ctx,
         )
 
-    async def __call__(self, req: request.LLMRequest) -> llm_clients.LLMResponse:
+    async def __call__(self, req: request.LLMRequest) -> response.LLMResponse:
         """Generate a response using llama.cpp.
 
         Args:
@@ -95,7 +96,12 @@ class LlamaCppLLMClient(llm_clients.LLMClient):
 
         _LOGGER.debug("[%d] LLM response received.", id(self))
 
-        return llm_clients.LLMResponse(chat_completion_response=chat_completion, cost=0.0)
+        content = chat_completion.choices[0].message.content or ""
+        usage = response.Usage(
+            prompt_tokens=chat_completion.usage.prompt_tokens if chat_completion.usage else 0,
+            generated_tokens=chat_completion.usage.completion_tokens if chat_completion.usage else 0,
+        )
+        return response.LLMResponse(data=[response.TextData(content=content)], cost=0.0, usage=usage)
 
 
 create_qwen2_0_5b_instruct_llama_cpp_client = functools.partial(

@@ -45,14 +45,9 @@ All other functionality is available via submodules:
 # Import presets first to register defaults
 # This must come before we expose make and info to ensure presets are available
 from ares import presets  # noqa: F401
-
-# Import commonly used types for external users
-from ares.llms.request import AssistantMessage
-from ares.llms.request import LLMRequest
-from ares.llms.request import Message
-from ares.llms.request import ToolCallMessage
-from ares.llms.request import ToolCallResponseMessage
-from ares.llms.request import UserMessage
+from ares.environments.base import Environment
+from ares.environments.base import TimeStep
+from ares.registry import EnvironmentInfo
 
 # Import registry functions to expose at top level
 from ares.registry import info
@@ -60,12 +55,9 @@ from ares.registry import make
 
 # Define public API
 __all__ = [
-    "AssistantMessage",
-    "LLMRequest",
-    "Message",
-    "ToolCallMessage",
-    "ToolCallResponseMessage",
-    "UserMessage",
+    "Environment",
+    "EnvironmentInfo",
+    "TimeStep",
     "info",
     "make",
 ]

@@ -227,6 +227,19 @@ Follow Google-style isort configuration:
 - No separation between `import` and `from ... import`
 - Sort within sections
 
+**Import Conventions (Google Style):**
+- **Always import modules, not classes or functions**
+- **External consumers** (examples, docs):
+  - ✅ Good: `import ares` → use `ares.make(...)`
+  - ✅ Good: `from ares import llms` → use `llms.LLMRequest`, `llms.TextData`
+  - ❌ Avoid: `from ares.llms import LLMRequest, TextData`
+- **Internal code**:
+  - ✅ Good: `from ares.llms import request` → use `request.LLMRequest`
+  - ✅ Good: `from ares.llms import response` → use `response.TextData`, `response.Usage`
+  - ❌ Avoid: `from ares.llms.request import LLMRequest`
+  - ❌ Avoid: `from ares.llms.response import TextData, Usage`
+- Rationale: Makes code more readable and explicit about where objects come from
+
 ### Comments
 - WHY over WHAT - explain reasoning, edge cases, non-obvious decisions
 - HOW only when implementation is genuinely complex

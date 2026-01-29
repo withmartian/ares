@@ -26,6 +26,7 @@ from ares.containers import containers
 from ares.experiment_tracking import stat_tracker
 from ares.llms import llm_clients
 from ares.llms import request
+from ares.llms import response
 
 # Ensure that MSWEA doesn't log its startup message on import.
 os.environ["MSWEA_SILENT_STARTUP"] = "1"
@@ -194,7 +195,7 @@ class MiniSWECodeAgent(code_agent_base.CodeAgent):
         llm_response = await self.query()
         await self.execute_action(llm_response)
 
-    async def query(self) -> llm_clients.LLMResponse:
+    async def query(self) -> response.LLMResponse:
         """Query the model and return the response."""
         # Check step limit before making LLM call
         if 0 < self._step_limit <= self._n_calls:
@@ -218,17 +219,17 @@ class MiniSWECodeAgent(code_agent_base.CodeAgent):
         self._n_calls += 1
         self._total_cost += response.cost
 
-        message_content = response.chat_completion_response.choices[0].message.content
+        message_content = response.data[0].content
         assert message_content is not None
 
         self._add_message("assistant", message_content)
 
         return response
 
-    async def execute_action(self, response: llm_clients.LLMResponse) -> None:
+    async def execute_action(self, response: response.LLMResponse) -> None:
         """Execute the action and return the observation."""
         _LOGGER.debug("[%d] Executing action.", id(self))
-        response_text = response.chat_completion_response.choices[0].message.content
+        response_text = response.data[0].content
         assert response_text is not None
 
         action = self.parse_action(response_text)
