@@ -32,6 +32,7 @@ class TestXMLParserStructure:
         result, error = parser.parse(response)
 
         assert error is None, f"Parser should succeed, got error: {error}"
+        assert result is not None
         assert len(result.commands) == 2, f"Should extract 2 commands, got {len(result.commands)}"
         assert result.commands[0].keystrokes == "ls -la\n"
         assert result.commands[1].keystrokes == "pwd\n"
@@ -51,6 +52,7 @@ class TestXMLParserStructure:
         result, error = parser.parse(response)
 
         assert error is None
+        assert result is not None
         assert len(result.commands) == 1
         assert result.commands[0].duration == 2.5
 
@@ -69,6 +71,7 @@ class TestXMLParserStructure:
         result, error = parser.parse(response)
 
         assert error is None
+        assert result is not None
         assert len(result.commands) == 1
         assert result.commands[0].duration == 1.0, f"Default should be 1.0, got {result.commands[0].duration}"
 
@@ -88,6 +91,7 @@ class TestXMLParserStructure:
         result, error = parser.parse(response)
 
         assert error is None
+        assert result is not None
         assert len(result.commands) == 1
         # Should preserve leading spaces and newline
         # Note: XML parsing naturally trims trailing whitespace before closing tag
@@ -109,6 +113,7 @@ class TestXMLParserStructure:
         result, error = parser.parse(response)
 
         assert error is None
+        assert result is not None
         assert result.commands[0].keystrokes.endswith("\n"), "Should preserve trailing newline"
 
 
@@ -129,9 +134,9 @@ class TestXMLParserValidation:
         parser = xml_parser.Terminus2XMLParser()
         result, error = parser.parse(response)
 
+        assert result is None  # Parser should fail
         assert error is not None
         assert "invalid duration attribute" in error.lower()
-        assert len(result.commands) == 0
 
     def test_empty_keystrokes(self):
         """Test error when keystrokes element has no text."""
@@ -168,6 +173,7 @@ class TestXMLParserValidation:
         result, error = parser.parse(response)
 
         assert error is None
+        assert result is not None
         assert len(result.commands) == 3
         assert result.commands[0].keystrokes == "cd /tmp\n"
         assert result.commands[0].duration == 0.1
@@ -192,6 +198,7 @@ class TestXMLParserValidation:
         result, error = parser.parse(response)
 
         assert error is None
+        assert result is not None
         assert result.task_complete is True
 
     def test_task_complete_false(self):
@@ -209,6 +216,7 @@ class TestXMLParserValidation:
         result, error = parser.parse(response)
 
         assert error is None
+        assert result is not None
         assert result.task_complete is False
 
 
@@ -228,6 +236,7 @@ class TestXMLParserEdgeCases:
         result, error = parser.parse(response)
 
         assert error is None
+        assert result is not None
         assert len(result.commands) == 0
 
     def test_special_characters_in_keystrokes(self):
@@ -245,6 +254,7 @@ class TestXMLParserEdgeCases:
         result, error = parser.parse(response)
 
         assert error is None
+        assert result is not None
         assert len(result.commands) == 1
         assert 'echo "hello world"' in result.commands[0].keystrokes
 
@@ -267,6 +277,7 @@ EOF
         result, error = parser.parse(response)
 
         assert error is None
+        assert result is not None
         assert len(result.commands) == 1
         assert "line 1" in result.commands[0].keystrokes
         assert "line 2" in result.commands[0].keystrokes

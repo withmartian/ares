@@ -742,9 +742,22 @@ class Terminus2Agent(code_agent_base.CodeAgent):
         timeout_occurred = False
 
         for i, cmd in enumerate(commands):
-            # Skip empty commands
+            # Handle empty keystroke commands as explicit "wait" operations
+            # The template tells the model to use {"keystrokes": "", "duration": 10.0}
+            # to poll for completion of long-running commands
             if not cmd.keystrokes or not cmd.keystrokes.strip():
-                _LOGGER.warning("[%d] Skipping empty command %d/%d", id(self), i + 1, len(commands))
+                wait_time = min(cmd.duration, self.timeout_s)
+                _LOGGER.debug(
+                    "[%d] Command %d/%d has no keystrokes; waiting %.1fs for previous command",
+                    id(self),
+                    i + 1,
+                    len(commands),
+                    wait_time,
+                )
+                cmd_timeout = await self._wait_for_command_with_timeout(wait_time)
+                if cmd_timeout:
+                    timeout_occurred = True
+                    _LOGGER.warning("[%d] Wait command %d timed out after %.1fs", id(self), i + 1, wait_time)
                 continue
 
             _LOGGER.debug("[%d] Sending to tmux %d/%d: %s", id(self), i + 1, len(commands), cmd.keystrokes[:100])

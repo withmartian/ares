@@ -30,6 +30,7 @@ class TestJSONParserBasics:
 
         parser = json_parser.Terminus2JSONParser()
         result, error = parser.parse(response)
+        assert result is not None  # Parser succeeded
 
         assert error is None
         assert len(result.commands) == 1
@@ -59,6 +60,7 @@ That's my response."""
 
         parser = json_parser.Terminus2JSONParser()
         result, error = parser.parse(response)
+        assert result is not None  # Parser succeeded
 
         assert error is None
         assert len(result.commands) == 1
@@ -79,6 +81,7 @@ That's my response."""
 
         parser = json_parser.Terminus2JSONParser()
         result, error = parser.parse(response)
+        assert result is not None  # Parser succeeded
 
         assert error is None
         assert len(result.commands) == 1
@@ -100,6 +103,7 @@ That's my response."""
 
         parser = json_parser.Terminus2JSONParser()
         result, error = parser.parse(response)
+        assert result is not None  # Parser succeeded
 
         assert error is None
         assert len(result.commands) == 1
@@ -133,6 +137,7 @@ That's my response."""
         parser = json_parser.Terminus2JSONParser()
         result, error = parser.parse(response)
 
+        assert result is not None  # Parser succeeded
         assert error is None
         assert len(result.commands) == 3
         assert result.commands[0].keystrokes == "cd /tmp\n"
@@ -163,7 +168,7 @@ class TestJSONParserValidation:
         result, error = parser.parse(response)
 
         # Should try regex fallback, but may still fail
-        assert error is not None or len(result.commands) >= 0
+        assert error is not None or (result is not None and len(result.commands) >= 0)
 
     def test_missing_keystrokes(self):
         """Test error when keystrokes field is missing."""
@@ -230,6 +235,7 @@ class TestJSONParserValidation:
 
         parser = json_parser.Terminus2JSONParser()
         result, error = parser.parse(response)
+        assert result is not None  # Parser succeeded
 
         assert error is None
         assert result.task_complete is True
@@ -263,6 +269,7 @@ class TestJSONParserRegexFallback:
         # Regex fallback should extract commands
         # May or may not have error depending on fallback success
         if error is None:
+            assert result is not None
             assert len(result.commands) >= 1
 
     def test_regex_fallback_preserves_whitespace(self):
@@ -278,7 +285,7 @@ class TestJSONParserRegexFallback:
         result, _ = parser.parse(response)
 
         # If fallback succeeded, whitespace should be preserved
-        if len(result.commands) > 0:
+        if result is not None and len(result.commands) > 0:
             # After JSON unescaping, should preserve spaces
             assert "test" in result.commands[0].keystrokes
 
@@ -310,6 +317,7 @@ class TestJSONParserEdgeCases:
 
         parser = json_parser.Terminus2JSONParser()
         result, error = parser.parse(response)
+        assert result is not None  # Parser succeeded
 
         assert error is None
         assert len(result.commands) == 0
@@ -330,6 +338,7 @@ class TestJSONParserEdgeCases:
 
         parser = json_parser.Terminus2JSONParser()
         result, error = parser.parse(response)
+        assert result is not None  # Parser succeeded
 
         assert error is None
         assert len(result.commands) == 1
@@ -351,6 +360,7 @@ class TestJSONParserEdgeCases:
 
         parser = json_parser.Terminus2JSONParser()
         result, error = parser.parse(response)
+        assert result is not None  # Parser succeeded
 
         assert error is None
         assert len(result.commands) == 1
@@ -369,6 +379,7 @@ class TestJSONParserEdgeCases:
 
         parser = json_parser.Terminus2JSONParser()
         result, error = parser.parse(response)
+        assert result is not None  # Parser succeeded
 
         assert error is None
         assert result.thoughts == "Some internal thoughts"
@@ -389,6 +400,7 @@ class TestJSONParserEdgeCases:
 
         parser = json_parser.Terminus2JSONParser()
         result, error = parser.parse(response)
+        assert result is not None  # Parser succeeded
 
         assert error is None
         assert result.commands[0].duration == 1.0
