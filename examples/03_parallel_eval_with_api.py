@@ -41,11 +41,10 @@ import os
 from typing import Any
 
 import ares
-from ares.containers import containers
-from ares.containers import daytona
+from ares import config
+from ares import containers
+from ares import llms
 from ares.contrib import eval_visualizer
-from ares.environments import base
-from ares.llms import chat_completions_compatible
 import simple_parsing
 
 
@@ -65,10 +64,10 @@ class Args:
 async def evaluate_task(
     preset_name: str,
     task_idx: int,
-    agent: chat_completions_compatible.ChatCompletionCompatibleLLMClient,
+    agent: llms.ChatCompletionCompatibleLLMClient,
     container_factory: containers.ContainerFactory,
     dashboard: eval_visualizer.EvaluationDashboard,
-) -> base.TimeStep[Any, float, float]:
+) -> ares.TimeStep[Any, float, float]:
     """Evaluate a single task and report progress to the dashboard.
 
     Args:
@@ -99,7 +98,7 @@ async def evaluate_task(
 
 async def main(args: Args):
     # Fail fast if env vars aren't set.
-    if "CHAT_COMPLETION_API_KEY" not in os.environ:
+    if not config.CONFIG.chat_completion_api_key:
         raise ValueError("CHAT_COMPLETION_API_KEY is not set")
     if "DAYTONA_API_KEY" not in os.environ:
         raise ValueError("DAYTONA_API_KEY is not set")
@@ -107,10 +106,10 @@ async def main(args: Args):
         raise ValueError("DAYTONA_API_URL is not set")
 
     # Create an LLM client using the ChatCompletionCompatibleLLMClient
-    agent = chat_completions_compatible.ChatCompletionCompatibleLLMClient(model=args.model)
+    agent = llms.ChatCompletionCompatibleLLMClient(model=args.model)
 
     # We want to run our tasks on daytona because we can get much better throughput.
-    container_factory = daytona.DaytonaContainer
+    container_factory = containers.DaytonaContainer
 
     # We can find out how many tasks are available by looking at the preset info.
     # We will make a distinct environment with a single task; this ensures that when we reset
@@ -131,8 +130,8 @@ async def main(args: Args):
     )
 
     async def _await_with_semaphore(
-        task: Awaitable[base.TimeStep[Any, float, float]],
-    ) -> base.TimeStep[Any, float, float]:
+        task: Awaitable[ares.TimeStep[Any, float, float]],
+    ) -> ares.TimeStep[Any, float, float]:
         async with sem:
             return await task
 
@@ -146,7 +145,7 @@ async def main(args: Args):
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
     # Compute final statistics
-    total_successes = sum([r.reward for r in results if isinstance(r, base.TimeStep) and r.reward is not None])
+    total_successes = sum([r.reward for r in results if isinstance(r, ares.TimeStep) and r.reward is not None])
 
     print("\nAll tasks completed!")
     print(f"Success rate: {total_successes / num_tasks:.2%}")
