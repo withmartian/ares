@@ -337,44 +337,46 @@ class Terminus2Agent(code_agent_base.CodeAgent):
             _LOGGER.warning("[%d] Error checking tmux session: %s", id(self), e)
             return False
 
-    async def _wait_for_command_with_sentinel(self, duration: float) -> bool:
-        """Wait for a command to complete using tmux sentinel signals.
+    async def _wait_for_command_with_timeout(self, duration: float) -> bool:
+        """Wait for a command to complete, checking for timeout.
 
-        Uses the same sentinel-based approach as terminal-bench reference implementation:
-        appends '; tmux wait -S done' to commands and waits for the signal.
+        This monitors the tmux pane to detect if a command is still running after
+        the specified duration.
 
         Args:
-            duration: How long to wait in seconds before timing out.
+            duration: How long to wait in seconds.
 
         Returns:
             True if the command timed out (still running), False if it completed.
         """
-        try:
-            # Wait for the tmux signal with timeout using Unix timeout command
-            # Exit codes: 0 = completed, 124 = timeout occurred, other = error
-            wait_cmd = f"timeout {duration}s tmux wait done"
-            result = await self.container.exec_run(wait_cmd, timeout_s=duration)
+        # Wait for the specified duration
+        await asyncio.sleep(duration)
 
-            if result.exit_code == 124:  # timeout's exit code for timeout
-                _LOGGER.debug("[%d] Command timed out after %.1fs (no completion signal)", id(self), duration)
+        try:
+            # Check if there's a prompt visible (indicating command completed)
+            # We capture the last line of the pane to see if it looks like a prompt
+            result = await self.container.exec_run(
+                f"tmux capture-pane -t {self._tmux_session_name} -p | tail -1",
+                timeout_s=_TMUX_OP_TIMEOUT_S,
+            )
+
+            last_line = result.output.strip()
+
+            # Heuristic: If the last line ends with common prompt characters, assume command finished
+            # This is not perfect but matches the behavior of the original implementation
+            prompt_indicators = ["$", "#", ">", "%"]
+            has_prompt = any(last_line.endswith(indicator) for indicator in prompt_indicators)
+
+            # If no prompt visible, command might still be running
+            if not has_prompt and last_line:
+                _LOGGER.debug("[%d] No prompt detected, command may still be running: %s", id(self), last_line[:50])
                 return True  # Timeout occurred
 
-            if result.exit_code != 0:
-                _LOGGER.warning(
-                    "[%d] Unexpected exit code from tmux wait: %s, output: %s",
-                    id(self),
-                    result.exit_code,
-                    result.output[:100],
-                )
-                # Treat unexpected errors as no timeout (command may have completed)
-                return False
-
-            _LOGGER.debug("[%d] Command completed successfully (received signal)", id(self))
             return False  # Command completed
 
         except Exception as e:
-            _LOGGER.warning("[%d] Error waiting for command completion signal: %s", id(self), e)
-            # Assume no timeout if we can't check (fail open)
+            _LOGGER.warning("[%d] Error checking command completion: %s", id(self), e)
+            # Assume no timeout if we can't check
             return False
 
     async def _get_visible_screen(self) -> str:
@@ -424,17 +426,14 @@ class Terminus2Agent(code_agent_base.CodeAgent):
                 return f"Current Terminal Screen:\n{visible}"
 
             # Find where previous buffer ends in current buffer
-            if self._previous_buffer in current_buffer:
-                # Find the index after the last newline in previous buffer
-                prev_last_newline = self._previous_buffer.rfind("\n")
-                if prev_last_newline != -1:
-                    # Find this position in current buffer
-                    match_idx = current_buffer.find(self._previous_buffer)
-                    if match_idx != -1:
-                        new_content_start = match_idx + prev_last_newline + 1
-                        new_content = current_buffer[new_content_start:]
-                        self._previous_buffer = current_buffer
-                        return new_content
+            # Use rfind() to find LAST occurrence (handles repeated text like prompts)
+            match_idx = current_buffer.rfind(self._previous_buffer)
+            if match_idx != -1:
+                # Slice right after the previous buffer to get only new content
+                new_content_start = match_idx + len(self._previous_buffer)
+                new_content = current_buffer[new_content_start:]
+                self._previous_buffer = current_buffer
+                return new_content
 
             # Fallback: buffer comparison failed (likely scrolled off), show visible screen
             _LOGGER.debug("[%d] Buffer comparison failed, falling back to visible screen", id(self))
@@ -771,22 +770,12 @@ class Terminus2Agent(code_agent_base.CodeAgent):
                                 "[%d] Enter returned exit_code=%s: %s", id(self), result.exit_code, result.output
                             )
 
-                # Send completion sentinel (matches terminal-bench reference implementation)
-                # This allows reliable detection of command completion via tmux signals
-                sentinel_cmd = f"tmux send-keys -t {self._tmux_session_name} -l '; tmux wait -S done' Enter"
-                _LOGGER.debug("[%d] Sending completion sentinel", id(self))
-                result = await self.container.exec_run(sentinel_cmd, timeout_s=_TMUX_OP_TIMEOUT_S)
-                if result.exit_code != 0:
-                    _LOGGER.warning(
-                        "[%d] Sentinel send failed: exit_code=%s: %s", id(self), result.exit_code, result.output
-                    )
-
                 # Wait for command to complete with timeout detection
                 wait_time = min(cmd.duration, self.timeout_s)
-                _LOGGER.debug("[%d] Waiting %.1fs for command completion signal", id(self), wait_time)
+                _LOGGER.debug("[%d] Waiting %.1fs for command to complete", id(self), wait_time)
 
-                # Wait for completion signal (or timeout)
-                cmd_timeout = await self._wait_for_command_with_sentinel(wait_time)
+                # Check if command is still running after waiting
+                cmd_timeout = await self._wait_for_command_with_timeout(wait_time)
                 if cmd_timeout:
                     timeout_occurred = True
                     _LOGGER.warning("[%d] Command %d timed out after %.1fs", id(self), i + 1, wait_time)
