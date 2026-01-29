@@ -190,6 +190,61 @@ class TestLLMRequestChatCompletionConversion:
 
         assert request.max_output_tokens == 100
 
+    def test_to_chat_completion_flattens_tool_calls(self):
+        """Test that ToolCallMessage is flattened into AssistantMessage.tool_calls."""
+        request = request_lib.LLMRequest(
+            messages=[
+                request_lib.UserMessage(role="user", content="What's the weather?"),
+                request_lib.AssistantMessage(role="assistant", content=""),
+                request_lib.ToolCallMessage(call_id="call_123", name="get_weather", arguments='{"location":"LA"}'),
+            ],
+        )
+        kwargs = request.to_chat_completion_kwargs()
+
+        # Should have 2 messages (user + assistant with tool_calls)
+        assert len(kwargs["messages"]) == 2
+        assert kwargs["messages"][1]["role"] == "assistant"
+        assert "tool_calls" in kwargs["messages"][1]
+        assert len(kwargs["messages"][1]["tool_calls"]) == 1
+
+        tool_call = kwargs["messages"][1]["tool_calls"][0]
+        assert tool_call["id"] == "call_123"
+        assert tool_call["type"] == "function"
+        assert tool_call["function"]["name"] == "get_weather"
+        assert tool_call["function"]["arguments"] == '{"location":"LA"}'
+
+    def test_from_chat_completion_extracts_tool_calls(self):
+        """Test that AssistantMessage.tool_calls are extracted as separate ToolCallMessage."""
+        kwargs: openai.types.chat.completion_create_params.CompletionCreateParams = {
+            "model": "gpt-4o",
+            "messages": [
+                {"role": "user", "content": "What's the weather?"},
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": "call_789",
+                            "type": "function",
+                            "function": {"name": "get_weather", "arguments": '{"location":"Seattle"}'},
+                        }
+                    ],
+                },
+            ],
+        }
+        request = request_lib.LLMRequest.from_chat_completion(kwargs)
+
+        # Should have 3 messages: user, assistant, tool_call
+        assert len(request.messages) == 3
+        assert request.messages[0].get("role") == "user"
+        assert request.messages[1].get("role") == "assistant"
+
+        # Third message should be ToolCallMessage
+        tool_call_msg = request.messages[2]
+        assert tool_call_msg.get("call_id") == "call_789"
+        assert tool_call_msg.get("name") == "get_weather"
+        assert tool_call_msg.get("arguments") == '{"location":"Seattle"}'
+
     def test_roundtrip_chat_completion(self):
         """Test that Chat Completions roundtrip preserves data."""
         original: openai.types.chat.completion_create_params.CompletionCreateParams = {
@@ -384,6 +439,138 @@ class TestLLMRequestResponsesConversion:
             {"role": "assistant", "content": "Hi!"},
         ]
 
+    def test_to_responses_includes_tool_call_id(self):
+        """Test that tool messages are converted to function_call_output format with call_id."""
+        request = request_lib.LLMRequest(
+            messages=[
+                request_lib.UserMessage(role="user", content="What's the weather?"),
+                request_lib.AssistantMessage(role="assistant", content="Let me check..."),
+                request_lib.ToolCallResponseMessage(role="tool", content="Sunny, 72°F", tool_call_id="call_123"),
+            ],
+        )
+        kwargs = request.to_responses_kwargs()
+
+        # Tool message should be converted to function_call_output format
+        tool_output = kwargs["input"][2]
+        assert tool_output["type"] == "function_call_output"
+        assert tool_output["output"] == "Sunny, 72°F"
+        assert tool_output["call_id"] == "call_123"
+
+    def test_from_responses_reads_tool_call_id(self):
+        """Test that tool_call_id is read from Responses input items (function_call_output format)."""
+        inputs: list[openai.types.responses.ResponseInputItemParam] = [
+            openai.types.responses.EasyInputMessageParam(type="message", role="user", content="What's the weather?"),
+            openai.types.responses.response_input_item_param.FunctionCallOutput(
+                type="function_call_output", call_id="call_456", output="Sunny, 72°F"
+            ),
+        ]
+        kwargs = openai.types.responses.response_create_params.ResponseCreateParamsNonStreaming(
+            model="gpt-4o",
+            input=inputs,
+        )
+        request = request_lib.LLMRequest.from_responses(kwargs)
+
+        tool_msg = request.messages[1]
+        assert tool_msg.get("role") == "tool"
+        assert tool_msg.get("content") == "Sunny, 72°F"
+        assert tool_msg.get("tool_call_id") == "call_456"
+
+    def test_from_responses_tool_missing_id_strict(self):
+        """Test that missing call_id raises error in strict mode."""
+        # Note: This tests a malformed input - function_call_output requires call_id
+        # We construct a dict to simulate a malformed payload
+        inputs: list[dict[str, str]] = [
+            {"type": "function_call_output", "output": "Result"},  # Missing required call_id
+        ]
+        kwargs = openai.types.responses.response_create_params.ResponseCreateParamsNonStreaming(
+            model="gpt-4o",
+            input=inputs,  # type: ignore[arg-type]
+        )
+        with pytest.raises(ValueError, match=r"Tool .*missing required.*call_id"):
+            request_lib.LLMRequest.from_responses(kwargs, strict=True)
+
+    def test_from_responses_tool_missing_id_non_strict(self):
+        """Test that missing call_id logs warning in non-strict mode."""
+        # Note: This tests a malformed input - function_call_output requires call_id
+        inputs: list[dict[str, str]] = [
+            {"type": "function_call_output", "output": "Result"},  # Missing required call_id
+        ]
+        kwargs = openai.types.responses.response_create_params.ResponseCreateParamsNonStreaming(
+            model="gpt-4o",
+            input=inputs,  # type: ignore[arg-type]
+        )
+        request = request_lib.LLMRequest.from_responses(kwargs, strict=False)
+
+        # Should still parse the message but without tool_call_id
+        assert len(request.messages) == 1
+        assert request.messages[0].get("role") == "tool"
+        assert request.messages[0].get("content") == "Result"
+        assert "tool_call_id" not in request.messages[0]
+
+    def test_to_responses_includes_tool_calls(self):
+        """Test that ToolCallMessage is converted to function_call format."""
+        request = request_lib.LLMRequest(
+            messages=[
+                request_lib.UserMessage(role="user", content="What's the weather?"),
+                request_lib.AssistantMessage(role="assistant", content="Let me check..."),
+                request_lib.ToolCallMessage(call_id="call_123", name="get_weather", arguments='{"location":"SF"}'),
+            ],
+        )
+        kwargs = request.to_responses_kwargs()
+
+        # ToolCallMessage should be converted to function_call format
+        tool_call = kwargs["input"][2]
+        assert tool_call["type"] == "function_call"
+        assert tool_call["call_id"] == "call_123"
+        assert tool_call["name"] == "get_weather"
+        assert tool_call["arguments"] == '{"location":"SF"}'
+
+    def test_from_responses_reads_tool_calls(self):
+        """Test that function_call items are read as ToolCallMessage."""
+        inputs: list[openai.types.responses.ResponseInputItemParam] = [
+            openai.types.responses.EasyInputMessageParam(type="message", role="user", content="What's the weather?"),
+            openai.types.responses.response_function_tool_call_param.ResponseFunctionToolCallParam(
+                type="function_call",
+                call_id="call_456",
+                name="get_weather",
+                arguments='{"location":"NYC"}',
+            ),
+        ]
+        kwargs = openai.types.responses.response_create_params.ResponseCreateParamsNonStreaming(
+            model="gpt-4o",
+            input=inputs,
+        )
+        request = request_lib.LLMRequest.from_responses(kwargs)
+
+        tool_call_msg = request.messages[1]
+        assert "call_id" in tool_call_msg
+        assert tool_call_msg["call_id"] == "call_456"  # type: ignore[typeddict-item]
+        assert tool_call_msg["name"] == "get_weather"  # type: ignore[typeddict-item]
+        assert tool_call_msg["arguments"] == '{"location":"NYC"}'  # type: ignore[typeddict-item]
+
+    def test_responses_roundtrip_preserves_tool_call_id(self):
+        """Test that tool_call_id is preserved in roundtrip conversion (via function_call_output)."""
+        original = request_lib.LLMRequest(
+            messages=[
+                request_lib.UserMessage(role="user", content="Check weather"),
+                request_lib.ToolCallResponseMessage(role="tool", content="Sunny", tool_call_id="call_789"),
+            ],
+        )
+        # Convert to Responses format (should use function_call_output)
+        responses_kwargs = original.to_responses_kwargs()
+
+        # Verify it uses function_call_output format
+        assert responses_kwargs["input"][1]["type"] == "function_call_output"
+        assert responses_kwargs["input"][1]["call_id"] == "call_789"
+
+        # Convert back and verify tool_call_id is preserved
+        request2 = request_lib.LLMRequest.from_responses(
+            cast(openai.types.responses.response_create_params.ResponseCreateParamsBase, responses_kwargs)
+        )
+
+        tool_msg = cast(request_lib.ToolCallResponseMessage, request2.messages[1])
+        assert tool_msg["tool_call_id"] == "call_789"
+
 
 class TestLLMRequestMessagesConversion:
     """Tests for Claude Messages API conversion."""
@@ -499,7 +686,7 @@ class TestLLMRequestMessagesConversion:
         messages: list[request_lib.Message] = [
             request_lib.UserMessage(role="user", content="What's the weather?"),
             request_lib.AssistantMessage(role="assistant", content="Let me check..."),
-            request_lib.ToolMessage(role="tool", content="Sunny, 72°F", tool_call_id="test"),
+            request_lib.ToolCallResponseMessage(role="tool", content="Sunny, 72°F", tool_call_id="test"),
         ]
         request = request_lib.LLMRequest(
             messages=messages,

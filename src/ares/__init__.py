@@ -50,7 +50,8 @@ from ares import presets  # noqa: F401
 from ares.llms.request import AssistantMessage
 from ares.llms.request import LLMRequest
 from ares.llms.request import Message
-from ares.llms.request import ToolMessage
+from ares.llms.request import ToolCallMessage
+from ares.llms.request import ToolCallResponseMessage
 from ares.llms.request import UserMessage
 
 # Import registry functions to expose at top level
@@ -62,7 +63,8 @@ __all__ = [
     "AssistantMessage",
     "LLMRequest",
     "Message",
-    "ToolMessage",
+    "ToolCallMessage",
+    "ToolCallResponseMessage",
     "UserMessage",
     "info",
     "make",
