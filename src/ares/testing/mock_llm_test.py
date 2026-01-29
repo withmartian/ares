@@ -158,5 +158,5 @@ async def test_mock_llm_response_structure():
 
     # Check usage structure
     assert response.usage.prompt_tokens == 100
-    assert response.usage.generation_tokens == 50
+    assert response.usage.generated_tokens == 50
     assert response.usage.total_tokens == 150

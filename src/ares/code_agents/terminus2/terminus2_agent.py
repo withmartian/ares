@@ -33,6 +33,7 @@ from ares.containers import containers
 from ares.experiment_tracking import stat_tracker
 from ares.llms import llm_clients
 from ares.llms import request
+from ares.llms import response
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -527,7 +528,8 @@ class Terminus2Agent(code_agent_base.CodeAgent):
                 # Query the LLM
                 try:
                     response = await self._query_llm()
-                    assistant_message = response.chat_completion_response.choices[0].message.content
+                    assert len(response.data) == 1
+                    assistant_message = response.data[0].content
                     assert assistant_message is not None
 
                     self._add_message("assistant", assistant_message)
@@ -646,7 +648,7 @@ class Terminus2Agent(code_agent_base.CodeAgent):
         """Get the total number of characters in the conversation history and system prompt."""
         return sum(len(str(msg.get("content", ""))) for msg in self._messages) + len(self._system_prompt or "")
 
-    async def _query_llm(self) -> llm_clients.LLMResponse:
+    async def _query_llm(self) -> response.LLMResponse:
         """Query the LLM with the current conversation history.
 
         Returns:
@@ -897,14 +899,15 @@ class Terminus2Agent(code_agent_base.CodeAgent):
                 request.LLMRequest(messages=summary_messages, system_prompt=self._system_prompt)
             )
 
-            summary_content = summary_response.chat_completion_response.choices[0].message.content
+            assert len(summary_response.data) == 1
+            summary_content = summary_response.data[0].content
             assert summary_content is not None
 
             # Track subagent metrics
-            usage = summary_response.chat_completion_response.usage
+            usage = summary_response.usage
             if usage:
                 self._subagent_metrics.total_prompt_tokens += usage.prompt_tokens or 0
-                self._subagent_metrics.total_completion_tokens += usage.completion_tokens or 0
+                self._subagent_metrics.total_completion_tokens += usage.generated_tokens or 0
 
             _LOGGER.info("[%d] Step 1/3: Summary generated", id(self))
 
@@ -920,12 +923,13 @@ class Terminus2Agent(code_agent_base.CodeAgent):
                     summary_response = await self.llm_client(
                         request.LLMRequest(messages=summary_messages, system_prompt=self._system_prompt)
                     )
-                    summary_content = summary_response.chat_completion_response.choices[0].message.content
+                    assert len(summary_response.data) == 1
+                    summary_content = summary_response.data[0].content
                     assert summary_content is not None
-                    usage = summary_response.chat_completion_response.usage
+                    usage = summary_response.usage
                     if usage:
                         self._subagent_metrics.total_prompt_tokens += usage.prompt_tokens or 0
-                        self._subagent_metrics.total_completion_tokens += usage.completion_tokens or 0
+                        self._subagent_metrics.total_completion_tokens += usage.generated_tokens or 0
                     _LOGGER.info("[%d] Step 1/3: Summary generated (with fallback)", id(self))
                 except Exception as e2:
                     _LOGGER.error("[%d] Error generating summary even with fallback: %s", id(self), e2)
@@ -949,14 +953,15 @@ class Terminus2Agent(code_agent_base.CodeAgent):
                 request.LLMRequest(messages=[{"role": "user", "content": question_prompt}])
             )
 
-            model_questions = questions_response.chat_completion_response.choices[0].message.content
+            assert len(questions_response.data) == 1
+            model_questions = questions_response.data[0].content
             assert model_questions is not None
 
             # Track subagent metrics
-            usage = questions_response.chat_completion_response.usage
+            usage = questions_response.usage
             if usage:
                 self._subagent_metrics.total_prompt_tokens += usage.prompt_tokens or 0
-                self._subagent_metrics.total_completion_tokens += usage.completion_tokens or 0
+                self._subagent_metrics.total_completion_tokens += usage.generated_tokens or 0
 
             _LOGGER.info("[%d] Step 2/3: Questions generated", id(self))
 
@@ -979,14 +984,15 @@ class Terminus2Agent(code_agent_base.CodeAgent):
                 request.LLMRequest(messages=answer_messages, system_prompt=self._system_prompt)
             )
 
-            answers_content = answers_response.chat_completion_response.choices[0].message.content
+            assert len(answers_response.data) == 1
+            answers_content = answers_response.data[0].content
             assert answers_content is not None
 
             # Track subagent metrics
-            usage = answers_response.chat_completion_response.usage
+            usage = answers_response.usage
             if usage:
                 self._subagent_metrics.total_prompt_tokens += usage.prompt_tokens or 0
-                self._subagent_metrics.total_completion_tokens += usage.completion_tokens or 0
+                self._subagent_metrics.total_completion_tokens += usage.generated_tokens or 0
 
             _LOGGER.info("[%d] Step 3/3: Answers provided", id(self))
 
@@ -1001,12 +1007,13 @@ class Terminus2Agent(code_agent_base.CodeAgent):
                     answers_response = await self.llm_client(
                         request.LLMRequest(messages=answer_messages, system_prompt=self._system_prompt)
                     )
-                    answers_content = answers_response.chat_completion_response.choices[0].message.content
+                    assert len(answers_response.data) == 1
+                    answers_content = answers_response.data[0].content
                     assert answers_content is not None
-                    usage = answers_response.chat_completion_response.usage
+                    usage = answers_response.usage
                     if usage:
                         self._subagent_metrics.total_prompt_tokens += usage.prompt_tokens or 0
-                        self._subagent_metrics.total_completion_tokens += usage.completion_tokens or 0
+                        self._subagent_metrics.total_completion_tokens += usage.generated_tokens or 0
                     _LOGGER.info("[%d] Step 3/3: Answers provided (with fallback)", id(self))
                 except Exception as e2:
                     _LOGGER.error("[%d] Error providing answers even with fallback: %s", id(self), e2)

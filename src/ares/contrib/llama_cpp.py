@@ -99,7 +99,7 @@ class LlamaCppLLMClient(llm_clients.LLMClient):
         content = chat_completion.choices[0].message.content or ""
         usage = response.Usage(
             prompt_tokens=chat_completion.usage.prompt_tokens if chat_completion.usage else 0,
-            generation_tokens=chat_completion.usage.completion_tokens if chat_completion.usage else 0,
+            generated_tokens=chat_completion.usage.completion_tokens if chat_completion.usage else 0,
         )
         return response.LLMResponse(data=[response.TextData(content=content)], cost=0.0, usage=usage)
 

@@ -52,7 +52,7 @@ class MockLLMClient:
         return response.LLMResponse(
             data=[response.TextData(content=response_text)],
             cost=0.0,
-            usage=response.Usage(prompt_tokens=100, generation_tokens=50),
+            usage=response.Usage(prompt_tokens=100, generated_tokens=50),
         )
 
     def get_last_request(self) -> request.LLMRequest | None:

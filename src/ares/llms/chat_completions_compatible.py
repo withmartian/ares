@@ -62,6 +62,6 @@ class ChatCompletionCompatibleLLMClient(llm_clients.LLMClient):
         content = resp.choices[0].message.content or ""
         usage = response.Usage(
             prompt_tokens=resp.usage.prompt_tokens if resp.usage else 0,
-            generation_tokens=resp.usage.completion_tokens if resp.usage else 0,
+            generated_tokens=resp.usage.completion_tokens if resp.usage else 0,
         )
         return response.LLMResponse(data=[response.TextData(content=content)], cost=cost, usage=usage)

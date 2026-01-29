@@ -8,12 +8,12 @@ class Usage:
     """Token usage information for an LLM call."""
 
     prompt_tokens: int
-    generation_tokens: int
+    generated_tokens: int
 
     @property
     def total_tokens(self) -> int:
-        """Total tokens used (prompt + generation)."""
-        return self.prompt_tokens + self.generation_tokens
+        """Total tokens used (prompt + generated)."""
+        return self.prompt_tokens + self.generated_tokens
 
 
 @dataclasses.dataclass(frozen=True)
