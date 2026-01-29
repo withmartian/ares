@@ -343,6 +343,12 @@ class Terminus2Agent(code_agent_base.CodeAgent):
         This monitors the tmux pane to detect if a command is still running after
         the specified duration.
 
+        NOTE: The reference implementation uses sentinel-based detection (appending
+        '; tmux wait -S done' and using 'timeout Xs tmux wait done'), which is more
+        reliable. However, this requires modifying command strings and wasn't working
+        correctly in our initial implementation. We're using prompt-based heuristics
+        as a simpler fallback for now.
+
         Args:
             duration: How long to wait in seconds.
 
@@ -363,13 +369,21 @@ class Terminus2Agent(code_agent_base.CodeAgent):
             last_line = result.output.strip()
 
             # Heuristic: If the last line ends with common prompt characters, assume command finished
-            # This is not perfect but matches the behavior of the original implementation
             prompt_indicators = ["$", "#", ">", "%"]
             has_prompt = any(last_line.endswith(indicator) for indicator in prompt_indicators)
 
-            # If no prompt visible, command might still be running
-            if not has_prompt and last_line:
-                _LOGGER.debug("[%d] No prompt detected, command may still be running: %s", id(self), last_line[:50])
+            # If no prompt visible, command is still running (regardless of output)
+            if not has_prompt:
+                if last_line:
+                    _LOGGER.debug(
+                        "[%d] No prompt detected, command may still be running. Last line: %s",
+                        id(self),
+                        last_line[:50],
+                    )
+                else:
+                    _LOGGER.debug(
+                        "[%d] No prompt detected and last line is empty, command may still be running", id(self)
+                    )
                 return True  # Timeout occurred
 
             return False  # Command completed
