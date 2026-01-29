@@ -11,8 +11,16 @@ from typing import cast
 import docker
 import docker.errors
 import docker.models.containers
+import docker.models.images
 
 from ares.containers import containers
+
+
+def _make_docker_client() -> docker.DockerClient:
+    try:
+        return docker.from_env()
+    except docker.errors.DockerException as e:
+        raise RuntimeError("Failed to connect to Docker daemon; is docker running?") from e
 
 
 @dataclasses.dataclass(kw_only=True)
@@ -26,10 +34,25 @@ class DockerContainer(containers.Container):
 
     @functools.cached_property
     def _client(self) -> docker.DockerClient:
+        return _make_docker_client()
+
+    @functools.cached_property
+    def _client_with_no_auth(self) -> docker.DockerClient:
+        client = _make_docker_client()
+        client.images.client.api._auth_configs["credHelpers"] = {}  # type: ignore
+        return client
+
+    def _build_image(self, path: str, tag: str | None) -> docker.models.images.Image:
         try:
-            return docker.from_env()
+            return self._client.images.build(path=path, tag=tag)[0]
         except docker.errors.DockerException as e:
-            raise RuntimeError("Failed to connect to Docker daemon; is docker running?") from e
+            if "StoreError" in str(e):
+                # Try again after removing auth sources, since they might be broken.
+                # Fix for https://github.com/docker/docker-py/issues/3379 - if auth sources fail,
+                # we the build() call will fail even if the image is publicly accessible.
+                return self._client_with_no_auth.images.build(path=path, tag=tag)[0]
+            else:
+                raise
 
     async def start(self, env: dict[str, str] | None = None) -> None:
         """Start the container."""
@@ -40,8 +63,8 @@ class DockerContainer(containers.Container):
             dockerfile_path = pathlib.Path(self.dockerfile_path)
             # TODO: Some kind of cache for dockerfile directory to avoid
             #       rebuilding same image over and over again?
-            image_obj, _ = await asyncio.to_thread(
-                self._client.images.build,
+            image_obj = await asyncio.to_thread(
+                self._build_image,
                 path=dockerfile_path.parent.as_posix(),
                 tag=self.name,
             )
