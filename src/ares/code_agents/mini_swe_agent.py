@@ -157,7 +157,7 @@ class MiniSWECodeAgent(code_agent_base.CodeAgent):
         """Run step() until agent is finished. Return exit status & message"""
         # Get system information from the container.
         with self.tracker.timeit("mswea/setup"):
-            _LOGGER.debug("[%d] Starting miniswe-agent run.", id(self))
+            _LOGGER.debug("[%d] Starting mini-swe-agent run.", id(self))
 
             system = (await self.container.exec_run("uname -a", env=self._environment_env_vars)).output.strip()
             release = (await self.container.exec_run("uname -r", env=self._environment_env_vars)).output.strip()

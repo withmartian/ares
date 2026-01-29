@@ -1,7 +1,7 @@
-"""Evaluate all tasks in SWEBench Verified with a frontier LLM.
+"""Evaluate all tasks in SWE-bench Verified with a frontier LLM.
 
 This example shows how you can use ARES' async-first design to
-evaluate SWEBench Verified tasks in parallel with a rich TUI dashboard.
+evaluate SWE-bench Verified tasks in parallel with a rich TUI dashboard.
 
 The dashboard displays:
 - Real-time summary statistics (running, completed, errors, success rate, avg return, total cost)
@@ -52,7 +52,7 @@ import simple_parsing
 class Args:
     # gpt-5-mini is a good and relatively cheap model for this example.
     model: str = "openai/gpt-5-mini"
-    # We will be running MiniSweAgent on SWEBench Verified.
+    # We will be running mini-swe-agent on SWE-bench Verified.
     preset_name: str = "sbv-mswea"
     # The higher the parallelism, the quicker the evaluation will be.
     # However, you may need higher quota in Daytona.
