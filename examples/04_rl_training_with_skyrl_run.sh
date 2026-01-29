@@ -1,14 +1,13 @@
-# API Keys - set these or export them in your environment
-export DAYTONA_API_KEY=${DAYTONA_API_KEY:-"YOUR_DAYTONA_API_KEY"}
-export WANDB_API_KEY=${WANDB_API_KEY:-""}
+# My key
+export DAYTONA_API_KEY=YOUR_KEY_HERE
+export WANDB_API_KEY=YOUR_KEY_HERE
 export FLASHINFER_DISABLE_VERSION_CHECK=1
 
-CKPTS_DIR=${CKPTS_DIR:-"$HOME/ares_checkpoints"}
-EXPORTS_DIR=${EXPORTS_DIR:-"$HOME/ares_exports"}
+CKPTS_DIR=YOUR_CKPTS_DIR_HERE
+EXPORTS_DIR=YOUR_EXPORTS_DIR_HERE
 
 # Run SkyRL command
-# Note: Run this from skyrl-train directory with ares available in the environment
-UV_FROZEN=0 uv run --extra vllm python -m examples.04_rl_training_with_skyrl \
+uv run --isolated --extra vllm --extra harbor -m examples.04_rl_training_with_skyrl \
   +data.ares_preset_name_train=sbv-mswea \
   +data.ares_preset_name_val=tbench-mswea \
   trainer.policy.model.path=Qwen/Qwen3-4B-Instruct-2507 \
@@ -20,9 +19,9 @@ UV_FROZEN=0 uv run --extra vllm python -m examples.04_rl_training_with_skyrl \
   trainer.strategy=fsdp2 \
   trainer.placement.policy_num_nodes=1 \
   trainer.placement.ref_num_nodes=1 \
-  trainer.placement.policy_num_gpus_per_node=4 \
-  trainer.placement.ref_num_gpus_per_node=4 \
-  generator.num_inference_engines=4 \
+  trainer.placement.policy_num_gpus_per_node=8 \
+  trainer.placement.ref_num_gpus_per_node=8 \
+  generator.num_inference_engines=8 \
   generator.inference_engine_tensor_parallel_size=1 \
   trainer.epochs=3 \
   trainer.eval_batch_size=128 \
@@ -42,7 +41,7 @@ UV_FROZEN=0 uv run --extra vllm python -m examples.04_rl_training_with_skyrl \
   generator.n_samples_per_prompt=8 \
   generator.eval_n_samples_per_prompt=8 \
   generator.gpu_memory_utilization=0.8 \
-  trainer.logger=tensorboard \
+  trainer.logger=wandb \
   trainer.project_name=dc-agent \
   trainer.run_name=otagent-rl \
   trainer.resume_mode=latest \
