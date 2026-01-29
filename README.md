@@ -4,11 +4,16 @@
   <img margin="auto" width="auto" height="312" alt="image" src="https://github.com/user-attachments/assets/ae34ab36-b78f-48de-93c9-01d611a547e3" />
 </p>
 
+<p align="center">
+  <a href="https://martian-ares.readthedocs.io/en/latest/"><img src="https://img.shields.io/badge/docs-readthedocs-blue.svg" alt="Documentation"></a>
+  <a href="https://pypi.org/project/martian-ares/"><img src="https://img.shields.io/pypi/v/martian-ares.svg" alt="PyPI version"></a>
+  <a href="https://github.com/withmartian/ares/blob/main/LICENSE"><img src="https://img.shields.io/github/license/withmartian/ares.svg" alt="License"></a>
+</p>
+
 ARES (Agentic Research and Evaluation Suite) is an RL-first framework for training and evaluating agents.
 
-## Documentation
 
-📚 **[Read the full documentation](https://ares.readthedocs.io/)** to learn about ARES's core concepts and architecture.
+📚 **[Read the full documentation](https://martian-ares.readthedocs.io/en/latest/)** to learn about ARES's core concepts and architecture.
 
 ## Quick Start
 
