@@ -7,8 +7,119 @@ import openai.types.chat
 import openai.types.chat.completion_create_params
 import openai.types.responses.response_create_params
 import openai.types.shared_params
+import pytest
 
 from ares.llms import request as request_lib
+
+
+class TestStructuredContentHandling:
+    """Tests for handling structured content (list of blocks) in API conversions."""
+
+    def test_from_responses_with_structured_content_strict(self):
+        """Test that structured content raises error in strict mode."""
+        kwargs = openai.types.responses.response_create_params.ResponseCreateParamsBase(
+            model="gpt-4",
+            input=[
+                openai.types.responses.EasyInputMessageParam(
+                    type="message",
+                    role="user",
+                    content=[
+                        openai.types.responses.ResponseInputTextParam(type="input_text", text="Hello"),
+                        openai.types.responses.ResponseInputImageParam(
+                            type="input_image", detail="auto", image_url="data:image/png;base64,..."
+                        ),
+                    ],
+                )
+            ],
+        )
+
+        with pytest.raises(ValueError, match=r"list of blocks.*structured content"):
+            request_lib.LLMRequest.from_responses(kwargs, strict=True)
+
+    def test_from_responses_with_structured_content_non_strict(self):
+        """Test that structured content returns empty string in non-strict mode."""
+        kwargs = openai.types.responses.response_create_params.ResponseCreateParamsBase(
+            model="gpt-4",
+            input=[
+                openai.types.responses.EasyInputMessageParam(
+                    type="message",
+                    role="user",
+                    content=[
+                        openai.types.responses.ResponseInputTextParam(type="input_text", text="Hello"),
+                        openai.types.responses.ResponseInputImageParam(
+                            type="input_image", detail="auto", image_url="data:image/png;base64,..."
+                        ),
+                    ],
+                )
+            ],
+        )
+
+        # Should not raise, but content will be empty
+        request = request_lib.LLMRequest.from_responses(kwargs, strict=False)
+        assert len(request.messages) == 1
+        assert request.messages[0].get("content") == ""
+
+    def test_from_chat_completion_with_structured_content_strict(self):
+        """Test that structured content in chat messages raises error in strict mode."""
+        kwargs = openai.types.chat.completion_create_params.CompletionCreateParamsNonStreaming(
+            model="gpt-4",
+            messages=[
+                openai.types.chat.ChatCompletionUserMessageParam(
+                    role="user",
+                    content=[
+                        openai.types.chat.ChatCompletionContentPartTextParam(type="text", text="What's in this image?"),
+                        openai.types.chat.ChatCompletionContentPartImageParam(
+                            type="image_url",
+                            image_url=openai.types.chat.chat_completion_content_part_image_param.ImageURL(
+                                url="https://example.com/image.png"
+                            ),
+                        ),
+                    ],
+                )
+            ],
+        )
+
+        with pytest.raises(ValueError, match=r"list of blocks.*structured content"):
+            request_lib.LLMRequest.from_chat_completion(kwargs, strict=True)
+
+    def test_from_messages_with_structured_content_strict(self):
+        """Test that structured content in Claude messages raises error in strict mode."""
+        kwargs = anthropic.types.message_create_params.MessageCreateParamsNonStreaming(
+            model="claude-3-opus",
+            max_tokens=100,
+            messages=[
+                anthropic.types.MessageParam(
+                    role="user",
+                    content=[
+                        anthropic.types.TextBlockParam(type="text", text="Analyze this image"),
+                        anthropic.types.ImageBlockParam(
+                            type="image",
+                            source=anthropic.types.base64_image_source_param.Base64ImageSourceParam(
+                                type="base64", media_type="image/png", data="..."
+                            ),
+                        ),
+                    ],
+                )
+            ],
+        )
+
+        with pytest.raises(ValueError, match=r"list of blocks.*structured content"):
+            request_lib.LLMRequest.from_messages(kwargs, strict=True)
+
+    def test_system_prompt_with_structured_content_strict(self):
+        """Test that structured system prompt raises error in strict mode."""
+        kwargs = anthropic.types.message_create_params.MessageCreateParamsNonStreaming(
+            model="claude-3-opus",
+            max_tokens=100,
+            system=[
+                anthropic.types.TextBlockParam(type="text", text="You are a helpful assistant."),
+                anthropic.types.TextBlockParam(type="text", text="Always be concise."),
+            ],
+            messages=[anthropic.types.MessageParam(role="user", content="Hello")],
+        )
+
+        with pytest.raises(ValueError, match=r"list of blocks.*structured content"):
+            request_lib.LLMRequest.from_messages(kwargs, strict=True)
 
 
 class TestLLMRequestChatCompletionConversion:
@@ -189,6 +300,61 @@ class TestLLMRequestChatCompletionConversion:
 
         assert request.max_output_tokens == 100
 
+    def test_to_chat_completion_flattens_tool_calls(self):
+        """Test that ToolCallMessage is flattened into AssistantMessage.tool_calls."""
+        request = request_lib.LLMRequest(
+            messages=[
+                request_lib.UserMessage(role="user", content="What's the weather?"),
+                request_lib.AssistantMessage(role="assistant", content=""),
+                request_lib.ToolCallMessage(call_id="call_123", name="get_weather", arguments='{"location":"LA"}'),
+            ],
+        )
+        kwargs = request.to_chat_completion_kwargs()
+
+        # Should have 2 messages (user + assistant with tool_calls)
+        assert len(kwargs["messages"]) == 2
+        assert kwargs["messages"][1]["role"] == "assistant"
+        assert "tool_calls" in kwargs["messages"][1]
+        assert len(kwargs["messages"][1]["tool_calls"]) == 1
+
+        tool_call = kwargs["messages"][1]["tool_calls"][0]
+        assert tool_call["id"] == "call_123"
+        assert tool_call["type"] == "function"
+        assert tool_call["function"]["name"] == "get_weather"
+        assert tool_call["function"]["arguments"] == '{"location":"LA"}'
+
+    def test_from_chat_completion_extracts_tool_calls(self):
+        """Test that AssistantMessage.tool_calls are extracted as separate ToolCallMessage."""
+        kwargs: openai.types.chat.completion_create_params.CompletionCreateParams = {
+            "model": "gpt-4o",
+            "messages": [
+                {"role": "user", "content": "What's the weather?"},
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": "call_789",
+                            "type": "function",
+                            "function": {"name": "get_weather", "arguments": '{"location":"Seattle"}'},
+                        }
+                    ],
+                },
+            ],
+        }
+        request = request_lib.LLMRequest.from_chat_completion(kwargs)
+
+        # Should have 3 messages: user, assistant, tool_call
+        assert len(request.messages) == 3
+        assert request.messages[0].get("role") == "user"
+        assert request.messages[1].get("role") == "assistant"
+
+        # Third message should be ToolCallMessage
+        tool_call_msg = request.messages[2]
+        assert tool_call_msg.get("call_id") == "call_789"
+        assert tool_call_msg.get("name") == "get_weather"
+        assert tool_call_msg.get("arguments") == '{"location":"Seattle"}'
+
     def test_roundtrip_chat_completion(self):
         """Test that Chat Completions roundtrip preserves data."""
         original: openai.types.chat.completion_create_params.CompletionCreateParams = {
@@ -262,15 +428,14 @@ class TestLLMRequestResponsesConversion:
         assert kwargs["temperature"] == 0.7
         assert kwargs["top_p"] == 0.9
         assert kwargs["stream"] is True
-        # Tools should be converted to OpenAI format
+        # Tools should be converted to Responses format (flat structure)
         assert kwargs["tools"] == [
             {
                 "type": "function",
-                "function": {
-                    "name": "test",
-                    "description": "A test function",
-                    "parameters": {"type": "object", "properties": {}},
-                },
+                "name": "test",
+                "description": "A test function",
+                "parameters": {"type": "object", "properties": {}},
+                "strict": True,
             }
         ]
         assert kwargs["tool_choice"] == "auto"
@@ -384,6 +549,230 @@ class TestLLMRequestResponsesConversion:
             {"role": "assistant", "content": "Hi!"},
         ]
 
+    def test_to_responses_includes_tool_call_id(self):
+        """Test that tool messages are converted to function_call_output format with call_id."""
+        request = request_lib.LLMRequest(
+            messages=[
+                request_lib.UserMessage(role="user", content="What's the weather?"),
+                request_lib.AssistantMessage(role="assistant", content="Let me check..."),
+                request_lib.ToolCallResponseMessage(role="tool", content="Sunny, 72°F", tool_call_id="call_123"),
+            ],
+        )
+        kwargs = request.to_responses_kwargs()
+
+        # Tool message should be converted to function_call_output format
+        tool_output = kwargs["input"][2]
+        assert tool_output["type"] == "function_call_output"
+        assert tool_output["output"] == "Sunny, 72°F"
+        assert tool_output["call_id"] == "call_123"
+
+    def test_from_responses_reads_tool_call_id(self):
+        """Test that tool_call_id is read from Responses input items (function_call_output format)."""
+        inputs: list[openai.types.responses.ResponseInputItemParam] = [
+            openai.types.responses.EasyInputMessageParam(type="message", role="user", content="What's the weather?"),
+            openai.types.responses.response_input_item_param.FunctionCallOutput(
+                type="function_call_output", call_id="call_456", output="Sunny, 72°F"
+            ),
+        ]
+        kwargs = openai.types.responses.response_create_params.ResponseCreateParamsNonStreaming(
+            model="gpt-4o",
+            input=inputs,
+        )
+        request = request_lib.LLMRequest.from_responses(kwargs)
+
+        tool_msg = request.messages[1]
+        assert tool_msg.get("role") == "tool"
+        assert tool_msg.get("content") == "Sunny, 72°F"
+        assert tool_msg.get("tool_call_id") == "call_456"
+
+    def test_from_responses_tool_missing_id_strict(self):
+        """Test that missing call_id raises error in strict mode."""
+        # Note: This tests a malformed input - function_call_output requires call_id
+        # We construct a dict to simulate a malformed payload
+        inputs: list[dict[str, str]] = [
+            {"type": "function_call_output", "output": "Result"},  # Missing required call_id
+        ]
+        kwargs = openai.types.responses.response_create_params.ResponseCreateParamsNonStreaming(
+            model="gpt-4o",
+            input=inputs,  # type: ignore[arg-type]
+        )
+        with pytest.raises(ValueError, match=r"Tool .*missing required.*call_id"):
+            request_lib.LLMRequest.from_responses(kwargs, strict=True)
+
+    def test_from_responses_tool_missing_id_non_strict(self):
+        """Test that missing call_id logs warning in non-strict mode."""
+        # Note: This tests a malformed input - function_call_output requires call_id
+        inputs: list[dict[str, str]] = [
+            {"type": "function_call_output", "output": "Result"},  # Missing required call_id
+        ]
+        kwargs = openai.types.responses.response_create_params.ResponseCreateParamsNonStreaming(
+            model="gpt-4o",
+            input=inputs,  # type: ignore[arg-type]
+        )
+        request = request_lib.LLMRequest.from_responses(kwargs, strict=False)
+
+        # Should still parse the message but without tool_call_id
+        assert len(request.messages) == 1
+        assert request.messages[0].get("role") == "tool"
+        assert request.messages[0].get("content") == "Result"
+        assert "tool_call_id" not in request.messages[0]
+
+    def test_to_responses_includes_tool_calls(self):
+        """Test that ToolCallMessage is converted to function_call format."""
+        request = request_lib.LLMRequest(
+            messages=[
+                request_lib.UserMessage(role="user", content="What's the weather?"),
+                request_lib.AssistantMessage(role="assistant", content="Let me check..."),
+                request_lib.ToolCallMessage(call_id="call_123", name="get_weather", arguments='{"location":"SF"}'),
+            ],
+        )
+        kwargs = request.to_responses_kwargs()
+
+        # ToolCallMessage should be converted to function_call format
+        tool_call = kwargs["input"][2]
+        assert tool_call["type"] == "function_call"
+        assert tool_call["call_id"] == "call_123"
+        assert tool_call["name"] == "get_weather"
+        assert tool_call["arguments"] == '{"location":"SF"}'
+
+    def test_from_responses_reads_tool_calls(self):
+        """Test that function_call items are read as ToolCallMessage."""
+        inputs: list[openai.types.responses.ResponseInputItemParam] = [
+            openai.types.responses.EasyInputMessageParam(type="message", role="user", content="What's the weather?"),
+            openai.types.responses.response_function_tool_call_param.ResponseFunctionToolCallParam(
+                type="function_call",
+                call_id="call_456",
+                name="get_weather",
+                arguments='{"location":"NYC"}',
+            ),
+        ]
+        kwargs = openai.types.responses.response_create_params.ResponseCreateParamsNonStreaming(
+            model="gpt-4o",
+            input=inputs,
+        )
+        request = request_lib.LLMRequest.from_responses(kwargs)
+
+        tool_call_msg = request.messages[1]
+        assert "call_id" in tool_call_msg
+        assert tool_call_msg["call_id"] == "call_456"  # type: ignore[typeddict-item]
+        assert tool_call_msg["name"] == "get_weather"  # type: ignore[typeddict-item]
+        assert tool_call_msg["arguments"] == '{"location":"NYC"}'  # type: ignore[typeddict-item]
+
+    def test_responses_roundtrip_preserves_tool_call_id(self):
+        """Test that tool_call_id is preserved in roundtrip conversion (via function_call_output)."""
+        original = request_lib.LLMRequest(
+            messages=[
+                request_lib.UserMessage(role="user", content="Check weather"),
+                request_lib.ToolCallResponseMessage(role="tool", content="Sunny", tool_call_id="call_789"),
+            ],
+        )
+        # Convert to Responses format (should use function_call_output)
+        responses_kwargs = original.to_responses_kwargs()
+
+        # Verify it uses function_call_output format
+        assert responses_kwargs["input"][1]["type"] == "function_call_output"
+        assert responses_kwargs["input"][1]["call_id"] == "call_789"
+
+        # Convert back and verify tool_call_id is preserved
+        request2 = request_lib.LLMRequest.from_responses(
+            cast(openai.types.responses.response_create_params.ResponseCreateParamsBase, responses_kwargs)
+        )
+
+        tool_msg = cast(request_lib.ToolCallResponseMessage, request2.messages[1])
+        assert tool_msg["tool_call_id"] == "call_789"
+
+    def test_from_responses_unsupported_tool_type_strict(self):
+        """Test that unsupported tool type raises error in strict mode."""
+        # Create a tool with unsupported type (not "function")
+        unsupported_tool: dict[str, str] = {"type": "browser_tool", "name": "search_web"}
+
+        kwargs: openai.types.responses.response_create_params.ResponseCreateParams = {
+            "model": "gpt-4o",
+            "input": "Hello",
+            "tools": [unsupported_tool],  # type: ignore[list-item]
+        }
+
+        with pytest.raises(ValueError, match=r"Unsupported tool type for conversion"):
+            request_lib.LLMRequest.from_responses(kwargs, strict=True)
+
+    def test_from_responses_unsupported_tool_type_non_strict(self):
+        """Test that unsupported tool type is skipped in non-strict mode."""
+        # Mix of supported and unsupported tools
+        supported_tool: openai.types.responses.FunctionToolParam = openai.types.responses.FunctionToolParam(
+            type="function",
+            name="valid_tool",
+            description="A valid function tool",
+            parameters={"type": "object", "properties": {}},
+            strict=None,
+        )
+        unsupported_tool: dict[str, str] = {"type": "browser_tool", "name": "search_web"}
+
+        kwargs: openai.types.responses.response_create_params.ResponseCreateParams = {
+            "model": "gpt-4o",
+            "input": "Hello",
+            "tools": [supported_tool, unsupported_tool],  # type: ignore[list-item]
+        }
+
+        # Should not raise, but only include the supported tool
+        request = request_lib.LLMRequest.from_responses(kwargs, strict=False)
+
+        assert request.tools is not None
+        assert len(request.tools) == 1
+        assert request.tools[0]["name"] == "valid_tool"
+
+    def test_from_responses_all_unsupported_tools_non_strict(self):
+        """Test that tools is None when all tools are unsupported in non-strict mode."""
+        # Only unsupported tools
+        unsupported_tool1: dict[str, str] = {"type": "browser_tool", "name": "search_web"}
+        unsupported_tool2: dict[str, str] = {"type": "computer_tool", "name": "run_code"}
+
+        kwargs: openai.types.responses.response_create_params.ResponseCreateParams = {
+            "model": "gpt-4o",
+            "input": "Hello",
+            "tools": [unsupported_tool1, unsupported_tool2],  # type: ignore[list-item]
+        }
+
+        # Should not raise, but tools should be None since no valid tools were converted
+        request = request_lib.LLMRequest.from_responses(kwargs, strict=False)
+
+        assert request.tools is None
+
+    def test_to_responses_specific_tool_choice_flat_format(self):
+        """Test that specific tool choice uses flat format for Responses API."""
+        request = request_lib.LLMRequest(
+            messages=[{"role": "user", "content": "Hello"}],
+            tools=[
+                {
+                    "name": "search",
+                    "description": "Search the web",
+                    "input_schema": {"type": "object", "properties": {}},
+                }
+            ],
+            tool_choice={"type": "tool", "name": "search"},
+        )
+        kwargs = request.to_responses_kwargs()
+
+        # Responses API should use flat format: {"type": "function", "name": "search"}
+        assert kwargs["tool_choice"] == {"type": "function", "name": "search"}
+
+    def test_to_chat_completion_specific_tool_choice_nested_format(self):
+        """Test that specific tool choice uses nested format for Chat Completions API."""
+        request = request_lib.LLMRequest(
+            messages=[{"role": "user", "content": "Hello"}],
+            tools=[
+                {
+                    "name": "search",
+                    "description": "Search the web",
+                    "input_schema": {"type": "object", "properties": {}},
+                }
+            ],
+            tool_choice={"type": "tool", "name": "search"},
+        )
+        kwargs = request.to_chat_completion_kwargs()
+
+        # Chat Completions API should use nested format: {"type": "function", "function": {"name": "search"}}
+        assert kwargs["tool_choice"] == {"type": "function", "function": {"name": "search"}}
+
 
 class TestLLMRequestMessagesConversion:
     """Tests for Claude Messages API conversion."""
@@ -426,9 +815,10 @@ class TestLLMRequestMessagesConversion:
         assert kwargs["top_p"] == 0.9
         assert kwargs["top_k"] == 40
         assert kwargs["stream"] is True
-        # Tools stay in Claude format (no conversion needed)
+        # Tools are converted to Anthropic format (explicit type: "custom")
         assert kwargs["tools"] == [
             {
+                "type": "custom",
                 "name": "test",
                 "description": "A test function",
                 "input_schema": {"type": "object", "properties": {}},
@@ -498,7 +888,7 @@ class TestLLMRequestMessagesConversion:
         messages: list[request_lib.Message] = [
             request_lib.UserMessage(role="user", content="What's the weather?"),
             request_lib.AssistantMessage(role="assistant", content="Let me check..."),
-            request_lib.ToolMessage(role="tool", content="Sunny, 72°F", tool_call_id="test"),
+            request_lib.ToolCallResponseMessage(role="tool", content="Sunny, 72°F", tool_call_id="test"),
         ]
         request = request_lib.LLMRequest(
             messages=messages,
@@ -580,6 +970,36 @@ class TestLLMRequestMessagesConversion:
             }
             request = request_lib.LLMRequest.from_messages(kwargs)
             assert request.temperature == openai_temp
+
+    def test_to_messages_strict_alternation_error(self):
+        """Test that non-alternating messages raise error in strict mode."""
+        request = request_lib.LLMRequest(
+            messages=[
+                request_lib.UserMessage(role="user", content="Hello"),
+                request_lib.UserMessage(role="user", content="How are you?"),
+            ],
+        )
+        with pytest.raises(ValueError, match="Messages must alternate"):
+            request.to_messages_kwargs(strict=True)
+
+    def test_to_messages_non_strict_drops_duplicates(self):
+        """Test that non-alternating messages are dropped in non-strict mode."""
+        request = request_lib.LLMRequest(
+            messages=[
+                request_lib.UserMessage(role="user", content="Hello"),
+                request_lib.UserMessage(role="user", content="How are you?"),
+                request_lib.AssistantMessage(role="assistant", content="I'm fine"),
+                request_lib.AssistantMessage(role="assistant", content="Thanks"),
+                request_lib.UserMessage(role="user", content="Great"),
+            ],
+        )
+        kwargs = request.to_messages_kwargs(strict=False)
+
+        # Should keep first of each consecutive group
+        assert len(kwargs["messages"]) == 3
+        assert kwargs["messages"][0] == {"role": "user", "content": "Hello"}
+        assert kwargs["messages"][1] == {"role": "assistant", "content": "I'm fine"}
+        assert kwargs["messages"][2] == {"role": "user", "content": "Great"}
 
 
 class TestLLMRequestCrossAPIConversion:

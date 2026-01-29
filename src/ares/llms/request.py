@@ -14,6 +14,50 @@ import openai.types.shared_params
 _LOGGER = logging.getLogger(__name__)
 
 
+def _extract_string_content(content: Any, *, strict: bool = True, context: str = "content") -> str:
+    """Extract string from content, raising error for unsupported block formats.
+
+    Args:
+        content: Content value - should be a string
+        strict: If True, raise ValueError for non-string content. If False, log warning and return empty string.
+        context: Description of where this content came from (for error messages)
+
+    Returns:
+        The content string
+
+    Raises:
+        ValueError: If strict=True and content is not a plain string
+
+    Note:
+        This function currently does NOT support content blocks (lists of text/image/tool blocks).
+        If you encounter a ValueError about list content, this means the API returned structured
+        content that needs proper handling - see the issue about extracting text from blocks.
+    """
+    if isinstance(content, str):
+        return content
+
+    if not content:
+        return ""
+
+    # Non-string content - this is where we lose information!
+    content_type = type(content).__name__
+    preview = str(content)[:100] if content else ""
+
+    if isinstance(content, list):
+        msg = (
+            f"{context} is a list of blocks (structured content), but we only support plain strings. "
+            f"This will lose information. Preview: {preview}..."
+        )
+    else:
+        msg = f"{context} has unsupported type {content_type}, expected str. Preview: {preview}..."
+
+    if strict:
+        raise ValueError(msg)
+
+    _LOGGER.warning(msg)
+    return ""
+
+
 class UserMessage(TypedDict):
     """User message in a conversation."""
 
@@ -31,8 +75,20 @@ class AssistantMessage(TypedDict, total=False):
     tool_calls: list[dict[str, Any]]  # Optional - for tool usage
 
 
-class ToolMessage(TypedDict):
-    """Tool result message in a conversation."""
+class ToolCallMessage(TypedDict):
+    """Tool call message (tool invocation by assistant).
+
+    Note: In Chat Completions, these are embedded in AssistantMessage.tool_calls.
+    In Responses/Messages APIs, these are separate items.
+    """
+
+    call_id: str
+    name: str
+    arguments: str
+
+
+class ToolCallResponseMessage(TypedDict):
+    """Tool call response message (tool result)."""
 
     role: Literal["tool"]
     content: str
@@ -41,7 +97,7 @@ class ToolMessage(TypedDict):
 
 
 # Union type for all supported message types
-Message = UserMessage | AssistantMessage | ToolMessage
+Message = UserMessage | AssistantMessage | ToolCallMessage | ToolCallResponseMessage
 
 # Valid roles (excludes system/developer which go in system_prompt)
 _VALID_ROLES = frozenset(["user", "assistant", "tool"])
@@ -83,14 +139,14 @@ class ToolChoiceTool(TypedDict):
 ToolChoice = Literal["auto", "any", "none"] | ToolChoiceTool
 
 
-def _tool_to_openai(tool: Tool) -> openai.types.chat.ChatCompletionToolParam:
-    """Convert Tool from Claude format to OpenAI format.
+def _tool_to_chat_completions(tool: Tool) -> openai.types.chat.ChatCompletionToolParam:
+    """Convert Tool from ARES internal format to OpenAI Chat Completions format.
 
     Args:
-        tool: Tool in Claude format (flat with input_schema)
+        tool: Tool in ARES internal format (flat with input_schema)
 
     Returns:
-        Tool in OpenAI format (nested with type and function.parameters)
+        Tool in OpenAI Chat Completions format (nested with type and function.parameters)
     """
     return openai.types.chat.ChatCompletionToolParam(
         type="function",
@@ -102,16 +158,16 @@ def _tool_to_openai(tool: Tool) -> openai.types.chat.ChatCompletionToolParam:
     )
 
 
-def _tool_from_openai(openai_tool: openai.types.chat.ChatCompletionToolParam) -> Tool:
-    """Convert tool from OpenAI Chat Completions format to Claude format.
+def _tool_from_chat_completions(chat_completions_tool: openai.types.chat.ChatCompletionToolParam) -> Tool:
+    """Convert tool from OpenAI Chat Completions format to ARES internal format.
 
     Args:
-        openai_tool: Tool in OpenAI Chat Completions format (nested with type and function.parameters)
+        chat_completions_tool: Tool in OpenAI Chat Completions format (nested with type and function.parameters)
 
     Returns:
-        Tool in Claude format (flat with input_schema)
+        Tool in ARES internal format (flat with input_schema)
     """
-    function = openai_tool["function"]
+    function = chat_completions_tool["function"]
     parameters = function.get("parameters", {"type": "object", "properties": {}})
 
     # Validate that parameters is a valid JSONSchema
@@ -127,14 +183,32 @@ def _tool_from_openai(openai_tool: openai.types.chat.ChatCompletionToolParam) ->
     )
 
 
+def _tool_to_responses(tool: Tool) -> openai.types.responses.FunctionToolParam:
+    """Convert Tool from ARES internal format to OpenAI Responses format.
+
+    Args:
+        tool: Tool in ARES internal format (flat with input_schema)
+
+    Returns:
+        Tool in OpenAI Responses format (flat with type, name, description, parameters)
+    """
+    return openai.types.responses.FunctionToolParam(
+        type="function",
+        name=tool["name"],
+        description=tool["description"],
+        parameters=cast(dict[str, object], tool["input_schema"]),
+        strict=True,
+    )
+
+
 def _tool_from_responses(responses_tool: openai.types.responses.ToolParam) -> Tool:
-    """Convert tool from OpenAI Responses format to Claude format.
+    """Convert tool from OpenAI Responses format to ARES internal format.
 
     Args:
         responses_tool: Tool in OpenAI Responses format (flat with type, name, parameters)
 
     Returns:
-        Tool in Claude format (flat with input_schema)
+        Tool in ARES internal format (flat with input_schema)
 
     Note:
         Currently only supports FunctionToolParam. Other tool types are not converted.
@@ -160,16 +234,33 @@ def _tool_from_responses(responses_tool: openai.types.responses.ToolParam) -> To
     raise ValueError(f"Unsupported tool type for conversion: {responses_tool.get('type')}")
 
 
+def _tool_to_anthropic(tool: Tool) -> anthropic.types.ToolParam:
+    """Convert Tool from ARES internal format to Anthropic Messages format.
+
+    Args:
+        tool: Tool in ARES internal format (flat with input_schema)
+
+    Returns:
+        Tool in Anthropic Messages format (custom tool with type, name, description, input_schema)
+    """
+    return anthropic.types.ToolParam(
+        type="custom",
+        name=tool["name"],
+        description=tool["description"],
+        input_schema=cast(dict[str, object], tool["input_schema"]),
+    )
+
+
 def _tool_from_anthropic(
     anthropic_tool: anthropic.types.ToolUnionParam,
 ) -> Tool:
-    """Convert tool from Anthropic Messages format to internal format.
+    """Convert tool from Anthropic Messages format to ARES internal format.
 
     Args:
         anthropic_tool: Tool in Anthropic format (ToolParam with type='custom'/None, or built-in tool types)
 
     Returns:
-        Tool in internal format
+        Tool in ARES internal format
 
     Raises:
         ValueError: If tool type is unsupported or required fields are missing
@@ -210,10 +301,10 @@ def _tool_from_anthropic(
 
 
 def _tool_choice_to_openai(tool_choice: ToolChoice | None) -> str | dict[str, Any] | None:
-    """Convert internal ToolChoice to OpenAI Chat Completions format.
+    """Convert ARES internal ToolChoice to OpenAI Chat Completions format.
 
     Args:
-        tool_choice: Internal tool choice
+        tool_choice: ARES internal tool choice
 
     Returns:
         Tool choice in OpenAI format:
@@ -235,6 +326,38 @@ def _tool_choice_to_openai(tool_choice: ToolChoice | None) -> str | dict[str, An
         return {
             "type": "function",
             "function": {"name": tool_choice["name"]},
+        }
+
+    return None
+
+
+def _tool_choice_to_responses(tool_choice: ToolChoice | None) -> str | dict[str, Any] | None:
+    """Convert ARES internal ToolChoice to OpenAI Responses format.
+
+    Args:
+        tool_choice: ARES internal tool choice
+
+    Returns:
+        Tool choice in OpenAI Responses format:
+        - "auto": Model decides
+        - "required": Must use at least one tool
+        - "none": Must not use any tools
+        - {"type": "function", "name": "..."}: Specific function (flat structure)
+    """
+    if tool_choice is None:
+        return None
+
+    if tool_choice == "auto":
+        return "auto"
+    elif tool_choice == "any":
+        return "required"  # Map "any" to OpenAI's "required"
+    elif tool_choice == "none":
+        return "none"
+    elif isinstance(tool_choice, dict) and tool_choice.get("type") == "tool":
+        # Responses API uses flat structure: {"type": "function", "name": "..."}
+        return {
+            "type": "function",
+            "name": tool_choice["name"],
         }
 
     return None
@@ -407,8 +530,57 @@ class LLMRequest:
                 raise ValueError(msg)
             _LOGGER.warning(msg)
 
+        # Convert messages, flattening ToolCallMessage into AssistantMessage.tool_calls
+        chat_messages: list[dict[str, Any]] = []
+        pending_tool_calls: list[dict[str, Any]] = []
+
+        for msg in self.messages:
+            msg_dict = dict(msg)
+
+            # ToolCallMessage → collect for previous assistant message
+            if "call_id" in msg_dict and "name" in msg_dict and "arguments" in msg_dict:
+                # This is a ToolCallMessage
+                pending_tool_calls.append(
+                    {
+                        "id": msg_dict["call_id"],
+                        "type": "function",
+                        "function": {
+                            "name": msg_dict["name"],
+                            "arguments": msg_dict["arguments"],
+                        },
+                    }
+                )
+            else:
+                # Flush any pending tool calls to the last assistant message
+                if pending_tool_calls and chat_messages:
+                    last_msg = chat_messages[-1]
+                    if last_msg.get("role") == "assistant":
+                        last_msg["tool_calls"] = pending_tool_calls
+                        pending_tool_calls = []
+                    else:
+                        if strict:
+                            role = last_msg.get("role")
+                            raise ValueError(
+                                f"ToolCallMessage found but previous message is not assistant (role={role})"
+                            )
+                        _LOGGER.warning(
+                            "ToolCallMessage found but previous message is not assistant, discarding tool calls"
+                        )
+                        pending_tool_calls = []
+
+                # Add the current message
+                chat_messages.append(msg_dict)
+
+        # Flush any remaining tool calls
+        if pending_tool_calls and chat_messages:
+            last_msg = chat_messages[-1]
+            if last_msg.get("role") == "assistant":
+                last_msg["tool_calls"] = pending_tool_calls
+            elif strict:
+                raise ValueError("ToolCallMessage at end but last message is not assistant")
+
         kwargs: dict[str, Any] = {
-            "messages": list(self.messages),
+            "messages": chat_messages,
         }
 
         # Add system prompt as first message if present
@@ -428,7 +600,7 @@ class LLMRequest:
         if self.stream:
             kwargs["stream"] = True
         if self.tools:
-            kwargs["tools"] = [_tool_to_openai(tool) for tool in self.tools]
+            kwargs["tools"] = [_tool_to_chat_completions(tool) for tool in self.tools]
         if self.tool_choice is not None:
             kwargs["tool_choice"] = _tool_choice_to_openai(self.tool_choice)
         if self.metadata:
@@ -492,9 +664,9 @@ class LLMRequest:
         if self.stream:
             kwargs["stream"] = True
         if self.tools:
-            kwargs["tools"] = [_tool_to_openai(tool) for tool in self.tools]
+            kwargs["tools"] = [_tool_to_responses(tool) for tool in self.tools]
         if self.tool_choice is not None:
-            kwargs["tool_choice"] = _tool_choice_to_openai(self.tool_choice)
+            kwargs["tool_choice"] = _tool_choice_to_responses(self.tool_choice)
         if self.metadata:
             kwargs["metadata"] = self.metadata
         if self.service_tier and self.service_tier != "standard_only":
@@ -546,7 +718,7 @@ class LLMRequest:
             _LOGGER.warning(msg)
 
         kwargs: dict[str, Any] = {
-            "messages": self._messages_to_claude_format(),
+            "messages": self._messages_to_claude_format(strict=strict),
             "max_tokens": self.max_output_tokens or 1024,  # max_tokens is required by Claude
         }
 
@@ -563,8 +735,8 @@ class LLMRequest:
         if self.stream:
             kwargs["stream"] = True
         if self.tools:
-            # Tools are already in Claude format internally, just pass through
-            kwargs["tools"] = self.tools
+            # Convert tools to Anthropic format (adds explicit type: "custom")
+            kwargs["tools"] = [_tool_to_anthropic(tool) for tool in self.tools]
         if self.tool_choice is not None:
             kwargs["tool_choice"] = _tool_choice_to_anthropic(self.tool_choice)
         if self.metadata:
@@ -578,35 +750,80 @@ class LLMRequest:
         return kwargs
 
     def _messages_to_responses_input(self) -> list[dict[str, Any]]:
-        """Convert messages from Chat format to Responses input items.
+        """Convert messages from internal format to Responses input items.
 
         Returns:
             List of input items for Responses API
+
+        Note:
+            - ToolCallMessage → function_call items
+            - ToolCallResponseMessage → function_call_output items
+            - Other messages → message items
         """
         input_items = []
         for msg in self.messages:
-            # Convert to EasyInputMessageParam format
             msg_dict = dict(msg)  # Convert to regular dict for type safety
-            input_items.append(
-                {
+
+            # ToolCallMessage (tool invocation) → function_call
+            if "call_id" in msg_dict and "name" in msg_dict and "arguments" in msg_dict:
+                item: dict[str, Any] = {
+                    "type": "function_call",
+                    "call_id": msg_dict["call_id"],
+                    "name": msg_dict["name"],
+                    "arguments": msg_dict["arguments"],
+                }
+                input_items.append(item)
+
+            # ToolCallResponseMessage (tool result) → function_call_output
+            elif msg_dict.get("role") == "tool":
+                item = {
+                    "type": "function_call_output",
+                    "output": msg_dict.get("content", ""),
+                }
+                # Include call_id if present (required for routing)
+                if "tool_call_id" in msg_dict:
+                    item["call_id"] = msg_dict["tool_call_id"]
+
+                input_items.append(item)
+
+            # Regular messages → message items
+            else:
+                role = msg_dict.get("role")
+                item = {
                     "type": "message",
-                    "role": msg_dict["role"],
+                    "role": role,
                     "content": msg_dict.get("content", ""),
                 }
-            )
+
+                # Include optional name field if present
+                if "name" in msg_dict:
+                    item["name"] = msg_dict["name"]
+
+                input_items.append(item)
+
         return input_items
 
-    def _messages_to_claude_format(self) -> list[dict[str, Any]]:
+    def _messages_to_claude_format(self, *, strict: bool = True) -> list[dict[str, Any]]:
         """Convert messages from Chat format to Claude alternating format.
+
+        Args:
+            strict: If True, raise ValueError on non-alternating messages. If False, drop
+                   consecutive messages with the same role (keeping first) with a warning.
 
         Returns:
             List of messages in Claude format (user/assistant alternating)
+
+        Raises:
+            ValueError: If strict=True and messages don't alternate roles
 
         Note:
             Claude requires strict alternation. This method filters out system/developer
             messages (should be in system_prompt) and ensures alternation.
         """
         claude_messages = []
+        last_role = None
+        dropped_count = 0
+
         for msg in self.messages:
             msg_dict = dict(msg)  # Convert to regular dict for type safety
             role = msg_dict["role"]
@@ -616,6 +833,25 @@ class LLMRequest:
             # Map tool/function to user role (tool results)
             if role in ("tool", "function"):
                 role = "user"
+
+            # Check for alternation
+            if last_role == role:
+                content = str(msg_dict.get("content", ""))[:50]
+                if strict:
+                    raise ValueError(
+                        f"Messages must alternate between user and assistant roles for Claude API. "
+                        f"Found consecutive '{role}' messages. Message content: {content}..."
+                    )
+                else:
+                    _LOGGER.warning(
+                        "Dropping non-alternating message with role '%s' (content: %s...). "
+                        "Claude requires strict alternation between user and assistant.",
+                        role,
+                        content,
+                    )
+                    dropped_count += 1
+                    continue
+
             # Keep user/assistant as-is
             claude_messages.append(
                 {
@@ -623,6 +859,11 @@ class LLMRequest:
                     "content": msg_dict.get("content", ""),
                 }
             )
+            last_role = role
+
+        if dropped_count > 0 and not strict:
+            _LOGGER.warning("Dropped %d non-alternating message(s) when converting to Claude format", dropped_count)
+
         return claude_messages
 
     @classmethod
@@ -681,7 +922,10 @@ class LLMRequest:
             # Extract system/developer messages as system_prompt (use first one)
             if role in ("system", "developer"):
                 if system_prompt is None:
-                    system_prompt = msg.get("content", "")
+                    content = msg.get("content", "")
+                    system_prompt = _extract_string_content(
+                        content, strict=strict, context=f"System/developer message content (role={role})"
+                    )
                 continue
 
             # Validate role is supported
@@ -691,8 +935,44 @@ class LLMRequest:
                 _LOGGER.warning("Skipping message with unsupported role: %s", role)
                 continue
 
-            # Convert to our Message format - cast dict to Message since we validated the role
-            filtered_messages.append(cast(Message, dict(msg)))
+            # Extract tool_calls from assistant messages
+            if role == "assistant" and "tool_calls" in msg and msg["tool_calls"]:
+                # Add assistant message without tool_calls (or with content only)
+                assistant_msg = dict(msg)
+                # Remove tool_calls from the message we store
+                tool_calls_list = assistant_msg.pop("tool_calls", [])
+
+                # Validate content if present
+                if "content" in assistant_msg:
+                    assistant_msg["content"] = _extract_string_content(
+                        assistant_msg["content"], strict=strict, context="Assistant message content"
+                    )
+
+                filtered_messages.append(cast(Message, assistant_msg))
+
+                # Create separate ToolCallMessage for each tool call
+                if isinstance(tool_calls_list, list):
+                    for tool_call in tool_calls_list:
+                        if tool_call.get("type") == "function":
+                            function = tool_call.get("function", {})
+                            filtered_messages.append(
+                                cast(
+                                    Message,
+                                    {
+                                        "call_id": tool_call.get("id", ""),
+                                        "name": function.get("name", ""),
+                                        "arguments": function.get("arguments", ""),
+                                    },
+                                )
+                            )
+            else:
+                # Convert to our Message format, validating content
+                message_dict = dict(msg)
+                if "content" in message_dict:
+                    message_dict["content"] = _extract_string_content(
+                        message_dict["content"], strict=strict, context=f"Message content (role={role})"
+                    )
+                filtered_messages.append(cast(Message, message_dict))
 
         # Convert tools from OpenAI to Claude format
         tools_param = kwargs.get("tools")
@@ -706,7 +986,9 @@ class LLMRequest:
                         raise ValueError(f"Unsupported tool type: {tool_type}. Only 'function' tools are supported.")
                     _LOGGER.warning("Skipping tool with unsupported type: %s", tool_type)
                     continue
-                converted_tools.append(_tool_from_openai(cast(openai.types.chat.ChatCompletionToolParam, tool)))
+                converted_tools.append(
+                    _tool_from_chat_completions(cast(openai.types.chat.ChatCompletionToolParam, tool))
+                )
 
         # Handle stop sequences - convert single string to list
         stop_param = kwargs.get("stop")
@@ -719,13 +1001,7 @@ class LLMRequest:
         # Handle system prompt - extract string from various formats
         final_system_prompt: str | None = None
         if system_prompt:
-            if isinstance(system_prompt, str):
-                final_system_prompt = system_prompt
-            else:
-                # If it's an iterable, try to extract text content
-                if strict:
-                    raise ValueError("system_prompt must be a string in Chat Completions format")
-                _LOGGER.warning("Non-string system prompt provided, skipping")
+            final_system_prompt = _extract_string_content(system_prompt, strict=strict, context="System prompt")
 
         return cls(
             messages=filtered_messages,
@@ -794,7 +1070,61 @@ class LLMRequest:
             filtered_messages = [UserMessage(role="user", content=input_param)]
         elif isinstance(input_param, list):
             for item in input_param:
-                if item.get("type") == "message":
+                item_type = item.get("type")
+
+                # Handle function_call (tool invocations)
+                if item_type == "function_call":
+                    call_id = item.get("call_id")
+                    name = item.get("name")
+                    arguments = item.get("arguments", "")
+
+                    if call_id is None or name is None:
+                        if strict:
+                            raise ValueError(
+                                f"Tool call (function_call) missing required 'call_id' or 'name' field. Item: {item}"
+                            )
+                        _LOGGER.warning("Tool call (function_call) missing required fields, skipping. Item: %s", item)
+                        continue
+
+                    # Create ToolCallMessage
+                    filtered_messages.append(
+                        cast(
+                            Message,
+                            {
+                                "call_id": call_id,
+                                "name": name,
+                                "arguments": arguments if isinstance(arguments, str) else str(arguments),
+                            },
+                        )
+                    )
+
+                # Handle function_call_output (tool results)
+                elif item_type == "function_call_output":
+                    call_id = item.get("call_id")
+                    output = item.get("output", "")
+                    output_str = output if isinstance(output, str) else str(output)
+
+                    if call_id is None:
+                        if strict:
+                            raise ValueError(
+                                "Tool result (function_call_output) missing required 'call_id' field for routing. "
+                                f"Output: {output_str[:50]}..."
+                            )
+                        _LOGGER.warning(
+                            "Tool result (function_call_output) missing 'call_id' field (output: %s...). "
+                            "This may cause routing issues.",
+                            output_str[:50],
+                        )
+                        # Create tool message without call_id
+                        filtered_messages.append(cast(Message, {"role": "tool", "content": output_str}))
+                    else:
+                        # Create tool message with call_id
+                        filtered_messages.append(
+                            cast(Message, {"role": "tool", "content": output_str, "tool_call_id": call_id})
+                        )
+
+                # Handle regular messages
+                elif item_type == "message":
                     role = item.get("role")
 
                     # Validate role is supported
@@ -804,18 +1134,37 @@ class LLMRequest:
                         _LOGGER.warning("Skipping message with unsupported role: %s", role)
                         continue
 
-                    # Extract content - it might be string or complex content list
+                    # Extract content - use helper to detect unsupported block formats
                     content_param = item.get("content", "")
-                    content_str = content_param if isinstance(content_param, str) else ""
+                    content_str = _extract_string_content(
+                        content_param, strict=strict, context=f"Message content (role={role})"
+                    )
 
-                    # Cast to Message after validating role
-                    filtered_messages.append(cast(Message, {"role": role, "content": content_str}))
+                    # Build message dict with required fields
+                    message_dict: dict[str, Any] = {"role": role, "content": content_str}
+
+                    # Include optional name field if present
+                    if "name" in item:
+                        message_dict["name"] = item["name"]
+
+                    # Cast to Message after validating role and building dict
+                    filtered_messages.append(cast(Message, message_dict))
 
         # Convert tools from Responses format to Claude format
         tools_param = kwargs.get("tools")
         converted_tools: list[Tool] | None = None
         if tools_param:
-            converted_tools = [_tool_from_responses(tool) for tool in tools_param]
+            temp_tools: list[Tool] = []
+            for tool in tools_param:
+                try:
+                    temp_tools.append(_tool_from_responses(tool))
+                except ValueError as e:
+                    if strict:
+                        raise
+                    _LOGGER.warning("Skipping tool that cannot be converted: %s", e)
+            # Only set converted_tools if we successfully converted at least one tool
+            if temp_tools:
+                converted_tools = temp_tools
 
         return cls(
             messages=filtered_messages,
@@ -882,11 +1231,8 @@ class LLMRequest:
         # Extract system prompt (can be str or list of text blocks)
         system_param = kwargs.get("system")
         system_prompt = None
-        if isinstance(system_param, str):
-            system_prompt = system_param
-        elif isinstance(system_param, list) and system_param:
-            # Extract text from first text block
-            system_prompt = system_param[0].get("text", "") if isinstance(system_param[0], dict) else ""
+        if system_param:
+            system_prompt = _extract_string_content(system_param, strict=strict, context="System prompt")
 
         # Filter and validate messages
         filtered_messages: list[Message] = []
@@ -900,8 +1246,13 @@ class LLMRequest:
                 _LOGGER.warning("Skipping message with unsupported role: %s", role)
                 continue
 
-            # Convert to our Message format - cast after validating role
-            filtered_messages.append(cast(Message, dict(msg)))
+            # Convert to our Message format, validating content
+            message_dict = dict(msg)
+            if "content" in message_dict:
+                message_dict["content"] = _extract_string_content(
+                    message_dict["content"], strict=strict, context=f"Message content (role={role})"
+                )
+            filtered_messages.append(cast(Message, message_dict))
 
         # Convert tools from Anthropic format to internal format
         tools_param = kwargs.get("tools")
