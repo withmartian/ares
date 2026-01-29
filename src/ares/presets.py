@@ -18,6 +18,7 @@ from harbor.models.task import task as harbor_task
 from ares import registry
 from ares.code_agents import code_agent_base
 from ares.code_agents import mini_swe_agent
+from ares.code_agents.terminus2 import terminus2_agent
 from ares.containers import containers
 from ares.environments import base
 from ares.environments import code_env
@@ -57,7 +58,9 @@ class HarborSpec:
         """Return metadata about Harbor Verified."""
         return registry.EnvironmentInfo(
             name=f"{self.dataset_id}-{self.code_agent_id}",
-            description=f"{self.dataset_name} (through Harbor registry) with {self.code_agent_id}",
+            description=(
+                f"{self.dataset_name}@{self.dataset_version} (through Harbor registry) with {self.code_agent_id}"
+            ),
             num_tasks=len(self.ds_spec.tasks),
         )
 
@@ -93,6 +96,7 @@ def _register_default_presets() -> None:
     for ds_spec in code_env.list_harbor_datasets():
         for code_agent_id, code_agent_factory in [
             ("mswea", mini_swe_agent.MiniSWECodeAgent),
+            ("terminus2", terminus2_agent.Terminus2Agent),
         ]:
             ds_id = _make_harbor_dataset_id(ds_spec.name, ds_spec.version)
             registry.register_preset(

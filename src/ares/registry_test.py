@@ -6,8 +6,6 @@ from typing import Any
 
 import pytest
 
-from ares import info
-from ares import make
 from ares import registry
 from ares.containers import containers
 from ares.containers import docker
@@ -61,7 +59,7 @@ def test_list_presets():
 
 def test_info_all_presets():
     """Test info() without arguments returns all presets."""
-    result = info()
+    result = registry.info()
     assert isinstance(result, Sequence)
     assert len(result) >= 1
     assert any(env_info.name == "sbv-mswea" for env_info in result)
@@ -69,7 +67,7 @@ def test_info_all_presets():
 
 def test_info_specific_preset():
     """Test info() with a specific preset name."""
-    result = info("sbv-mswea")
+    result = registry.info("sbv-mswea")
     assert isinstance(result, registry.EnvironmentInfo)
     assert result.name == "sbv-mswea"
 
@@ -77,7 +75,7 @@ def test_info_specific_preset():
 def test_info_missing_preset():
     """Test info() with a non-existent preset raises KeyError."""
     with pytest.raises(KeyError, match="not found"):
-        info("nonexistent:preset")
+        registry.info("nonexistent:preset")
 
 
 def test_register_custom_preset():
@@ -89,7 +87,7 @@ def test_register_custom_preset():
     assert "test-custom" in registry._list_presets()
 
     # Verify info includes task count
-    result = info("test-custom")
+    result = registry.info("test-custom")
     assert isinstance(result, registry.EnvironmentInfo)
     assert result.name == "test-custom"
     assert result.num_tasks == 10
@@ -127,7 +125,7 @@ def test_unregister_missing_preset():
 def test_make_missing_preset():
     """Test that make() with a non-existent preset raises KeyError."""
     with pytest.raises(KeyError, match="not found"):
-        make("nonexistent-preset")
+        registry.make("nonexistent-preset")
 
 
 def test_make_with_params():
@@ -136,7 +134,7 @@ def test_make_with_params():
     registry.register_preset("test-params", spec)
 
     # Test with default container_factory
-    result: Any = make("test-params")
+    result: Any = registry.make("test-params")
     assert result["container_factory"] == docker.DockerContainer
     assert result["tracker"] is None
     assert isinstance(result["selector"], registry.SliceSelector)
@@ -145,7 +143,7 @@ def test_make_with_params():
 
     # Test with explicit tracker
     test_tracker = stat_tracker.NullStatTracker()
-    result = make("test-params", tracker=test_tracker)
+    result = registry.make("test-params", tracker=test_tracker)
     assert result["container_factory"] == docker.DockerContainer
     assert result["tracker"] == test_tracker
 
@@ -356,18 +354,18 @@ def test_make_with_selector():
     registry.register_preset("test-selector", spec)
 
     # Test single index
-    result: Any = make("test-selector:5")
+    result: Any = registry.make("test-selector:5")
     assert isinstance(result["selector"], registry.IndexSelector)
     assert result["selector"].index == 5
 
     # Test slice
-    result = make("test-selector:0:5")
+    result = registry.make("test-selector:0:5")
     assert isinstance(result["selector"], registry.SliceSelector)
     assert result["selector"].start == 0
     assert result["selector"].end == 5
 
     # Test shard
-    result = make("test-selector@2/4")
+    result = registry.make("test-selector@2/4")
     assert isinstance(result["selector"], registry.ShardSelector)
     assert result["selector"].shard_index == 2
     assert result["selector"].total_shards == 4
@@ -404,7 +402,7 @@ def test_register_env_decorator_basic():
     assert "test-decorator" in registry._list_presets()
 
     # Verify info is correct
-    info_result = info("test-decorator")
+    info_result = registry.info("test-decorator")
     assert isinstance(info_result, registry.EnvironmentInfo)
     assert info_result.name == "test-decorator"
     assert info_result.num_tasks == 42
@@ -436,14 +434,14 @@ def test_register_env_decorator_make():
         }
 
     # Test make() with default parameters
-    result: Any = make("test-decorator-make")
+    result: Any = registry.make("test-decorator-make")
     assert result["container_factory"] == docker.DockerContainer
     assert result["tracker"] is None
     assert isinstance(result["selector"], registry.SliceSelector)
 
     # Test make() with custom tracker
     test_tracker = stat_tracker.NullStatTracker()
-    result = make("test-decorator-make", tracker=test_tracker)
+    result = registry.make("test-decorator-make", tracker=test_tracker)
     assert result["tracker"] == test_tracker
 
     # Clean up
@@ -472,18 +470,18 @@ def test_register_env_decorator_with_selector():
         }
 
     # Test single index
-    result: Any = make("test-decorator-selector:5")
+    result: Any = registry.make("test-decorator-selector:5")
     assert isinstance(result["selector"], registry.IndexSelector)
     assert result["selector"].index == 5
 
     # Test slice
-    result = make("test-decorator-selector:0:10")
+    result = registry.make("test-decorator-selector:0:10")
     assert isinstance(result["selector"], registry.SliceSelector)
     assert result["selector"].start == 0
     assert result["selector"].end == 10
 
     # Test shard
-    result = make("test-decorator-selector@3/8")
+    result = registry.make("test-decorator-selector@3/8")
     assert isinstance(result["selector"], registry.ShardSelector)
     assert result["selector"].shard_index == 3
     assert result["selector"].total_shards == 8

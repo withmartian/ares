@@ -30,6 +30,7 @@ class DockerContainer(containers.Container):
     name: str | None = None
     # TODO: Figure out a way to set resources for docker containers.
     resources: containers.Resources | None = None
+    default_workdir: str | None = None
     _container: docker.models.containers.Container | None = dataclasses.field(default=None, init=False)
 
     @functools.cached_property
@@ -100,6 +101,10 @@ class DockerContainer(containers.Container):
         env: dict[str, str] | None = None,
         timeout_s: float | None = None,
     ) -> containers.ExecResult:
+        # Use default_workdir if workdir is not explicitly provided
+        if workdir is None:
+            workdir = self.default_workdir
+
         # We have to run the command with `sh -c` to handle multiple commands in a single string.
         result = await asyncio.wait_for(
             asyncio.to_thread(
@@ -185,8 +190,9 @@ class DockerContainer(containers.Container):
         image: str,
         name: str | None = None,
         resources: containers.Resources | None = None,
+        default_workdir: str | None = None,
     ) -> "DockerContainer":
-        return DockerContainer(image=image, name=name, resources=resources)
+        return DockerContainer(image=image, name=name, resources=resources, default_workdir=default_workdir)
 
     @classmethod
     def from_dockerfile(
@@ -195,5 +201,8 @@ class DockerContainer(containers.Container):
         dockerfile_path: pathlib.Path | str,
         name: str | None = None,
         resources: containers.Resources | None = None,
+        default_workdir: str | None = None,
     ) -> "DockerContainer":
-        return DockerContainer(dockerfile_path=dockerfile_path, name=name, resources=resources)
+        return DockerContainer(
+            dockerfile_path=dockerfile_path, name=name, resources=resources, default_workdir=default_workdir
+        )
