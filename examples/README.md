@@ -2,6 +2,25 @@
 
 This directory contains pedagogical examples demonstrating how to use ARES to evaluate code agents. Each example builds on the previous one, introducing new concepts and capabilities.
 
+## Prerequisites
+
+Each example will list its prerequisites in its own docstring.
+It's helpful for most of the examples to have both a Martian API key (for an LLM inference API) and a Daytona API key (for cloud sandboxes).
+
+### Martian
+
+1) sign up at https://app.withmartian.com.
+1) on the `Billing` tab, add a payment method + top up some credits.
+1) on the `API Keys` tab create an API key.
+1) write `CHAT_COMPLETION_API_KEY={your-key}` in your `.env`
+
+### Daytona
+
+1) Sign up at https://www.daytona.io.
+1) Go to API Keys and create an API key.
+1) write `DAYTONA_API_KEY={your-key}` in your `.env`
+1) write `DAYTONA_API_URL={api-url}` in your `.env`
+
 ## Running Examples
 
 Examples are **not packaged in the ARES wheel** and must be run from the ARES repository directory:

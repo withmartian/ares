@@ -51,6 +51,7 @@ from ares.registry import EnvironmentInfo
 
 # Import registry functions to expose at top level
 from ares.registry import info
+from ares.registry import list_presets
 from ares.registry import make
 
 # Define public API
@@ -59,5 +60,6 @@ __all__ = [
     "EnvironmentInfo",
     "TimeStep",
     "info",
+    "list_presets",
     "make",
 ]

@@ -10,10 +10,10 @@
   <img margin="auto" width="auto" height="312" alt="image" src="https://github.com/user-attachments/assets/ae34ab36-b78f-48de-93c9-01d611a547e3" />
 </p>
 
-ARES (Agentic Research and Evaluation Suite) is an RL-first framework for training and evaluating agents.
+ARES is an RL-first framework for training and evaluating LLM agents, especially coding agents.
 
+It is a modern [gym](https://github.com/Farama-Foundation/Gymnasium): the environment layer powering RL research.
 
-📚 **[Read the full documentation](https://martian-ares.readthedocs.io/en/latest/)** to learn about ARES's core concepts and architecture.
 
 ## Quick Start
 
@@ -23,35 +23,33 @@ ARES (Agentic Research and Evaluation Suite) is an RL-first framework for traini
 
 ### Getting Started
 
-We highly recommend using uv to install ARES:
+Install with uv:
 
 ```
 uv add martian-ares
 ```
 
-However you could also use pip:
+ARES comes packaged with useful presets for different agent/environment configurations. List them with:
 
 ```
-pip install martian-ares
+uv run python -c "import ares; ares.list_presets()"
 ```
 
-Once ARES is installed you can see which presets are available to run:
+You can get started by using this minimal loop to run mini-swe-agent on SWE-bench Verified sequentially.
 
+Note: this example uses a local LLM. You'll need to install additional optional dependencies:
 ```
-"import ares; print('\n'.join([str(x) for x in ares.info()]))"
+uv add martian-ares[llamacpp]
 ```
-
-<!-- TODO: Add clear instructions for getting an API key -->
-And then run them with this minimal loop. Note: to run `gpt-5-mini` you will need a Martian API key.
 
 ```
 import asyncio
 
 import ares
-from ares.code_agents import llms
+from ares.contrib import llama_cpp
 
 async def main():
-    agent = llms.ChatCompletionCompatibleLLMClient(model="openai/gpt-5-mini")
+    agent = llama_cpp.create_qwen2_0_5b_instruct_llama_cpp_client()
 
     async with ares.make("sbv-mswea") as env:
         ts = await env.reset()
@@ -63,138 +61,9 @@ if __name__ == "__main__":
     asyncio.run(main())
 ```
 
-For more usage patterns, see the [examples](https://github.com/withmartian/ares/tree/main/examples).
+That's it!
 
-<!-- TODO: rework this section -->
-## ARES development instructions
+### Next Steps
 
-Get ARES running in minutes - no API keys required!
-
-### Prerequisites
-
-- **Python 3.12 or higher**
-- **[Docker](https://docs.docker.com/get-docker/)** - For running code agents in containers
-- **[uv](https://docs.astral.sh/uv/)** - Fast Python package installer and resolver
-
-To install `uv`, follow the instructions at https://docs.astral.sh/uv/getting-started/installation/
-
-### Installation
-
-For now, we recommend running ARES locally from this directory:
-
-```bash
-uv sync --all-groups
-```
-
-and you're ready to get started.
-
-### Your First ARES "Agent"
-No API keys needed!
-
-Run the Hello World example to see the RL loop in action:
-
-```bash
-uv run -m examples.00_hello_world
-```
-
-This example uses:
-- ✓ Local Docker containers (no cloud account needed)
-- ✓ A mock LLM (no API keys needed)
-
-You'll see how ARES treats code agent interactions as a reinforcement learning problem, with LLM requests as observations and LLM responses as actions.
-
-## Examples
-
-ARES includes several examples that demonstrate different usage patterns:
-
-### 1. Minimal Loop (Local Docker + Real LLM)
-**File:** `examples/01_minimal_loop.py`
-**What you'll need:** Docker, Martian API key
-
-```bash
-# Set up your API key first (see Cloud Setup below)
-uv run -m examples.01_minimal_loop
-```
-
-Shows the RL loop with a real LLM (via Martian API) and local Docker containers.
-
-### 2. Local LLM (Fully Local)
-**File:** `examples/02_local_llm.py`
-**What you'll need:** Docker
-
-```bash
-uv run -m examples.02_local_llm
-```
-
-Demonstrates running ARES completely locally using a local LLM (Qwen2.5-3B-Instruct). No cloud services required.
-
-## Cloud Setup (Optional)
-
-For production use or larger-scale experiments, you can use cloud containers and API-based LLMs.
-
-### Option 1: Using Martian API for LLM Inference
-
-1. Create an account at [https://app.withmartian.com](https://app.withmartian.com)
-2. Copy the example environment file: `cp .env.example .env`
-3. Add your Martian API key: `CHAT_COMPLETION_API_KEY=your_key_here`
-
-### Option 2: Using Daytona for Cloud Containers
-
-By default, ARES uses Daytona for container management. To set this up:
-
-1. Create a Daytona account at [https://www.daytona.io](https://www.daytona.io/)
-2. Copy the example environment file: `cp .env.example .env`
-3. Add your Daytona credentials:
-   - `DAYTONA_API_KEY=your_key_here`
-   - `DAYTONA_API_URL=your_url_here`
-
-See `.env.example` for all available configuration options.
-
-## API Usage
-
-ARES environments use an async version of the [dm_env](https://github.com/google-deepmind/dm_env) spec. Here's a complete example:
-
-```python
-import asyncio
-
-from ares.code_agents import mini_swe_agent
-from ares.containers import docker  # Use local Docker, or import daytona for cloud
-from ares.environments import harbor_env
-from ares.llms import chat_completions_compatible
-
-
-async def main():
-    # Create an LLM client (requires CHAT_COMPLETION_API_KEY in .env)
-    llm_client = chat_completions_compatible.ChatCompletionCompatibleLLMClient(
-        model="openai/gpt-4o-mini"
-    )
-
-    # Load SWE-bench tasks via Harbor
-    all_tasks = harbor_env.load_harbor_dataset(name="swebench-verified", version="1.0")
-    tasks = [all_tasks[0]]  # Run on only one task for now
-
-    # Create environment with local Docker and mini-swe-agent
-    async with harbor_env.HarborEnv(
-        tasks=tasks,
-        container_factory=docker.DockerContainer,  # Use local Docker
-        code_agent_factory=mini_swe_agent.MiniSWECodeAgent,
-    ) as env:
-        # The RL loop
-        ts = await env.reset()
-        while not ts.last():
-            # Environment sends observation (LLM request) to agent
-            action = await llm_client(ts.observation)
-
-            # Environment processes action (LLM response) and returns next state
-            ts = await env.step(action)
-            print(f"Step complete. Reward: {ts.reward}")
-
-
-if __name__ == "__main__":
-    asyncio.run(main())
-```
-
-This example uses:
-- **Container backend:** Local Docker (change to `daytona.DaytonaContainer` for cloud)
-- **LLM backend:** Martian API (or any OpenAI-compatible API)
-- **Code agent:** mini-swe-agent library
+1. Check out the [examples](https://github.com/withmartian/ares/tree/main/examples)
+1. Read the [docs]()
