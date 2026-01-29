@@ -473,6 +473,11 @@ class Terminus2Agent(code_agent_base.CodeAgent):
         except Exception as e:
             _LOGGER.warning("[%d] Error killing tmux session: %s", id(self), e)
 
+        # Reset session state so the next run can recreate the session cleanly
+        self._tmux_initialized = False
+        self._session_alive = False
+        self._previous_buffer = None
+
     async def run(self, task: str) -> None:
         """Run the agent on the given task.
 
