@@ -93,7 +93,36 @@ Before submitting a PR:
    - Each commit should represent a logical change
    - Use clear, descriptive commit messages
 
-## Code Style Notes
+## Code Style Guide
+
+### Import Conventions
+
+Follow **Google-style imports**: always import modules, not individual classes or functions.
+
+**Examples:**
+```python
+# Good ✅
+import ares
+from ares import llms
+
+request = llms.LLMRequest(messages=[...])
+env = ares.make("sbv-mswea")
+
+# Good for internal code ✅
+from ares.llms import request
+from ares.llms import response
+
+req = request.LLMRequest(messages=[...])
+resp = response.LLMResponse(data=[...], cost=0.0, usage=...)
+
+# Avoid ❌
+from ares.llms import LLMRequest, TextData
+from ares.llms.request import LLMRequest
+```
+
+**Rationale:** Makes code more readable and explicit about where objects come from.
+
+### Comments
 
 - **Comments should explain WHY, not WHAT:** The code itself should be clear about what it does. Use comments to explain the reasoning, edge cases, or non-obvious decisions.
 - **Comments explaining HOW:** Only add these when the implementation is genuinely complex or uses a non-standard approach that might confuse future maintainers.

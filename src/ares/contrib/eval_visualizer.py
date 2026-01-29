@@ -33,8 +33,8 @@ from textual import containers
 from textual import widgets
 
 from ares.environments import base
-from ares.llms import llm_clients
 from ares.llms import request
+from ares.llms import response
 
 
 class TaskStatus(Enum):
@@ -90,7 +90,7 @@ class TrackedEnvironment[RewardType: base.Scalar, DiscountType: base.Scalar]:
 
     def __init__(
         self,
-        env: base.Environment[llm_clients.LLMResponse, request.LLMRequest, RewardType, DiscountType],
+        env: base.Environment[response.LLMResponse, request.LLMRequest, RewardType, DiscountType],
         task_id: int,
         dashboard: "EvaluationDashboard",
     ):
@@ -116,9 +116,7 @@ class TrackedEnvironment[RewardType: base.Scalar, DiscountType: base.Scalar]:
         self._total_cost = 0.0
         return ts
 
-    async def step(
-        self, action: llm_clients.LLMResponse
-    ) -> base.TimeStep[request.LLMRequest, RewardType, DiscountType]:
+    async def step(self, action: response.LLMResponse) -> base.TimeStep[request.LLMRequest, RewardType, DiscountType]:
         """Step the environment and update dashboard."""
         self._step_count += 1
 
@@ -699,7 +697,7 @@ class EvaluationDashboard(app.App):
     def wrap[RewardType: base.Scalar, DiscountType: base.Scalar](
         self,
         task_id: int,
-        env: base.Environment[llm_clients.LLMResponse, request.LLMRequest, RewardType, DiscountType],
+        env: base.Environment[response.LLMResponse, request.LLMRequest, RewardType, DiscountType],
     ) -> TrackedEnvironment[RewardType, DiscountType]:
         """Wrap an ARES LLM environment with automatic dashboard tracking.
 

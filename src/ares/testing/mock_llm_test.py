@@ -30,7 +30,7 @@ async def test_mock_llm_client_default_response():
     req = request.LLMRequest(messages=[{"role": "user", "content": "test"}])
     response = await client(req)
 
-    assert response.chat_completion_response.choices[0].message.content == "Mock LLM response"
+    assert response.data[0].content == "Mock LLM response"
     assert response.cost == 0.0
 
 
@@ -46,10 +46,10 @@ async def test_mock_llm_client_configured_responses():
     response3 = await client(req)
     response4 = await client(req)  # Should cycle back to first
 
-    assert response1.chat_completion_response.choices[0].message.content == "First"
-    assert response2.chat_completion_response.choices[0].message.content == "Second"
-    assert response3.chat_completion_response.choices[0].message.content == "Third"
-    assert response4.chat_completion_response.choices[0].message.content == "First"
+    assert response1.data[0].content == "First"
+    assert response2.data[0].content == "Second"
+    assert response3.data[0].content == "Third"
+    assert response4.data[0].content == "First"
 
 
 @pytest.mark.asyncio
@@ -66,7 +66,7 @@ async def test_mock_llm_client_response_handler():
     req = request.LLMRequest(messages=[{"role": "user", "content": "Hello AI"}])
     response = await client(req)
 
-    assert response.chat_completion_response.choices[0].message.content == "You said: Hello AI"
+    assert response.data[0].content == "You said: Hello AI"
 
 
 @pytest.mark.asyncio
@@ -147,25 +147,16 @@ async def test_mock_llm_response_structure():
     response = await client(req)
 
     # Check response structure
-    assert hasattr(response, "chat_completion_response")
+    assert hasattr(response, "data")
     assert hasattr(response, "cost")
+    assert hasattr(response, "usage")
 
-    # Check chat completion structure
-    completion = response.chat_completion_response
-    assert hasattr(completion, "id")
-    assert hasattr(completion, "choices")
-    assert hasattr(completion, "model")
-    assert hasattr(completion, "usage")
-
-    # Check choice structure
-    assert len(completion.choices) == 1
-    choice = completion.choices[0]
-    assert hasattr(choice, "message")
-    assert choice.message.role == "assistant"
-    assert choice.finish_reason == "stop"
+    # Check data structure
+    assert len(response.data) == 1
+    assert hasattr(response.data[0], "content")
+    assert response.data[0].content == "Mock LLM response"
 
     # Check usage structure
-    assert completion.usage is not None
-    assert completion.usage.prompt_tokens == 100
-    assert completion.usage.completion_tokens == 50
-    assert completion.usage.total_tokens == 150
+    assert response.usage.prompt_tokens == 100
+    assert response.usage.generation_tokens == 50
+    assert response.usage.total_tokens == 150

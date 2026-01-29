@@ -6,8 +6,7 @@ import logging
 from typing import Any
 
 import ares
-from ares.environments import base
-from ares.llms import llm_clients
+from ares import llms
 import tqdm
 
 _LOGGER = logging.getLogger(__name__)
@@ -15,8 +14,8 @@ _LOGGER = logging.getLogger(__name__)
 
 def print_step(
     step_count: int,
-    observation: ares.LLMRequest | None,
-    action: llm_clients.LLMResponse,
+    observation: llms.LLMRequest | None,
+    action: llms.LLMResponse,
 ) -> None:
     """Print a step in the RL loop.
 
@@ -35,7 +34,7 @@ def print_step(
             observation_preview += "..."
         print(f"Observation (from environment): {observation_preview}")
 
-    action_content = action.chat_completion_response.choices[0].message.content or ""
+    action_content = action.data[0].content
     action_preview = str(action_content)[:200]
     if len(action_content) > 200:
         action_preview += "..."
@@ -43,8 +42,8 @@ def print_step(
 
 
 async def gather_with_scores(
-    *futs: Awaitable[base.TimeStep[Any, float, float] | Exception],
-) -> list[base.TimeStep[Any, float, float] | Exception]:
+    *futs: Awaitable[ares.TimeStep[Any, float, float] | Exception],
+) -> list[ares.TimeStep[Any, float, float] | Exception]:
     """Gather the results of a list of futures while reporting scores.
 
     Creates a tqdm bar which reports:
@@ -58,7 +57,7 @@ async def gather_with_scores(
     Returns:
         A list of results.
     """
-    results: list[base.TimeStep[Any, float, float] | Exception] = []
+    results: list[ares.TimeStep[Any, float, float] | Exception] = []
     reward_sum = 0.0
     finished = 0
     errors = 0
@@ -74,7 +73,7 @@ async def gather_with_scores(
 
             results.append(result)
 
-            if isinstance(result, base.TimeStep):
+            if isinstance(result, ares.TimeStep):
                 assert result.reward is not None
                 reward_sum += result.reward
                 finished += 1
