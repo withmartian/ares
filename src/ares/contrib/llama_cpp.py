@@ -96,7 +96,12 @@ class LlamaCppLLMClient(llm_clients.LLMClient):
 
         _LOGGER.debug("[%d] LLM response received.", id(self))
 
-        return response.LLMResponse(chat_completion_response=chat_completion, cost=0.0)
+        content = chat_completion.choices[0].message.content or ""
+        usage = response.Usage(
+            prompt_tokens=chat_completion.usage.prompt_tokens if chat_completion.usage else 0,
+            generation_tokens=chat_completion.usage.completion_tokens if chat_completion.usage else 0,
+        )
+        return response.LLMResponse(data=[response.TextData(content=content)], cost=0.0, usage=usage)
 
 
 create_qwen2_0_5b_instruct_llama_cpp_client = functools.partial(

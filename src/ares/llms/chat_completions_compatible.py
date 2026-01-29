@@ -59,4 +59,9 @@ class ChatCompletionCompatibleLLMClient(llm_clients.LLMClient):
         cost = accounting.get_llm_cost(self.model, resp, cost_mapping=accounting.martian_cost_list())
         cost = float(cost)
 
-        return response.LLMResponse(chat_completion_response=resp, cost=cost)
+        content = resp.choices[0].message.content or ""
+        usage = response.Usage(
+            prompt_tokens=resp.usage.prompt_tokens if resp.usage else 0,
+            generation_tokens=resp.usage.completion_tokens if resp.usage else 0,
+        )
+        return response.LLMResponse(data=[response.TextData(content=content)], cost=cost, usage=usage)

@@ -220,7 +220,7 @@ class MiniSWECodeAgent(code_agent_base.CodeAgent):
         self._n_calls += 1
         self._total_cost += response.cost
 
-        message_content = response.chat_completion_response.choices[0].message.content
+        message_content = response.data[0].content
         assert message_content is not None
 
         self._add_message("assistant", message_content)
@@ -230,7 +230,7 @@ class MiniSWECodeAgent(code_agent_base.CodeAgent):
     async def execute_action(self, response: response.LLMResponse) -> None:
         """Execute the action and return the observation."""
         _LOGGER.debug("[%d] Executing action.", id(self))
-        response_text = response.chat_completion_response.choices[0].message.content
+        response_text = response.data[0].content
         assert response_text is not None
 
         action = self.parse_action(response_text)

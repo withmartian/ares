@@ -2,14 +2,7 @@
 
 from collections.abc import Callable
 import dataclasses
-import time
-import uuid
 
-import openai.types.chat.chat_completion
-import openai.types.chat.chat_completion_message
-import openai.types.completion_usage
-
-from ares.llms import llm_clients
 from ares.llms import request
 from ares.llms import response
 
@@ -56,32 +49,10 @@ class MockLLMClient:
         else:
             response_text = self.default_response
 
-        # Build mock ChatCompletion response
-        chat_completion = openai.types.chat.chat_completion.ChatCompletion(
-            id=str(uuid.uuid4()),
-            choices=[
-                openai.types.chat.chat_completion.Choice(
-                    message=openai.types.chat.chat_completion_message.ChatCompletionMessage(
-                        content=response_text,
-                        role="assistant",
-                    ),
-                    finish_reason="stop",
-                    index=0,
-                )
-            ],
-            created=int(time.time()),
-            model="mock-llm",
-            object="chat.completion",
-            usage=openai.types.completion_usage.CompletionUsage(
-                prompt_tokens=100,
-                completion_tokens=50,
-                total_tokens=150,
-            ),
-        )
-
         return response.LLMResponse(
-            chat_completion_response=chat_completion,
+            data=[response.TextData(content=response_text)],
             cost=0.0,
+            usage=response.Usage(prompt_tokens=100, generation_tokens=50),
         )
 
     def get_last_request(self) -> request.LLMRequest | None:
