@@ -12,6 +12,116 @@ import pytest
 from ares.llms import request as request_lib
 
 
+class TestStructuredContentHandling:
+    """Tests for handling structured content (list of blocks) in API conversions."""
+
+    def test_from_responses_with_structured_content_strict(self):
+        """Test that structured content raises error in strict mode."""
+        kwargs = openai.types.responses.response_create_params.ResponseCreateParamsBase(
+            model="gpt-4",
+            input=[
+                openai.types.responses.EasyInputMessageParam(
+                    type="message",
+                    role="user",
+                    content=[
+                        openai.types.responses.ResponseInputTextParam(type="input_text", text="Hello"),
+                        openai.types.responses.ResponseInputImageParam(
+                            type="input_image", detail="auto", image_url="data:image/png;base64,..."
+                        ),
+                    ],
+                )
+            ],
+        )
+
+        with pytest.raises(ValueError, match=r"list of blocks.*structured content"):
+            request_lib.LLMRequest.from_responses(kwargs, strict=True)
+
+    def test_from_responses_with_structured_content_non_strict(self):
+        """Test that structured content returns empty string in non-strict mode."""
+        kwargs = openai.types.responses.response_create_params.ResponseCreateParamsBase(
+            model="gpt-4",
+            input=[
+                openai.types.responses.EasyInputMessageParam(
+                    type="message",
+                    role="user",
+                    content=[
+                        openai.types.responses.ResponseInputTextParam(type="input_text", text="Hello"),
+                        openai.types.responses.ResponseInputImageParam(
+                            type="input_image", detail="auto", image_url="data:image/png;base64,..."
+                        ),
+                    ],
+                )
+            ],
+        )
+
+        # Should not raise, but content will be empty
+        request = request_lib.LLMRequest.from_responses(kwargs, strict=False)
+        assert len(request.messages) == 1
+        assert request.messages[0].get("content") == ""
+
+    def test_from_chat_completion_with_structured_content_strict(self):
+        """Test that structured content in chat messages raises error in strict mode."""
+        kwargs = openai.types.chat.completion_create_params.CompletionCreateParamsNonStreaming(
+            model="gpt-4",
+            messages=[
+                openai.types.chat.ChatCompletionUserMessageParam(
+                    role="user",
+                    content=[
+                        openai.types.chat.ChatCompletionContentPartTextParam(type="text", text="What's in this image?"),
+                        openai.types.chat.ChatCompletionContentPartImageParam(
+                            type="image_url",
+                            image_url=openai.types.chat.chat_completion_content_part_image_param.ImageURL(
+                                url="https://example.com/image.png"
+                            ),
+                        ),
+                    ],
+                )
+            ],
+        )
+
+        with pytest.raises(ValueError, match=r"list of blocks.*structured content"):
+            request_lib.LLMRequest.from_chat_completion(kwargs, strict=True)
+
+    def test_from_messages_with_structured_content_strict(self):
+        """Test that structured content in Claude messages raises error in strict mode."""
+        kwargs = anthropic.types.message_create_params.MessageCreateParamsNonStreaming(
+            model="claude-3-opus",
+            max_tokens=100,
+            messages=[
+                anthropic.types.MessageParam(
+                    role="user",
+                    content=[
+                        anthropic.types.TextBlockParam(type="text", text="Analyze this image"),
+                        anthropic.types.ImageBlockParam(
+                            type="image",
+                            source=anthropic.types.base64_image_source_param.Base64ImageSourceParam(
+                                type="base64", media_type="image/png", data="..."
+                            ),
+                        ),
+                    ],
+                )
+            ],
+        )
+
+        with pytest.raises(ValueError, match=r"list of blocks.*structured content"):
+            request_lib.LLMRequest.from_messages(kwargs, strict=True)
+
+    def test_system_prompt_with_structured_content_strict(self):
+        """Test that structured system prompt raises error in strict mode."""
+        kwargs = anthropic.types.message_create_params.MessageCreateParamsNonStreaming(
+            model="claude-3-opus",
+            max_tokens=100,
+            system=[
+                anthropic.types.TextBlockParam(type="text", text="You are a helpful assistant."),
+                anthropic.types.TextBlockParam(type="text", text="Always be concise."),
+            ],
+            messages=[anthropic.types.MessageParam(role="user", content="Hello")],
+        )
+
+        with pytest.raises(ValueError, match=r"list of blocks.*structured content"):
+            request_lib.LLMRequest.from_messages(kwargs, strict=True)
+
+
 class TestLLMRequestChatCompletionConversion:
     """Tests for Chat Completions API conversion."""
 

@@ -14,6 +14,50 @@ import openai.types.shared_params
 _LOGGER = logging.getLogger(__name__)
 
 
+def _extract_string_content(content: Any, *, strict: bool = True, context: str = "content") -> str:
+    """Extract string from content, raising error for unsupported block formats.
+
+    Args:
+        content: Content value - should be a string
+        strict: If True, raise ValueError for non-string content. If False, log warning and return empty string.
+        context: Description of where this content came from (for error messages)
+
+    Returns:
+        The content string
+
+    Raises:
+        ValueError: If strict=True and content is not a plain string
+
+    Note:
+        This function currently does NOT support content blocks (lists of text/image/tool blocks).
+        If you encounter a ValueError about list content, this means the API returned structured
+        content that needs proper handling - see the issue about extracting text from blocks.
+    """
+    if isinstance(content, str):
+        return content
+
+    if not content:
+        return ""
+
+    # Non-string content - this is where we lose information!
+    content_type = type(content).__name__
+    preview = str(content)[:100] if content else ""
+
+    if isinstance(content, list):
+        msg = (
+            f"{context} is a list of blocks (structured content), but we only support plain strings. "
+            f"This will lose information. Preview: {preview}..."
+        )
+    else:
+        msg = f"{context} has unsupported type {content_type}, expected str. Preview: {preview}..."
+
+    if strict:
+        raise ValueError(msg)
+
+    _LOGGER.warning(msg)
+    return ""
+
+
 class UserMessage(TypedDict):
     """User message in a conversation."""
 
@@ -846,7 +890,10 @@ class LLMRequest:
             # Extract system/developer messages as system_prompt (use first one)
             if role in ("system", "developer"):
                 if system_prompt is None:
-                    system_prompt = msg.get("content", "")
+                    content = msg.get("content", "")
+                    system_prompt = _extract_string_content(
+                        content, strict=strict, context=f"System/developer message content (role={role})"
+                    )
                 continue
 
             # Validate role is supported
@@ -862,6 +909,13 @@ class LLMRequest:
                 assistant_msg = dict(msg)
                 # Remove tool_calls from the message we store
                 tool_calls_list = assistant_msg.pop("tool_calls", [])
+
+                # Validate content if present
+                if "content" in assistant_msg:
+                    assistant_msg["content"] = _extract_string_content(
+                        assistant_msg["content"], strict=strict, context="Assistant message content"
+                    )
+
                 filtered_messages.append(cast(Message, assistant_msg))
 
                 # Create separate ToolCallMessage for each tool call
@@ -880,8 +934,13 @@ class LLMRequest:
                                 )
                             )
             else:
-                # Convert to our Message format - cast dict to Message since we validated the role
-                filtered_messages.append(cast(Message, dict(msg)))
+                # Convert to our Message format, validating content
+                message_dict = dict(msg)
+                if "content" in message_dict:
+                    message_dict["content"] = _extract_string_content(
+                        message_dict["content"], strict=strict, context=f"Message content (role={role})"
+                    )
+                filtered_messages.append(cast(Message, message_dict))
 
         # Convert tools from OpenAI to Claude format
         tools_param = kwargs.get("tools")
@@ -910,13 +969,7 @@ class LLMRequest:
         # Handle system prompt - extract string from various formats
         final_system_prompt: str | None = None
         if system_prompt:
-            if isinstance(system_prompt, str):
-                final_system_prompt = system_prompt
-            else:
-                # If it's an iterable, try to extract text content
-                if strict:
-                    raise ValueError("system_prompt must be a string in Chat Completions format")
-                _LOGGER.warning("Non-string system prompt provided, skipping")
+            final_system_prompt = _extract_string_content(system_prompt, strict=strict, context="System prompt")
 
         return cls(
             messages=filtered_messages,
@@ -1049,9 +1102,11 @@ class LLMRequest:
                         _LOGGER.warning("Skipping message with unsupported role: %s", role)
                         continue
 
-                    # Extract content - it might be string or complex content list
+                    # Extract content - use helper to detect unsupported block formats
                     content_param = item.get("content", "")
-                    content_str = content_param if isinstance(content_param, str) else ""
+                    content_str = _extract_string_content(
+                        content_param, strict=strict, context=f"Message content (role={role})"
+                    )
 
                     # Build message dict with required fields
                     message_dict: dict[str, Any] = {"role": role, "content": content_str}
@@ -1134,11 +1189,8 @@ class LLMRequest:
         # Extract system prompt (can be str or list of text blocks)
         system_param = kwargs.get("system")
         system_prompt = None
-        if isinstance(system_param, str):
-            system_prompt = system_param
-        elif isinstance(system_param, list) and system_param:
-            # Extract text from first text block
-            system_prompt = system_param[0].get("text", "") if isinstance(system_param[0], dict) else ""
+        if system_param:
+            system_prompt = _extract_string_content(system_param, strict=strict, context="System prompt")
 
         # Filter and validate messages
         filtered_messages: list[Message] = []
@@ -1152,8 +1204,13 @@ class LLMRequest:
                 _LOGGER.warning("Skipping message with unsupported role: %s", role)
                 continue
 
-            # Convert to our Message format - cast after validating role
-            filtered_messages.append(cast(Message, dict(msg)))
+            # Convert to our Message format, validating content
+            message_dict = dict(msg)
+            if "content" in message_dict:
+                message_dict["content"] = _extract_string_content(
+                    message_dict["content"], strict=strict, context=f"Message content (role={role})"
+                )
+            filtered_messages.append(cast(Message, message_dict))
 
         # Convert tools from Anthropic format to internal format
         tools_param = kwargs.get("tools")
