@@ -44,15 +44,17 @@ class ParsedResponse:
 class Terminus2JSONParser:
     """Parser for JSON-formatted Terminus 2 responses."""
 
-    def parse(self, response_text: str) -> tuple[ParsedResponse, str | None]:
+    def parse(self, response_text: str) -> tuple[ParsedResponse | None, str | None]:
         """Parse the agent's response.
 
         Args:
             response_text: The raw text response from the LLM.
 
         Returns:
-            A tuple of (ParsedResponse, feedback) where feedback is None if parsing
-            succeeded, or an error message if parsing failed.
+            A tuple of (ParsedResponse | None, feedback):
+            - (ParsedResponse, None) - success with no warnings
+            - (ParsedResponse, warnings) - success with warnings
+            - (None, error_message) - parse failure
         """
         warnings = []
 
@@ -66,10 +68,7 @@ class Terminus2JSONParser:
             if json_match:
                 json_str = json_match.group(0)
             else:
-                return (
-                    ParsedResponse(commands=[], task_complete=False),
-                    "WARNINGS: Could not find JSON in response. Please provide a valid JSON response.",
-                )
+                return (None, "ERROR: Could not find JSON in response. Please provide a valid JSON response.")
 
         # Try auto-fix for incomplete JSON first
         original_json_str = json_str
@@ -106,31 +105,19 @@ class Terminus2JSONParser:
         commands = []
         raw_commands = data.get("commands", [])
         if not isinstance(raw_commands, list):
-            return (
-                ParsedResponse(commands=[], task_complete=False),
-                "WARNINGS: 'commands' field must be an array.",
-            )
+            return (None, "ERROR: 'commands' field must be an array.")
 
         for i, cmd in enumerate(raw_commands):
             if not isinstance(cmd, dict):
-                return (
-                    ParsedResponse(commands=[], task_complete=False),
-                    f"WARNINGS: Command at index {i} must be an object.",
-                )
+                return (None, f"ERROR: Command at index {i} must be an object.")
 
             keystrokes = cmd.get("keystrokes")
             if not keystrokes or not isinstance(keystrokes, str):
-                return (
-                    ParsedResponse(commands=[], task_complete=False),
-                    f"WARNINGS: Command at index {i} must have a 'keystrokes' string field.",
-                )
+                return (None, f"ERROR: Command at index {i} must have a 'keystrokes' string field.")
 
             duration = cmd.get("duration", 1.0)
             if not isinstance(duration, (int, float)):
-                return (
-                    ParsedResponse(commands=[], task_complete=False),
-                    f"WARNINGS: Command at index {i} 'duration' must be a number.",
-                )
+                return (None, f"ERROR: Command at index {i} 'duration' must be a number.")
 
             # Don't strip keystrokes - preserve exact whitespace as in official implementation
             commands.append(Command(keystrokes=keystrokes, duration=float(duration)))
@@ -142,10 +129,7 @@ class Terminus2JSONParser:
         # Parse task_complete
         task_complete = data.get("task_complete", False)
         if not isinstance(task_complete, bool):
-            return (
-                ParsedResponse(commands=commands, task_complete=False),
-                "WARNINGS: 'task_complete' field must be a boolean.",
-            )
+            return (None, "ERROR: 'task_complete' field must be a boolean.")
 
         # Parse thoughts (optional)
         thoughts = data.get("thoughts")

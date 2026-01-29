@@ -568,13 +568,18 @@ class Terminus2Agent(code_agent_base.CodeAgent):
                 )
                 parsed, feedback = self._parser.parse(assistant_message)
 
-                # Handle parsing errors
-                if feedback:
+                # Handle parsing errors (parsed is None)
+                if parsed is None:
                     _LOGGER.warning("[%d] Parsing error: %s", id(self), feedback)
                     # Log the actual response that failed to parse (truncated for readability)
                     _LOGGER.warning("[%d] Failed response (first 2000 chars): %s", id(self), assistant_message[:2000])
-                    self._add_message("user", feedback)
+                    self._add_message("user", feedback or "Invalid response format. Please try again.")
                     continue
+
+                # Handle warnings (parsed succeeded but has warnings)
+                if feedback:
+                    _LOGGER.info("[%d] Parser warnings: %s", id(self), feedback)
+                    # Note: We proceed with execution despite warnings
 
                 _LOGGER.debug(
                     "[%d] Parsed successfully: %d commands, task_complete=%s",

@@ -44,15 +44,17 @@ class ParsedResponse:
 class Terminus2XMLParser:
     """Parser for XML-formatted Terminus 2 responses."""
 
-    def parse(self, response_text: str) -> tuple[ParsedResponse, str | None]:
+    def parse(self, response_text: str) -> tuple[ParsedResponse | None, str | None]:
         """Parse the agent's response.
 
         Args:
             response_text: The raw text response from the LLM.
 
         Returns:
-            A tuple of (ParsedResponse, feedback) where feedback is None if parsing
-            succeeded, or an error message if parsing failed.
+            A tuple of (ParsedResponse | None, feedback):
+            - (ParsedResponse, None) - success with no warnings
+            - (ParsedResponse, warnings) - success with warnings
+            - (None, error_message) - parse failure
         """
         warnings = []
 
@@ -66,10 +68,7 @@ class Terminus2XMLParser:
             if xml_match:
                 xml_str = xml_match.group(0)
             else:
-                return (
-                    ParsedResponse(commands=[], task_complete=False),
-                    "WARNINGS: Could not find <response> XML in response. Please provide a valid XML response.",
-                )
+                return (None, "ERROR: Could not find <response> XML in response. Please provide a valid XML response.")
 
         # Check for common XML mistakes
         self._validate_xml_content(xml_str, warnings)
@@ -77,16 +76,10 @@ class Terminus2XMLParser:
         try:
             root = ET.fromstring(xml_str)
         except ET.ParseError as e:
-            return (
-                ParsedResponse(commands=[], task_complete=False),
-                f"WARNINGS: Invalid XML: {e}. Please provide valid XML.",
-            )
+            return (None, f"ERROR: Invalid XML: {e}. Please provide valid XML.")
 
         if root.tag != "response":
-            return (
-                ParsedResponse(commands=[], task_complete=False),
-                "WARNINGS: Root element must be <response>.",
-            )
+            return (None, "ERROR: Root element must be <response>.")
 
         # Validate field order
         self._validate_field_order(root, warnings)
@@ -106,10 +99,7 @@ class Terminus2XMLParser:
             # Look for <keystrokes> elements directly (not wrapped in <command>)
             for i, keystrokes_elem in enumerate(commands_elem.findall("keystrokes")):
                 if keystrokes_elem.text is None:
-                    return (
-                        ParsedResponse(commands=[], task_complete=False),
-                        f"WARNINGS: Keystrokes element at index {i} must have text content.",
-                    )
+                    return (None, f"ERROR: Keystrokes element at index {i} must have text content.")
 
                 # Don't strip - preserve exact whitespace as in official implementation
                 keystrokes = keystrokes_elem.text
@@ -121,11 +111,8 @@ class Terminus2XMLParser:
                         duration = float(duration_attr)
                     except ValueError:
                         return (
-                            ParsedResponse(commands=[], task_complete=False),
-                            (
-                                f"WARNINGS: Keystrokes element at index {i} "
-                                f"has invalid duration attribute: {duration_attr}"
-                            ),
+                            None,
+                            f"ERROR: Keystrokes element at index {i} has invalid duration attribute: {duration_attr}",
                         )
                 else:
                     duration = 1.0  # Default duration (matches official)
@@ -140,10 +127,7 @@ class Terminus2XMLParser:
             if task_complete_text in ("true", "1", "yes"):
                 task_complete = True
             elif task_complete_text not in ("false", "0", "no"):
-                return (
-                    ParsedResponse(commands=commands, task_complete=False),
-                    "WARNINGS: <task_complete> must be 'true' or 'false'.",
-                )
+                return (None, "ERROR: <task_complete> must be 'true' or 'false'.")
 
         # Parse thoughts (optional)
         thoughts = None
