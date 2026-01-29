@@ -94,8 +94,8 @@ class Terminus2JSONParser:
                     _LOGGER.warning("Regex fallback also failed: %s", regex_error)
 
                 return (
-                    ParsedResponse(commands=[], task_complete=False),
-                    f"WARNINGS: Invalid JSON: {e2}. Please provide valid JSON.",
+                    None,
+                    f"ERROR: Invalid JSON: {e2}. Please provide valid JSON.",
                 )
 
         # Validate field order
