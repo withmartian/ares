@@ -37,31 +37,43 @@ uv run python -c "import ares; print(ares.list_presets())"
 
 You can get started by using this minimal loop to run mini-swe-agent on SWE-bench Verified sequentially.
 
-Note: this example uses a local LLM. You'll need to install additional optional dependencies:
-```
-uv add martian-ares[llamacpp]
-```
+Note: to run this particular example you will need:
+
+- Docker (with the daemon running)
+- A Martian API key (see below)
 
 ```
 import asyncio
 
 import ares
-from ares.contrib import llama_cpp
+from ares import llms
 
 async def main():
-    agent = llama_cpp.create_qwen2_0_5b_instruct_llama_cpp_client()
+    # This requires `CHAT_COMPLETION_API_KEY` to be set with a Martian API key--see below.
+    agent = llms.ChatCompletionCompatibleLLMClient(model="openai/gpt-5-mini")
 
     async with ares.make("sbv-mswea") as env:
         ts = await env.reset()
         while not ts.last():
             action = await agent(ts.observation)   # observation = LLM request
             ts = await env.step(action)            # action = LLM response
+            print(f"{action}\n{ts}")
 
 if __name__ == "__main__":
     asyncio.run(main())
 ```
 
-That's it!
+To run the example above you'll need a Martian API key set in your `.env` file. To get a key:
+
+1) Go to https://app.withmartian.com
+1) on the `Billing` tab, add a payment method + top up some credits.
+1) on the `API Keys` tab create an API key.
+1) write `CHAT_COMPLETION_API_KEY={your-key}` in your `.env`
+
+Alternatively, you can use another chat completions-compatible endpoint by setting both:
+
+- `CHAT_COMPLETION_API_BASE_URL`
+- `CHAT_COMPLETION_API_KEY`
 
 ### Next Steps
 
