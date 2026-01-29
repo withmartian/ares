@@ -4,7 +4,7 @@ Tests the full agent including tmux session management, command execution,
 and LLM interaction.
 """
 
-import pathlib
+import re
 from unittest import mock
 
 import pytest
@@ -13,99 +13,81 @@ from ares.code_agents.terminus2 import terminus2_agent
 from ares.code_agents.terminus2.json_parser import Command
 from ares.containers import containers
 from ares.llms import llm_clients
+from ares.testing.mock_container import MockContainer
 
 
-class MockContainer(containers.Container):
-    """Mock container that tracks commands and simulates tmux."""
+class TmuxSimulator:
+    """Helper class to simulate tmux behavior for testing."""
 
     def __init__(self):
-        self.commands_run = []
-        self.tmux_sessions = {}  # session_name -> state
-        self.tmux_panes = {}  # session_name -> output
+        self.sessions = {}  # session_name -> state
+        self.panes = {}  # session_name -> output
 
-    async def exec_run(self, command: str, **_kwargs):
-        """Simulate command execution."""
-        self.commands_run.append(command)
-
-        class Result:
-            output = ""
-            exit_code = 0
-
-        result = Result()
-
+    def handle_command(self, command: str) -> containers.ExecResult:
+        """Handle a tmux command and return appropriate result."""
         # Simulate tmux commands
         if "tmux new-session" in command:
-            # Extract session name
-            import re
-
             match = re.search(r"-s\s+(\S+)", command)
             if match:
                 session_name = match.group(1)
-                self.tmux_sessions[session_name] = "active"
-                self.tmux_panes[session_name] = ""
+                self.sessions[session_name] = "active"
+                self.panes[session_name] = ""
+            return containers.ExecResult(output="", exit_code=0)
 
         elif "tmux send-keys" in command and "-l" in command:
-            # Extract session and text
-            import re
-
             match = re.search(r"-t\s+(\S+)", command)
             if match:
                 session_name = match.group(1)
-                # Extract the quoted text
-                text_match = re.search(r"-l\s+'([^']*)'", command)
-                if text_match and session_name in self.tmux_panes:
-                    text = text_match.group(1)
-                    self.tmux_panes[session_name] += text
+                # Extract the quoted text (supports both single and double quotes)
+                text_match = re.search(r"-l\s+(?:'([^']*)'|\"([^\"]*)\")", command)
+                if text_match and session_name in self.panes:
+                    text = text_match.group(1) or text_match.group(2) or ""
+                    self.panes[session_name] += text
+            return containers.ExecResult(output="", exit_code=0)
 
         elif "tmux send-keys" in command and "Enter" in command:
-            # Execute what's been typed
-            import re
-
             match = re.search(r"-t\s+(\S+)", command)
             if match:
                 session_name = match.group(1)
-                if session_name in self.tmux_panes:
-                    typed_command = self.tmux_panes[session_name]
-                    # Simulate command execution
-                    self.tmux_panes[session_name] += "\n"
+                if session_name in self.panes:
+                    typed_command = self.panes[session_name]
+                    self.panes[session_name] += "\n"
                     if typed_command.strip():
-                        # Add command output
-                        self.tmux_panes[session_name] += f"[executed: {typed_command}]\n"
+                        self.panes[session_name] += f"[executed: {typed_command}]\n"
+            return containers.ExecResult(output="", exit_code=0)
 
         elif "tmux capture-pane" in command:
-            # Return current pane content
-            import re
-
             match = re.search(r"-t\s+(\S+)", command)
+            output = ""
             if match:
                 session_name = match.group(1)
-                result.output = self.tmux_panes.get(session_name, "")
+                output = self.panes.get(session_name, "")
+            return containers.ExecResult(output=output, exit_code=0)
 
         elif "tmux kill-session" in command:
-            # Clean up session
-            import re
-
             match = re.search(r"-t\s+(\S+)", command)
             if match:
                 session_name = match.group(1)
-                if session_name in self.tmux_sessions:
-                    del self.tmux_sessions[session_name]
-                if session_name in self.tmux_panes:
-                    del self.tmux_panes[session_name]
+                self.sessions.pop(session_name, None)
+                self.panes.pop(session_name, None)
+            return containers.ExecResult(output="", exit_code=0)
 
-        return result
+        elif "tmux has-session" in command:
+            match = re.search(r"-t\s+(\S+)", command)
+            if match:
+                session_name = match.group(1)
+                exit_code = 0 if session_name in self.sessions else 1
+                return containers.ExecResult(output="", exit_code=exit_code)
+            return containers.ExecResult(output="", exit_code=1)
 
-    async def start(self, env=None):
-        pass
+        elif "which tmux" in command:
+            return containers.ExecResult(output="/usr/bin/tmux", exit_code=0)
 
-    async def stop(self):
-        pass
+        elif "tmux set-option" in command:
+            return containers.ExecResult(output="", exit_code=0)
 
-    async def upload_files(self, local_paths: list[pathlib.Path], remote_paths: list[str]):
-        pass
-
-    async def download_files(self, remote_paths: list[str], local_paths: list[pathlib.Path]):
-        pass
+        # Default success for other commands
+        return containers.ExecResult(output="", exit_code=0)
 
 
 class TestTerminus2AgentBasics:
@@ -114,7 +96,8 @@ class TestTerminus2AgentBasics:
     @pytest.mark.asyncio
     async def test_agent_initialization(self):
         """Test agent initializes correctly."""
-        container = MockContainer()
+        tmux_sim = TmuxSimulator()
+        container = MockContainer(exec_handler=tmux_sim.handle_command)
         llm_client = mock.AsyncMock(spec=llm_clients.LLMClient)
 
         agent = terminus2_agent.Terminus2Agent(
@@ -131,7 +114,8 @@ class TestTerminus2AgentBasics:
     @pytest.mark.asyncio
     async def test_tmux_session_creation(self):
         """Test tmux session is created on first command."""
-        container = MockContainer()
+        tmux_sim = TmuxSimulator()
+        container = MockContainer(exec_handler=tmux_sim.handle_command)
         llm_client = mock.AsyncMock(spec=llm_clients.LLMClient)
 
         agent = terminus2_agent.Terminus2Agent(
@@ -144,13 +128,14 @@ class TestTerminus2AgentBasics:
         await agent._execute_commands(commands)
 
         # Check session was created
-        assert len(container.tmux_sessions) == 1
-        assert any("tmux new-session" in cmd for cmd in container.commands_run)
+        assert len(tmux_sim.sessions) == 1
+        assert any("tmux new-session" in cmd for cmd in container.exec_commands)
 
     @pytest.mark.asyncio
     async def test_command_execution(self):
         """Test commands are sent to tmux correctly."""
-        container = MockContainer()
+        tmux_sim = TmuxSimulator()
+        container = MockContainer(exec_handler=tmux_sim.handle_command)
         llm_client = mock.AsyncMock(spec=llm_clients.LLMClient)
 
         agent = terminus2_agent.Terminus2Agent(
@@ -163,7 +148,7 @@ class TestTerminus2AgentBasics:
         output = await agent._execute_commands(commands)
 
         # Verify command was sent
-        send_keys_cmds = [cmd for cmd in container.commands_run if "send-keys" in cmd]
+        send_keys_cmds = [cmd for cmd in container.exec_commands if "send-keys" in cmd]
         assert len(send_keys_cmds) >= 2  # At least: send text + send Enter
 
         # Verify output was captured
@@ -172,7 +157,8 @@ class TestTerminus2AgentBasics:
     @pytest.mark.asyncio
     async def test_multiple_commands(self):
         """Test multiple commands are executed in sequence."""
-        container = MockContainer()
+        tmux_sim = TmuxSimulator()
+        container = MockContainer(exec_handler=tmux_sim.handle_command)
         llm_client = mock.AsyncMock(spec=llm_clients.LLMClient)
 
         agent = terminus2_agent.Terminus2Agent(
@@ -189,7 +175,7 @@ class TestTerminus2AgentBasics:
         output = await agent._execute_commands(commands)
 
         # Verify all commands were sent
-        send_keys_cmds = [cmd for cmd in container.commands_run if "send-keys" in cmd and "-l" in cmd]
+        send_keys_cmds = [cmd for cmd in container.exec_commands if "send-keys" in cmd and "-l" in cmd]
         assert len(send_keys_cmds) >= 3  # At least 3 commands
 
         # Verify output was captured
@@ -198,7 +184,8 @@ class TestTerminus2AgentBasics:
     @pytest.mark.asyncio
     async def test_tmux_cleanup(self):
         """Test tmux session is cleaned up."""
-        container = MockContainer()
+        tmux_sim = TmuxSimulator()
+        container = MockContainer(exec_handler=tmux_sim.handle_command)
         llm_client = mock.AsyncMock(spec=llm_clients.LLMClient)
 
         agent = terminus2_agent.Terminus2Agent(
@@ -210,15 +197,15 @@ class TestTerminus2AgentBasics:
         commands = [Command(keystrokes="ls\n", duration=0.1)]
         await agent._execute_commands(commands)
 
-        session_count_before = len(container.tmux_sessions)
+        session_count_before = len(tmux_sim.sessions)
         assert session_count_before == 1
 
         # Cleanup
         await agent._cleanup_tmux_session()
 
         # Verify session was killed
-        assert len(container.tmux_sessions) == 0
-        assert any("kill-session" in cmd for cmd in container.commands_run)
+        assert len(tmux_sim.sessions) == 0
+        assert any("kill-session" in cmd for cmd in container.exec_commands)
 
 
 class TestTerminus2AgentIntegration:
@@ -227,7 +214,8 @@ class TestTerminus2AgentIntegration:
     @pytest.mark.asyncio
     async def test_simple_task_completion(self):
         """Test agent can complete a simple task."""
-        container = MockContainer()
+        tmux_sim = TmuxSimulator()
+        container = MockContainer(exec_handler=tmux_sim.handle_command)
 
         # Mock LLM responses
         llm_client = mock.AsyncMock(spec=llm_clients.LLMClient)
@@ -282,11 +270,11 @@ class TestTerminus2AgentIntegration:
         assert llm_client.call_count >= 2
 
         # Verify commands were executed
-        assert len(container.commands_run) > 0
-        assert any("send-keys" in cmd for cmd in container.commands_run)
+        assert len(container.exec_commands) > 0
+        assert any("send-keys" in cmd for cmd in container.exec_commands)
 
         # Verify session was created and cleaned up
-        assert len(container.tmux_sessions) == 0  # Cleaned up after completion
+        assert len(tmux_sim.sessions) == 0  # Cleaned up after completion
 
 
 class TestTerminus2AgentEdgeCases:
@@ -295,7 +283,8 @@ class TestTerminus2AgentEdgeCases:
     @pytest.mark.asyncio
     async def test_empty_command_skipped(self):
         """Test empty commands are skipped."""
-        container = MockContainer()
+        tmux_sim = TmuxSimulator()
+        container = MockContainer(exec_handler=tmux_sim.handle_command)
         llm_client = mock.AsyncMock(spec=llm_clients.LLMClient)
 
         agent = terminus2_agent.Terminus2Agent(
@@ -316,7 +305,8 @@ class TestTerminus2AgentEdgeCases:
     @pytest.mark.asyncio
     async def test_command_without_newline(self):
         """Test command without trailing newline."""
-        container = MockContainer()
+        tmux_sim = TmuxSimulator()
+        container = MockContainer(exec_handler=tmux_sim.handle_command)
         llm_client = mock.AsyncMock(spec=llm_clients.LLMClient)
 
         agent = terminus2_agent.Terminus2Agent(
@@ -330,7 +320,7 @@ class TestTerminus2AgentEdgeCases:
 
         # Should still work (text sent, but no Enter)
         assert output is not None
-        send_keys_cmds = [cmd for cmd in container.commands_run if "send-keys" in cmd]
+        send_keys_cmds = [cmd for cmd in container.exec_commands if "send-keys" in cmd]
         assert len(send_keys_cmds) >= 1
 
 
