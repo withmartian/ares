@@ -9,8 +9,6 @@ import pathlib
 import shlex
 
 import daytona
-import daytona.common.errors
-import daytona.common.process
 import tenacity
 
 from ares import config
@@ -30,7 +28,7 @@ def _get_daytona_client_sync() -> daytona.Daytona:
 
 
 @tenacity.retry(
-    retry=tenacity.retry_if_exception_type(daytona.common.errors.DaytonaError),
+    retry=tenacity.retry_if_exception_type(daytona.DaytonaError),
     stop=tenacity.stop_after_attempt(3),
     wait=tenacity.wait_exponential_jitter(max=60),
     before_sleep=tenacity.before_sleep_log(_LOGGER, logging.INFO),
@@ -40,7 +38,7 @@ async def _create_sandbox_with_retry(params: daytona.CreateSandboxFromImageParam
 
 
 @tenacity.retry(
-    retry=tenacity.retry_if_exception_type(daytona.common.errors.DaytonaError),
+    retry=tenacity.retry_if_exception_type(daytona.DaytonaError),
     stop=tenacity.stop_after_attempt(10),
     wait=tenacity.wait_exponential_jitter(max=60),
     before_sleep=tenacity.before_sleep_log(_LOGGER, logging.INFO),
@@ -52,13 +50,13 @@ async def _exec_with_retry(
     workdir: str | None = None,
     env: dict[str, str] | None = None,
     timeout_s: float | None = None,
-) -> daytona.common.process.ExecuteResponse:
+) -> daytona.ExecuteResponse:
     try:
         return await asyncio.wait_for(
             sbx.process.exec(command, cwd=workdir, env=env),
             timeout=timeout_s,
         )
-    except daytona.common.errors.DaytonaError as e:
+    except daytona.DaytonaError as e:
         _LOGGER.warning("Error executing command in sandbox %s in state [%s]: %s", sbx.id, sbx.state, e)
         raise
 
@@ -115,7 +113,7 @@ class DaytonaContainer(containers.Container):
         # For now, we delete the sandbox. This also stops it.
         # This is an easy way to prevent users going over quota with Daytona.
         # Note that if the sandbox is already deleted, this will do nothing.
-        with contextlib.suppress(daytona.common.errors.DaytonaNotFoundError):
+        with contextlib.suppress(daytona.DaytonaNotFoundError):
             await self._sbx.delete()
 
         self._sbx = None
@@ -166,7 +164,7 @@ class DaytonaContainer(containers.Container):
         _LOGGER.info("Stopping and removing sandbox %s", self._sbx.id)
         try:
             sync_sbx = client.get(self._sbx.id)
-        except daytona.common.errors.DaytonaNotFoundError:
+        except daytona.DaytonaNotFoundError:
             # The container doesn't exist.
             _LOGGER.debug("Sandbox %s not found, stop_and_remove is a no-op.", self._sbx.id)
             return
