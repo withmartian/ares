@@ -40,12 +40,9 @@ async def test_default_workdir(preset: str, expected_workdir: str):
 
         # Verify the working directory matches expected
         assert result.output.strip() == expected_workdir, (
-            f"Expected workdir {expected_workdir} for {preset}, "
-            f"got {result.output.strip()}"
+            f"Expected workdir {expected_workdir} for {preset}, got {result.output.strip()}"
         )
 
         # Also verify the directory exists and is accessible
         ls_result = await env._container.exec_run("ls -la")
-        assert ls_result.exit_code == 0, (
-            f"Failed to list directory {expected_workdir}: {ls_result.output}"
-        )
+        assert ls_result.exit_code == 0, f"Failed to list directory {expected_workdir}: {ls_result.output}"
