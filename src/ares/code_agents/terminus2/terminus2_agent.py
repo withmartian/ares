@@ -721,6 +721,12 @@ class Terminus2Agent(code_agent_base.CodeAgent):
                 # Send keystrokes to tmux session
                 # Split on newlines: send each line literally (-l flag), then press Enter
                 # This ensures commands execute (newline → Enter key press)
+                #
+                # IMPORTANT: Keystrokes MUST end with \n to execute commands.
+                # - "ls" (no \n) → types "ls" but does NOT execute
+                # - "ls\n" (with \n) → types "ls" and executes
+                # This matches terminal-bench reference behavior - no automatic Enter addition.
+                # The agent must explicitly include \n in keystrokes to execute commands.
                 lines = cmd.keystrokes.split("\n")
                 _LOGGER.debug("[%d] Split keystroke into %d lines", id(self), len(lines))
 
