@@ -873,6 +873,27 @@ class Terminus2Agent(code_agent_base.CodeAgent):
         assert role in ("user", "assistant")
         self._messages.append(cast(request.Message, {"role": role, "content": sanitized}))
 
+    def _unwrap_single_response(self, llm_response: response.LLMResponse) -> str:
+        """Unwrap a single-item LLMResponse and update metrics.
+
+        Args:
+            llm_response: The LLM response with a single data item.
+
+        Returns:
+            The content string from the response.
+        """
+        assert len(llm_response.data) == 1
+        content = llm_response.data[0].content
+        assert content is not None
+
+        # Track subagent metrics
+        usage = llm_response.usage
+        if usage:
+            self._subagent_metrics.total_prompt_tokens += usage.prompt_tokens or 0
+            self._subagent_metrics.total_completion_tokens += usage.generated_tokens or 0
+
+        return content
+
     async def _summarize(self) -> str:
         """Create a summary of the agent's work using Harbor's 3-step process.
 
@@ -899,15 +920,7 @@ class Terminus2Agent(code_agent_base.CodeAgent):
                 request.LLMRequest(messages=summary_messages, system_prompt=self._system_prompt)
             )
 
-            assert len(summary_response.data) == 1
-            summary_content = summary_response.data[0].content
-            assert summary_content is not None
-
-            # Track subagent metrics
-            usage = summary_response.usage
-            if usage:
-                self._subagent_metrics.total_prompt_tokens += usage.prompt_tokens or 0
-                self._subagent_metrics.total_completion_tokens += usage.generated_tokens or 0
+            summary_content = self._unwrap_single_response(summary_response)
 
             _LOGGER.info("[%d] Step 1/3: Summary generated", id(self))
 
@@ -923,13 +936,7 @@ class Terminus2Agent(code_agent_base.CodeAgent):
                     summary_response = await self.llm_client(
                         request.LLMRequest(messages=summary_messages, system_prompt=self._system_prompt)
                     )
-                    assert len(summary_response.data) == 1
-                    summary_content = summary_response.data[0].content
-                    assert summary_content is not None
-                    usage = summary_response.usage
-                    if usage:
-                        self._subagent_metrics.total_prompt_tokens += usage.prompt_tokens or 0
-                        self._subagent_metrics.total_completion_tokens += usage.generated_tokens or 0
+                    summary_content = self._unwrap_single_response(summary_response)
                     _LOGGER.info("[%d] Step 1/3: Summary generated (with fallback)", id(self))
                 except Exception as e2:
                     _LOGGER.error("[%d] Error generating summary even with fallback: %s", id(self), e2)
@@ -953,15 +960,7 @@ class Terminus2Agent(code_agent_base.CodeAgent):
                 request.LLMRequest(messages=[{"role": "user", "content": question_prompt}])
             )
 
-            assert len(questions_response.data) == 1
-            model_questions = questions_response.data[0].content
-            assert model_questions is not None
-
-            # Track subagent metrics
-            usage = questions_response.usage
-            if usage:
-                self._subagent_metrics.total_prompt_tokens += usage.prompt_tokens or 0
-                self._subagent_metrics.total_completion_tokens += usage.generated_tokens or 0
+            model_questions = self._unwrap_single_response(questions_response)
 
             _LOGGER.info("[%d] Step 2/3: Questions generated", id(self))
 
@@ -984,15 +983,7 @@ class Terminus2Agent(code_agent_base.CodeAgent):
                 request.LLMRequest(messages=answer_messages, system_prompt=self._system_prompt)
             )
 
-            assert len(answers_response.data) == 1
-            answers_content = answers_response.data[0].content
-            assert answers_content is not None
-
-            # Track subagent metrics
-            usage = answers_response.usage
-            if usage:
-                self._subagent_metrics.total_prompt_tokens += usage.prompt_tokens or 0
-                self._subagent_metrics.total_completion_tokens += usage.generated_tokens or 0
+            answers_content = self._unwrap_single_response(answers_response)
 
             _LOGGER.info("[%d] Step 3/3: Answers provided", id(self))
 
@@ -1007,13 +998,7 @@ class Terminus2Agent(code_agent_base.CodeAgent):
                     answers_response = await self.llm_client(
                         request.LLMRequest(messages=answer_messages, system_prompt=self._system_prompt)
                     )
-                    assert len(answers_response.data) == 1
-                    answers_content = answers_response.data[0].content
-                    assert answers_content is not None
-                    usage = answers_response.usage
-                    if usage:
-                        self._subagent_metrics.total_prompt_tokens += usage.prompt_tokens or 0
-                        self._subagent_metrics.total_completion_tokens += usage.generated_tokens or 0
+                    answers_content = self._unwrap_single_response(answers_response)
                     _LOGGER.info("[%d] Step 3/3: Answers provided (with fallback)", id(self))
                 except Exception as e2:
                     _LOGGER.error("[%d] Error providing answers even with fallback: %s", id(self), e2)
