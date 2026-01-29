@@ -102,8 +102,6 @@ async def main(args: Args):
         raise ValueError("CHAT_COMPLETION_API_KEY is not set")
     if "DAYTONA_API_KEY" not in os.environ:
         raise ValueError("DAYTONA_API_KEY is not set")
-    if "DAYTONA_API_URL" not in os.environ:
-        raise ValueError("DAYTONA_API_URL is not set")
 
     # Create an LLM client using the ChatCompletionCompatibleLLMClient
     agent = llms.ChatCompletionCompatibleLLMClient(model=args.model)

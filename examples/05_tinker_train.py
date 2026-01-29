@@ -43,6 +43,7 @@ from collections.abc import Sequence
 import datetime as dt
 import functools
 import logging
+import os
 from typing import Any, Literal
 
 import ares
@@ -432,6 +433,15 @@ async def main(cli_config: CLIConfig):
     Args:
         cli_config: Command-line configuration parsed by chz.entrypoint()
     """
+    # Fail fast if env vars aren't set.
+    if "TINKER_API_KEY" not in os.environ:
+        raise ValueError("TINKER_API_KEY is not set")
+    if (
+        cli_config.env_make_kwargs.get("container_factory") == containers.DaytonaContainer
+        and "DAYTONA_API_KEY" not in os.environ
+    ):
+        raise ValueError("DAYTONA_API_KEY is not set")
+
     # Auto-detect renderer if not specified
     renderer_name = cli_config.renderer_name or model_info.get_recommended_renderer_name(cli_config.model_name)
 

@@ -19,12 +19,17 @@ Example usage:
 import asyncio
 
 import ares
+from ares import config
 from ares.llms import chat_completions_compatible
 
 from . import utils
 
 
 async def main():
+    # Fail fast if env vars aren't set.
+    if not config.CONFIG.chat_completion_api_key:
+        raise ValueError("CHAT_COMPLETION_API_KEY is not set")
+
     # Create an LLM client using the ChatCompletionCompatibleLLMClient
     agent = chat_completions_compatible.ChatCompletionCompatibleLLMClient(model="openai/gpt-5-mini")
 
