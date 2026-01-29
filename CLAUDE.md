@@ -230,7 +230,7 @@ Follow Google-style isort configuration:
 **Import Conventions (Google Style):**
 - **Always import modules, not classes or functions**
 - **External consumers** (examples, docs):
-  - ✅ Good: `import ares` → use `ares.LLMRequest`, `ares.make(...)`
+  - ✅ Good: `import ares` → use `ares.make(...)`
   - ✅ Good: `from ares import llms` → use `llms.LLMRequest`, `llms.TextData`
   - ❌ Avoid: `from ares.llms import LLMRequest, TextData`
 - **Internal code**:
