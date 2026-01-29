@@ -38,7 +38,6 @@ Implementation heavily inspired by:
 - https://github.com/thinking-machines-lab/tinker-cookbook/blob/main/tinker_cookbook/recipes/code_rl/train.py
 """
 
-import argparse
 import asyncio
 from collections.abc import Sequence
 import datetime as dt
@@ -46,19 +45,21 @@ import functools
 import logging
 from typing import Any, Literal
 
+import ares
+from ares import registry
+from ares.containers import daytona
+from ares.environments import base
+from ares.llms import llm_clients
 import chz
 import frozendict
 import numpy as np
 import tinker
-from tinker_cookbook import cli_utils, model_info, renderers, tokenizer_utils
+from tinker_cookbook import cli_utils
+from tinker_cookbook import model_info
+from tinker_cookbook import renderers
+from tinker_cookbook import tokenizer_utils
 from tinker_cookbook.rl import train as tinker_train
 from tinker_cookbook.rl import types as tinker_types
-
-import ares
-from ares.containers import daytona
-from ares.environments import base
-from ares.llms import llm_clients
-from ares import registry
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -131,7 +132,9 @@ class TinkerCompatibleEnv(tinker_types.Env):
         self.convo_prefix = convo_prefix or []
         self.max_tokens = max_tokens
 
-    def _get_tinker_observation(self, ts: base.TimeStep[llm_clients.LLMRequest | None, float, float]) -> tinker_types.Observation:
+    def _get_tinker_observation(
+        self, ts: base.TimeStep[llm_clients.LLMRequest | None, float, float]
+    ) -> tinker_types.Observation:
         if ts.observation is None:
             return tinker.ModelInput.empty()
 
@@ -251,9 +254,7 @@ class TinkerDataset(tinker_types.RLDataset):
     @property
     def num_tasks(self) -> int:
         return (
-            self.env_info.num_tasks
-            if self.max_num_tasks is None
-            else min(self.max_num_tasks, self.env_info.num_tasks)
+            self.env_info.num_tasks if self.max_num_tasks is None else min(self.max_num_tasks, self.env_info.num_tasks)
         )
 
     @functools.cached_property
@@ -264,7 +265,7 @@ class TinkerDataset(tinker_types.RLDataset):
         shuffled_indices = list(range(self.env_info.num_tasks))
         np.random.shuffle(shuffled_indices)
 
-        return {idx: shuffled_idx for idx, shuffled_idx in enumerate(shuffled_indices[:self.num_tasks])}
+        return dict(enumerate(shuffled_indices[: self.num_tasks]))
 
     @functools.cached_property
     def env_info(self) -> registry.EnvironmentInfo:
@@ -436,9 +437,7 @@ async def main(cli_config: CLIConfig):
         cli_config: Command-line configuration parsed by chz.entrypoint()
     """
     # Auto-detect renderer if not specified
-    renderer_name = cli_config.renderer_name or model_info.get_recommended_renderer_name(
-        cli_config.model_name
-    )
+    renderer_name = cli_config.renderer_name or model_info.get_recommended_renderer_name(cli_config.model_name)
 
     # Generate run name for logging and checkpointing
     model_tag = cli_config.model_name.replace("/", "-")
@@ -450,10 +449,7 @@ async def main(cli_config: CLIConfig):
     )
 
     # Set log path (use provided or auto-generate)
-    if cli_config.log_path is not None:
-        log_path = cli_config.log_path
-    else:
-        log_path = f"/tmp/tinker-examples/code_rl/{run_name}"
+    log_path = f"/tmp/tinker-examples/code_rl/{run_name}" if cli_config.log_path is None else cli_config.log_path
 
     # Set WandB run name (use provided or auto-generate)
     wandb_name = cli_config.wandb_name or run_name
