@@ -234,23 +234,21 @@ class Terminus2JSONParser:
             data: The parsed JSON data.
             warnings: List to append warnings to.
         """
-        # Get the keys that are present in both data and expected order
-        present_keys = [key for key in _EXPECTED_FIELD_ORDER if key in data]
+        # Get keys in the actual JSON order, filtering to only expected fields
+        present_keys = [key for key in data.keys() if key in _EXPECTED_FIELD_ORDER]
 
         if len(present_keys) < 2:
             # Not enough fields to check order
             return
 
-        # Check if they're in the expected order
-        for i in range(len(present_keys) - 1):
-            curr_key = present_keys[i]
-            next_key = present_keys[i + 1]
+        # Map keys to their indices in the expected order
+        indices = [_EXPECTED_FIELD_ORDER.index(key) for key in present_keys]
 
-            # Find positions in expected order
-            curr_pos = _EXPECTED_FIELD_ORDER.index(curr_key)
-            next_pos = _EXPECTED_FIELD_ORDER.index(next_key)
-
-            if curr_pos > next_pos:
+        # Check if indices are strictly increasing
+        for i in range(len(indices) - 1):
+            if indices[i] > indices[i + 1]:
+                curr_key = present_keys[i]
+                next_key = present_keys[i + 1]
                 warnings.append(
                     f"Warning: Fields should be in order: {', '.join(_EXPECTED_FIELD_ORDER)}. "
                     f"Found '{next_key}' before '{curr_key}'."
