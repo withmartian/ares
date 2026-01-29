@@ -36,13 +36,24 @@ class SkyRLAsyncGymGenerator(skyrl_gym_generator.SkyRLGymGenerator):
 
 class ARESSkyRLGymEnv(base_text_env.BaseTextEnv):
     """Wrapper around ares.CodeEnvironment for SkyRL Gym
-    
+
     NOTE: Sandbox cleanup is not great here, and we are mostly relying on the Janitor in
           src/ares/environments/code_env.py to clean up extra sandboxes in the case of errors.
     """
 
-    def __init__(self, preset_name: str):
-        self.preset_name = preset_name
+    def __init__(self, env_config: dict | None = None, extras: dict | None = None, **kwargs):
+        """Initialize ARES environment.
+
+        Args:
+            env_config: Environment configuration (unused, for SkyRL compatibility)
+            extras: Extra configuration including 'preset_name'
+            **kwargs: Additional keyword arguments (for compatibility)
+        """
+        if extras is None:
+            extras = kwargs
+        self.preset_name = extras.get("preset_name", kwargs.get("preset_name"))
+        if not self.preset_name:
+            raise ValueError("preset_name must be provided in extras or kwargs")
         self.env: ares.Environment[llms.LLMResponse, llms.LLMRequest, float, float] | None = None
 
     async def init(self, prompt: base_text_env.ConversationType) -> tuple[base_text_env.ConversationType, dict[str, Any]]:
