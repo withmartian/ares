@@ -207,8 +207,12 @@ class Terminus2Agent(code_agent_base.CodeAgent):
                 "apt-get update -qq && apt-get install -y -qq tmux 2>&1",
                 timeout_s=60.0,
             )
-            _LOGGER.info("[%d] Install result: exit_code=%s, output_length=%d",
-                        id(self), install_result.exit_code, len(install_result.output))
+            _LOGGER.info(
+                "[%d] Install result: exit_code=%s, output_length=%d",
+                id(self),
+                install_result.exit_code,
+                len(install_result.output),
+            )
             if install_result.exit_code != 0:
                 _LOGGER.error("[%d] Failed to install tmux: %s", id(self), install_result.output)
                 raise RuntimeError(f"Could not install tmux: {install_result.output}")
@@ -223,8 +227,12 @@ class Terminus2Agent(code_agent_base.CodeAgent):
 
             # Check tmux version
             version_result = await self.container.exec_run("tmux -V 2>&1", timeout_s=_TMUX_OP_TIMEOUT_S)
-            _LOGGER.info("[%d] tmux version: %s (exit_code=%s)",
-                        id(self), version_result.output.strip(), version_result.exit_code)
+            _LOGGER.info(
+                "[%d] tmux version: %s (exit_code=%s)",
+                id(self),
+                version_result.output.strip(),
+                version_result.exit_code,
+            )
         else:
             _LOGGER.info("[%d] tmux already installed at: %s", id(self), check_result.output.strip())
 
@@ -250,8 +258,9 @@ class Terminus2Agent(code_agent_base.CodeAgent):
             cmd,
             timeout_s=_TMUX_OP_TIMEOUT_S,
         )
-        _LOGGER.info("[%d] Tmux new-session result: exit_code=%s, output='%s'",
-                    id(self), result.exit_code, result.output)
+        _LOGGER.info(
+            "[%d] Tmux new-session result: exit_code=%s, output='%s'", id(self), result.exit_code, result.output
+        )
 
         if result.exit_code != 0:
             _LOGGER.error("[%d] Failed to create tmux session", id(self))
@@ -267,8 +276,7 @@ class Terminus2Agent(code_agent_base.CodeAgent):
             _LOGGER.info("[%d] Existing sessions: %s (exit_code=%s)", id(self), diag2.output, diag2.exit_code)
 
             error_msg = (
-                f"Failed to create tmux session (exit_code={result.exit_code}): "
-                f"{result.output or '(no output)'}"
+                f"Failed to create tmux session (exit_code={result.exit_code}): {result.output or '(no output)'}"
             )
             raise RuntimeError(error_msg)
 
@@ -284,18 +292,6 @@ class Terminus2Agent(code_agent_base.CodeAgent):
             raise RuntimeError(f"Tmux session {self._tmux_session_name} was not created successfully")
 
         _LOGGER.debug("[%d] Session verified successfully", id(self))
-
-        # Change to testbed directory in the session
-        try:
-            result = await self.container.exec_run(
-                f"tmux send-keys -t {self._tmux_session_name} 'cd /testbed' Enter",
-                timeout_s=_TMUX_OP_TIMEOUT_S,
-            )
-            _LOGGER.debug("[%d] Tmux cd command result: exit_code=%s", id(self), result.exit_code)
-            if result.exit_code != 0:
-                _LOGGER.warning("[%d] Failed to send cd command: %s", id(self), result.output)
-        except Exception as e:
-            _LOGGER.warning("[%d] Error sending cd to tmux: %s", id(self), e)
 
         # Small delay to let session initialize
         await asyncio.sleep(0.2)
@@ -365,6 +361,25 @@ class Terminus2Agent(code_agent_base.CodeAgent):
             # Assume no timeout if we can't check
             return False
 
+    async def _get_visible_screen(self) -> str:
+        """Get the currently visible terminal screen from tmux.
+
+        Returns:
+            The visible terminal screen content.
+        """
+        if not self._tmux_initialized:
+            return "(terminal not initialized)"
+
+        try:
+            result = await self.container.exec_run(
+                f"tmux capture-pane -t {self._tmux_session_name} -p",
+                timeout_s=_TMUX_OP_TIMEOUT_S,
+            )
+            return result.output
+        except Exception as e:
+            _LOGGER.warning("[%d] Failed to capture visible screen: %s", id(self), e)
+            return "(error capturing terminal screen)"
+
     async def _cleanup_tmux_session(self) -> None:
         """Clean up tmux session on shutdown."""
         if not self._tmux_initialized:
@@ -388,10 +403,18 @@ class Terminus2Agent(code_agent_base.CodeAgent):
         _LOGGER.info("[%d] Starting Terminus2Agent run.", id(self))
         self._original_instruction = task  # Store for summarization
 
+        # Initialize tmux session to capture initial terminal state
+        await self._ensure_tmux_session()
+
+        # Capture initial terminal state (matches terminal-bench behavior)
+        # On first call, show the visible screen with the actual prompt and directory
+        visible_screen = await self._get_visible_screen()
+        initial_terminal_state = f"Current Terminal Screen:\n{self._limit_output_length(visible_screen)}"
+
         # Create initial prompt
         initial_prompt = self._prompt_template.format(
             instruction=task,
-            terminal_state="(Starting in /testbed directory)",
+            terminal_state=initial_terminal_state,
         )
 
         # Add system message
