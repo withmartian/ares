@@ -39,27 +39,21 @@ def _make_harbor_dataset_id(name: str, version: str) -> str:
 class HarborSpec:
     """Environment spec for Harbor Verified with mini-swe-agent."""
 
-    dataset_name: str
-    dataset_version: str
+    ds_spec: harbor_registry.DatasetSpec
     dataset_id: str
     code_agent_factory: code_agent_base.CodeAgentFactory
     code_agent_id: str
 
     @functools.cached_property
     def ds(self) -> list[harbor_task.Task]:
-        return code_env.load_harbor_dataset(name=self.dataset_name, version=self.dataset_version)
-
-    @functools.cached_property
-    def ds_spec(self) -> harbor_registry.DatasetSpec:
-        ds_client = code_env.get_harbor_dataset_client()
-        return ds_client.get_dataset_spec(name=self.dataset_name, version=self.dataset_version)
+        return code_env.load_harbor_dataset(name=self.ds_spec.name, version=self.ds_spec.version)
 
     def get_info(self) -> registry.EnvironmentInfo:
         """Return metadata about Harbor Verified."""
         return registry.EnvironmentInfo(
             name=f"{self.dataset_id}-{self.code_agent_id}",
             description=(
-                f"{self.dataset_name}@{self.dataset_version} (through Harbor registry) with {self.code_agent_id}"
+                f"{self.ds_spec.name}@{self.ds_spec.version} (through Harbor registry) with {self.code_agent_id}"
             ),
             num_tasks=len(self.ds_spec.tasks),
         )
@@ -102,8 +96,7 @@ def _register_default_presets() -> None:
             registry.register_preset(
                 f"{ds_id}-{code_agent_id}",
                 HarborSpec(
-                    dataset_name=ds_spec.name,
-                    dataset_version=ds_spec.version,
+                    ds_spec=ds_spec,
                     dataset_id=ds_id,
                     code_agent_factory=code_agent_factory,
                     code_agent_id=code_agent_id,
