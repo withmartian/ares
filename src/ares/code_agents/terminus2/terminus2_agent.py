@@ -1,7 +1,16 @@
+# Original code: https://github.com/laude-institute/terminal-bench/tree/main/terminal_bench/agents/terminus_2
+# Copyright (c) 2025 Laude Institute
+# Licensed under the Apache-2.0 License.
+#
+# Modifications Copyright (c) 2026 Martian
+
 """Terminus 2 Code Agent implementation using tmux.
 
-Adapted from Harbor's Terminus 2 agent:
-https://github.com/laude-institute/harbor/blob/main/src/harbor/agents/terminus_2/terminus_2.py
+Based on the Terminal-Bench Terminus 2 implementation with modifications for ARES:
+- Async container operations using ARES container interface
+- Integration with ARES LLM client and stat tracking
+- Removed blocking operations and added comprehensive logging
+- Enhanced parser validation and auto-fixes
 
 Uses tmux for persistent terminal sessions to maintain shell state across commands.
 """

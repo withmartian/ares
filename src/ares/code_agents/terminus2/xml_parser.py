@@ -1,6 +1,16 @@
+# Original code: https://github.com/laude-institute/terminal-bench/tree/main/terminal_bench/agents/terminus_2
+# Copyright (c) 2025 Laude Institute
+# Licensed under the Apache-2.0 License.
+#
+# Modifications Copyright (c) 2026 Martian
+
 """XML parser for Terminus 2 agent responses.
 
-Enhanced with validation from the original terminal-bench implementation.
+Based on terminal-bench implementation with enhanced validation:
+- Field order validation for XML elements
+- Double-escaped entity detection
+- Multiple command blocks warning
+- XML salvage for incomplete responses
 """
 
 import dataclasses

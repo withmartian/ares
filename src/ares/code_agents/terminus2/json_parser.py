@@ -1,6 +1,16 @@
+# Original code: https://github.com/laude-institute/terminal-bench/tree/main/terminal_bench/agents/terminus_2
+# Copyright (c) 2025 Laude Institute
+# Licensed under the Apache-2.0 License.
+#
+# Modifications Copyright (c) 2026 Martian
+
 """JSON parser for Terminus 2 agent responses.
 
-Enhanced with auto-fixes and validation from the original terminal-bench implementation.
+Based on terminal-bench implementation with enhanced auto-fixes and validation:
+- Auto-fix for incomplete JSON (missing braces/brackets)
+- Field order validation
+- Command formatting validation (missing newlines)
+- Regex fallback for malformed JSON
 """
 
 import dataclasses
