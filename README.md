@@ -168,7 +168,7 @@ async def main():
     all_tasks = harbor_env.load_harbor_dataset(name="swebench-verified", version="1.0")
     tasks = [all_tasks[0]]  # Run on only one task for now
 
-    # Create environment with local Docker and MiniSWE agent
+    # Create environment with local Docker and mini-swe-agent
     async with harbor_env.HarborEnv(
         tasks=tasks,
         container_factory=docker.DockerContainer,  # Use local Docker
@@ -192,4 +192,4 @@ if __name__ == "__main__":
 This example uses:
 - **Container backend:** Local Docker (change to `daytona.DaytonaContainer` for cloud)
 - **LLM backend:** Martian API (or any OpenAI-compatible API)
-- **Code agent:** MiniSWE agent from the mini-swe-agent library
+- **Code agent:** mini-swe-agent library

@@ -1,4 +1,4 @@
-"""Evaluate a single task in SWEBench Verified with a frontier LLM.
+"""Evaluate a single task in SWE-bench Verified with a frontier LLM.
 
 This example shows how to swap out a local LLM for an LLM being run via API.
 
@@ -28,7 +28,7 @@ async def main():
     # Create an LLM client using the ChatCompletionCompatibleLLMClient
     agent = chat_completions_compatible.ChatCompletionCompatibleLLMClient(model="openai/gpt-5-mini")
 
-    # `sbv-mswea` is SWEBench Verified with mini-swe-agent.
+    # `sbv-mswea` is SWE-bench Verified with mini-swe-agent.
     # `:0` means load only the first task.
     # By default, ares.make will use local Docker containers.
     async with ares.make("sbv-mswea:0") as env:
