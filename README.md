@@ -4,6 +4,7 @@
   <a href="https://martian-ares.readthedocs.io/en/latest/"><img src="https://img.shields.io/badge/docs-readthedocs-blue.svg" alt="Documentation"></a>
   <a href="https://pypi.org/project/martian-ares/"><img src="https://img.shields.io/pypi/v/martian-ares.svg" alt="PyPI version"></a>
   <a href="https://github.com/withmartian/ares/blob/main/LICENSE"><img src="https://img.shields.io/github/license/withmartian/ares.svg" alt="License"></a>
+  <a href="https://discord.gg/TFfMTrzw"><img src="https://img.shields.io/badge/discord-join-5865F2?logo=discord" alt="Discord"></a>
 </p>
 
 <p align="center">
@@ -13,6 +14,8 @@
 ARES is an RL-first framework for training and evaluating LLM agents, especially coding agents.
 
 It is a modern [gym](https://github.com/Farama-Foundation/Gymnasium): the environment layer powering RL research.
+
+ARES treats LLMRequests as observations and LLMResponses as actions within the environment, so you can focus on training just the LLM - not the Code Agent surrounding it. The interface is entirely async, and supports scaling up to hundreds or thousands of parallel environments easily - check out [example 3](https://github.com/withmartian/ares/tree/main/examples/03_parallel_eval_with_api.py) to run this yourself.
 
 
 ## Quick Start
@@ -42,7 +45,7 @@ Note: to run this particular example you will need:
 - Docker (with the daemon running)
 - A Martian API key (see below)
 
-```
+```python
 import asyncio
 
 import ares
@@ -79,3 +82,4 @@ Alternatively, you can use another chat completions-compatible endpoint by setti
 
 1. Check out the [examples](https://github.com/withmartian/ares/tree/main/examples)
 1. Read the [docs](https://martian-ares.readthedocs.io/en/latest/) to understand ARES and its key abstractions
+1. Read our [blog post](https://withmartian.com/post/ares-open-source-infrastructure-for-online-rl-on-coding-agents) about why ARES and what we hope to see
