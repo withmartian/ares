@@ -37,6 +37,7 @@ Example usage:
 import asyncio
 from collections.abc import Awaitable
 import dataclasses
+import os
 from typing import Any
 
 import ares
@@ -97,6 +98,14 @@ async def evaluate_task(
 
 
 async def main(args: Args):
+    # Fail fast if env vars aren't set.
+    if "CHAT_COMPLETION_API_KEY" not in os.environ:
+        raise ValueError("CHAT_COMPLETION_API_KEY is not set")
+    if "DAYTONA_API_KEY" not in os.environ:
+        raise ValueError("DAYTONA_API_KEY is not set")
+    if "DAYTONA_API_URL" not in os.environ:
+        raise ValueError("DAYTONA_API_URL is not set")
+
     # Create an LLM client using the ChatCompletionCompatibleLLMClient
     agent = chat_completions_compatible.ChatCompletionCompatibleLLMClient(model=args.model)
 
