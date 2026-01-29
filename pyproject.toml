@@ -62,8 +62,6 @@ dev = [
     "twine>=6.2.0",
 ]
 examples = [
-    "skyrl-gym>=0.1.1",
-    "torch>=2.9.1",
     "transformers>=4.57.3",
     "llama-cpp-python>=0.3.16",
     "rich>=13.7.0",
