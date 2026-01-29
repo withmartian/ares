@@ -32,7 +32,7 @@ uv add martian-ares
 ARES comes packaged with useful presets for different agent/environment configurations. List them with:
 
 ```
-uv run python -c "import ares; ares.list_presets()"
+uv run python -c "import ares; print(ares.list_presets())"
 ```
 
 You can get started by using this minimal loop to run mini-swe-agent on SWE-bench Verified sequentially.

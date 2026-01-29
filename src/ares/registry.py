@@ -516,7 +516,11 @@ def info(name: str | None = None) -> EnvironmentInfo | Sequence[EnvironmentInfo]
 
 
 def list_presets() -> str:
-    """A utility function to easily list all presets."""
+    """A utility function to easily list all presets.
+
+    Returns:
+        A nicely formatted string of all presets.
+    """
     return "\n".join([str(x) for x in info()])
 
 
