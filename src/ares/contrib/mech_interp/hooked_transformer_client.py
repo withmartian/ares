@@ -3,19 +3,15 @@
 from collections.abc import Callable, Sequence
 import dataclasses
 import inspect
-import time
 from typing import Any, Protocol, Union, runtime_checkable
-import uuid
 
-import openai.types.chat.chat_completion
-import openai.types.chat.chat_completion_message
-import openai.types.completion_usage
 import torch
 import transformer_lens
 
 from ares.contrib.mech_interp import hook_utils
-from ares.environments import base as environments
-from ares.llms import llm_clients
+from ares.environments import base as ares_env
+from ares.environments import code_env
+from ares import llms
 
 
 HookNameFn = Callable[[str], str]
@@ -122,10 +118,10 @@ class HookedTransformerLLMClient:
 
     async def __call__(
         self,
-        request: llm_clients.LLMRequest,
-        env: environments.base.CodeBaseEnv | None = None,
-        timestep: environments.base.TimeStep | None = None,
-    ) -> llm_clients.LLMResponse:
+        request: llms.LLMRequest,
+        env: code_env.CodeEnvironment | None = None,
+        timestep: ares_env.TimeStep | None = None,
+    ) -> llms.LLMResponse:
         """Generate a completion using the HookedTransformer.
 
         Args:
@@ -167,7 +163,7 @@ class HookedTransformerLLMClient:
             state=hook_utils.FullyObservableState(
                 timestep=timestep,
                 # TODO: Figure out typing here
-                container=env.container if env is not None else None,
+                container=env._container if env is not None else None,
                 step_num=0  # TODO: How to calculate?,
             ),
             **gen_kwargs,
@@ -181,32 +177,13 @@ class HookedTransformerLLMClient:
         output_text = self.model.to_string(output_ids)
         assert isinstance(output_text, str)  # typing
 
-        # Construct OpenAI-compatible response
-        chat_completion = openai.types.chat.chat_completion.ChatCompletion(
-            id=str(uuid.uuid4()),
-            choices=[
-                openai.types.chat.chat_completion.Choice(
-                    message=openai.types.chat.chat_completion_message.ChatCompletionMessage(
-                        content=output_text,
-                        role="assistant",
-                    ),
-                    finish_reason="stop",
-                    index=0,
-                )
-            ],
-            created=int(time.time()),
-            model=self.model.cfg.model_name,
-            object="chat.completion",
-            usage=openai.types.completion_usage.CompletionUsage(
-                prompt_tokens=num_input_tokens,
-                completion_tokens=num_output_tokens,
-                total_tokens=num_input_tokens + num_output_tokens,
-            ),
-        )
-
-        return llm_clients.LLMResponse(
-            chat_completion_response=chat_completion,
+        return llms.LLMResponse(
+            data=[llms.TextData(content=output_text)],
             cost=0.0,  # Local inference has no cost
+            usage=llms.Usage(
+                prompt_tokens=num_input_tokens,
+                generated_tokens=num_output_tokens,
+            ),
         )
 
 

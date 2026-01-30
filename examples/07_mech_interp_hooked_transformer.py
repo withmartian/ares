@@ -17,11 +17,9 @@ import asyncio
 
 from transformer_lens import HookedTransformer
 
+import ares
 from ares.contrib.mech_interp import ActivationCapture
 from ares.contrib.mech_interp import HookedTransformerLLMClient
-from ares.contrib.mech_interp import InterventionManager
-from ares.contrib.mech_interp import create_zero_ablation_hook
-from ares.environments import swebench_env
 
 
 async def main():
@@ -44,19 +42,11 @@ async def main():
         max_new_tokens=128,  # Keep this small to avoid context overflow
     )
 
-    # Load SWE-bench tasks
-    all_tasks = swebench_env.swebench_verified_tasks()
-    tasks = [all_tasks[0]]  # Just one task for demo
-
-    print(f"\nRunning on task: {tasks[0].instance_id}")
-    print(f"Repository: {tasks[0].repo}")
-    print("-" * 80)
-
     # Example 1: Basic execution with activation capture
     print("\n[Example 1] Running agent with activation capture...")
     print("-" * 80)
 
-    async with swebench_env.SweBenchEnv(tasks=tasks) as env:
+    async with ares.make("sbv-mswea:0") as env:
         # Set up activation capture
         with ActivationCapture(model) as capture:
             ts = await env.reset()
@@ -76,14 +66,14 @@ async def main():
                 capture.record_step_metadata(
                     {
                         "step": step_count,
-                        "action_preview": str(action.chat_completion_response.choices[0].message.content)[:50],
+                        "action_preview": str(action.data[0].content)[:50],
                     }
                 )
 
-                assert action.chat_completion_response.usage is not None
-                print(
-                    f"Step {step_count}: Generated {action.chat_completion_response.usage.completion_tokens} tokens"
-                )
+                if action.usage is not None:
+                    print(
+                        f"Step {step_count}: Generated {action.usage.generated_tokens} tokens"
+                    )
 
                 # Step environment
                 ts = await env.step(action)
@@ -103,37 +93,37 @@ async def main():
             print("\nSaving trajectory activations to ./mech_interp_demo/trajectory_001/")
             trajectory.save("./mech_interp_demo/trajectory_001")
 
-    # Example 2: Running with interventions
-    print("\n[Example 2] Running agent with attention head ablation...")
-    print("-" * 80)
+    # # Example 2: Running with interventions
+    # print("\n[Example 2] Running agent with attention head ablation...")
+    # print("-" * 80)
 
-    async with swebench_env.SweBenchEnv(tasks=tasks) as env:
-        # Set up intervention: ablate heads 0-2 in layer 0
-        manager = InterventionManager(model)
-        manager.add_intervention(
-            hook_name="blocks.0.attn.hook_result",
-            hook_fn=create_zero_ablation_hook(heads=[0, 1, 2]),
-            description="Ablate attention heads 0-2 in layer 0",
-        )
+    # async with swebench_env.SweBenchEnv(tasks=tasks) as env:
+    #     # Set up intervention: ablate heads 0-2 in layer 0
+    #     manager = InterventionManager(model)
+    #     manager.add_intervention(
+    #         hook_name="blocks.0.attn.hook_result",
+    #         hook_fn=create_zero_ablation_hook(heads=[0, 1, 2]),
+    #         description="Ablate attention heads 0-2 in layer 0",
+    #     )
 
-        print(manager.get_intervention_summary())
+    #     print(manager.get_intervention_summary())
 
-        with manager:
-            ts = await env.reset()
-            step_count = 0
-            max_steps = 2  # Limit steps for demo
+    #     with manager:
+    #         ts = await env.reset()
+    #         step_count = 0
+    #         max_steps = 2  # Limit steps for demo
 
-            while not ts.last() and step_count < max_steps:
-                assert ts.observation is not None
-                action = await client(ts.observation)
+    #         while not ts.last() and step_count < max_steps:
+    #             assert ts.observation is not None
+    #             action = await client(ts.observation)
 
-                assert action.chat_completion_response.usage is not None
-                num_tokens = action.chat_completion_response.usage.completion_tokens
-                print(f"Step {step_count} (with ablation): Generated {num_tokens} tokens")
+    #             assert action.chat_completion_response.usage is not None
+    #             num_tokens = action.chat_completion_response.usage.completion_tokens
+    #             print(f"Step {step_count} (with ablation): Generated {num_tokens} tokens")
 
-                ts = await env.step(action)
-                step_count += 1
-                manager.increment_step()
+    #             ts = await env.step(action)
+    #             step_count += 1
+    #             manager.increment_step()
 
     print("\n" + "=" * 80)
     print("Demo complete!")
