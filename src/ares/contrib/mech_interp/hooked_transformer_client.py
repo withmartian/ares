@@ -90,7 +90,7 @@ class HookedTransformerLLMClient:
         state: hook_utils.FullyObservableState,
         **gen_kwargs: Any,
     ) -> torch.Tensor:
-        self.model.reset_hooks(direction="fwd", including_permanent=False)
+        # self.model.reset_hooks(direction="fwd", including_permanent=False)
 
         if self.fwd_hooks is not None:
             for name_or_id_fn, hook_fn in self.fwd_hooks:
@@ -111,7 +111,7 @@ class HookedTransformerLLMClient:
                 **gen_kwargs,
             )
         
-        self.model.reset_hooks(direction="fwd", including_permanent=False)
+        # self.model.reset_hooks(direction="fwd", including_permanent=False)
 
         assert isinstance(outputs, torch.Tensor)  # typing
         return outputs
