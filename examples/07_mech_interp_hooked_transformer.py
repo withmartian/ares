@@ -20,6 +20,9 @@ from transformer_lens import HookedTransformer
 import ares
 from ares.contrib.mech_interp import ActivationCapture
 from ares.contrib.mech_interp import HookedTransformerLLMClient
+from ares.contrib.mech_interp.hook_utils import InterventionManager, create_zero_ablation_hook
+
+from . import utils
 
 
 async def main():
@@ -70,10 +73,7 @@ async def main():
                     }
                 )
 
-                if action.usage is not None:
-                    print(
-                        f"Step {step_count}: Generated {action.usage.generated_tokens} tokens"
-                    )
+                utils.print_step(step_count, ts.observation, action)
 
                 # Step environment
                 ts = await env.step(action)
@@ -93,37 +93,42 @@ async def main():
             print("\nSaving trajectory activations to ./mech_interp_demo/trajectory_001/")
             trajectory.save("./mech_interp_demo/trajectory_001")
 
-    # # Example 2: Running with interventions
-    # print("\n[Example 2] Running agent with attention head ablation...")
-    # print("-" * 80)
+    # Example 2: Running with interventions
+    print("\n[Example 2] Running agent with attention head ablation...")
+    print("-" * 80)
 
-    # async with swebench_env.SweBenchEnv(tasks=tasks) as env:
-    #     # Set up intervention: ablate heads 0-2 in layer 0
-    #     manager = InterventionManager(model)
-    #     manager.add_intervention(
-    #         hook_name="blocks.0.attn.hook_result",
-    #         hook_fn=create_zero_ablation_hook(heads=[0, 1, 2]),
-    #         description="Ablate attention heads 0-2 in layer 0",
-    #     )
+    def create_zero_ablation_hook_with_log(*args, **kwargs):
+        hook_fn = create_zero_ablation_hook(*args, **kwargs)
+        def wrapped_hook_fn(*args, **kwargs):
+            print(f"Running zero ablation hook")
+            return hook_fn(*args, **kwargs)
+        return wrapped_hook_fn
 
-    #     print(manager.get_intervention_summary())
+    async with ares.make("sbv-mswea:0") as env:
+        # Set up intervention: ablate heads 0-2 in layer 0
+        manager = InterventionManager(model)
+        manager.add_intervention(
+            hook_name="blocks.0.attn.hook_result",
+            hook_fn=create_zero_ablation_hook_with_log(heads=[0, 1, 2]),
+            description="Ablate attention heads 0-2 in layer 0",
+        )
 
-    #     with manager:
-    #         ts = await env.reset()
-    #         step_count = 0
-    #         max_steps = 2  # Limit steps for demo
+        print(manager.get_intervention_summary())
 
-    #         while not ts.last() and step_count < max_steps:
-    #             assert ts.observation is not None
-    #             action = await client(ts.observation)
+        with manager:
+            ts = await env.reset()
+            step_count = 0
+            max_steps = 2  # Limit steps for demo
 
-    #             assert action.chat_completion_response.usage is not None
-    #             num_tokens = action.chat_completion_response.usage.completion_tokens
-    #             print(f"Step {step_count} (with ablation): Generated {num_tokens} tokens")
+            while not ts.last() and step_count < max_steps:
+                assert ts.observation is not None
+                action = await client(ts.observation)
 
-    #             ts = await env.step(action)
-    #             step_count += 1
-    #             manager.increment_step()
+                utils.print_step(step_count, ts.observation, action)
+
+                ts = await env.step(action)
+                step_count += 1
+                manager.increment_step()
 
     print("\n" + "=" * 80)
     print("Demo complete!")
