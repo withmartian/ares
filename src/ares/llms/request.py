@@ -2,7 +2,7 @@
 
 import dataclasses
 import logging
-from typing import Any, Literal, NotRequired, Required, TypedDict, cast
+from typing import Any, Literal, NotRequired, Protocol, Required, TypedDict, cast
 
 import anthropic.types
 import openai.types.chat
@@ -450,6 +450,52 @@ def _tool_choice_from_anthropic(
     return None
 
 
+class RequestConverter[RequestType](Protocol):
+    """Converts between ARES LLMRequest and external API formats.
+
+    This protocol defines the interface for bidirectional conversion between ARES's internal
+    LLMRequest format and external API request formats (OpenAI Chat Completions, OpenAI Responses,
+    Anthropic Messages, etc.).
+
+    Type Parameters:
+        RequestType: The external API's request parameters type (e.g., dict[str, Any] for kwargs)
+
+    Note:
+        Implementations should be frozen dataclasses for thread-safety in async contexts.
+        The model parameter is NOT included in conversions - it should be managed by the LLMClient.
+    """
+
+    def to_external(self, request: "LLMRequest", *, strict: bool = True) -> RequestType:
+        """Convert ARES LLMRequest to external API format.
+
+        Args:
+            request: ARES internal request format
+            strict: If True, raise ValueError on information loss. If False, log warnings.
+
+        Returns:
+            Request parameters in external API format (without model parameter)
+
+        Raises:
+            ValueError: If strict=True and information would be lost in conversion
+        """
+        ...
+
+    def from_external(self, kwargs: RequestType, *, strict: bool = True) -> "LLMRequest":
+        """Convert external API format to ARES LLMRequest.
+
+        Args:
+            kwargs: External API request parameters
+            strict: If True, raise ValueError for unhandled parameters. If False, log warnings.
+
+        Returns:
+            LLMRequest instance
+
+        Raises:
+            ValueError: If strict=True and there are unhandled parameters
+        """
+        ...
+
+
 @dataclasses.dataclass(frozen=True, kw_only=True)
 class LLMRequest:
     """Unified request format for OpenAI Chat Completions, OpenAI Responses, and Claude Messages APIs.
@@ -497,6 +543,8 @@ class LLMRequest:
     def to_chat_completion_kwargs(self, *, strict: bool = True) -> dict[str, Any]:
         """Convert to OpenAI Chat Completions API format.
 
+        This is a convenience wrapper around ChatCompletionConverter.
+
         Args:
             strict: If True, raise ValueError on information loss. If False, log warnings.
 
@@ -512,109 +560,12 @@ class LLMRequest:
             - service_tier="standard_only" is not supported
             - stop_sequences truncated to 4 if more provided
         """
-        # Check for information loss
-        lost_info = []
-        if self.top_k is not None:
-            lost_info.append(f"top_k={self.top_k} (Claude-specific, not supported)")
-        if self.service_tier == "standard_only":
-            lost_info.append("service_tier='standard_only' (not supported by Chat API)")
-        if self.stop_sequences and len(self.stop_sequences) > 4:
-            lost_info.append(
-                f"stop_sequences truncated from {len(self.stop_sequences)} to 4 "
-                f"(Chat API limit: {self.stop_sequences[4:]} will be dropped)"
-            )
-
-        if lost_info:
-            msg = f"Converting to Chat Completions will lose information: {'; '.join(lost_info)}"
-            if strict:
-                raise ValueError(msg)
-            _LOGGER.warning(msg)
-
-        # Convert messages, flattening ToolCallMessage into AssistantMessage.tool_calls
-        chat_messages: list[dict[str, Any]] = []
-        pending_tool_calls: list[dict[str, Any]] = []
-
-        for msg in self.messages:
-            msg_dict = dict(msg)
-
-            # ToolCallMessage → collect for previous assistant message
-            if "call_id" in msg_dict and "name" in msg_dict and "arguments" in msg_dict:
-                # This is a ToolCallMessage
-                pending_tool_calls.append(
-                    {
-                        "id": msg_dict["call_id"],
-                        "type": "function",
-                        "function": {
-                            "name": msg_dict["name"],
-                            "arguments": msg_dict["arguments"],
-                        },
-                    }
-                )
-            else:
-                # Flush any pending tool calls to the last assistant message
-                if pending_tool_calls and chat_messages:
-                    last_msg = chat_messages[-1]
-                    if last_msg.get("role") == "assistant":
-                        last_msg["tool_calls"] = pending_tool_calls
-                        pending_tool_calls = []
-                    else:
-                        if strict:
-                            role = last_msg.get("role")
-                            raise ValueError(
-                                f"ToolCallMessage found but previous message is not assistant (role={role})"
-                            )
-                        _LOGGER.warning(
-                            "ToolCallMessage found but previous message is not assistant, discarding tool calls"
-                        )
-                        pending_tool_calls = []
-
-                # Add the current message
-                chat_messages.append(msg_dict)
-
-        # Flush any remaining tool calls
-        if pending_tool_calls and chat_messages:
-            last_msg = chat_messages[-1]
-            if last_msg.get("role") == "assistant":
-                last_msg["tool_calls"] = pending_tool_calls
-            elif strict:
-                raise ValueError("ToolCallMessage at end but last message is not assistant")
-
-        kwargs: dict[str, Any] = {
-            "messages": chat_messages,
-        }
-
-        # Add system prompt as first message if present
-        if self.system_prompt:
-            kwargs["messages"] = [
-                {"role": "system", "content": self.system_prompt},
-                *kwargs["messages"],
-            ]
-
-        # Add optional parameters (filter None values)
-        if self.max_output_tokens is not None:
-            kwargs["max_completion_tokens"] = self.max_output_tokens
-        if self.temperature is not None:
-            kwargs["temperature"] = self.temperature
-        if self.top_p is not None:
-            kwargs["top_p"] = self.top_p
-        if self.stream:
-            kwargs["stream"] = True
-        if self.tools:
-            kwargs["tools"] = [_tool_to_chat_completions(tool) for tool in self.tools]
-        if self.tool_choice is not None:
-            kwargs["tool_choice"] = _tool_choice_to_openai(self.tool_choice)
-        if self.metadata:
-            kwargs["metadata"] = self.metadata
-        if self.service_tier and self.service_tier != "standard_only":
-            kwargs["service_tier"] = self.service_tier
-        if self.stop_sequences:
-            # OpenAI Chat supports up to 4 stop sequences
-            kwargs["stop"] = self.stop_sequences[:4]
-
-        return kwargs
+        return ChatCompletionConverter().to_external(self, strict=strict)
 
     def to_responses_kwargs(self, *, strict: bool = True) -> dict[str, Any]:
         """Convert to OpenAI Responses API format.
+
+        This is a convenience wrapper around ResponsesConverter.
 
         Args:
             strict: If True, raise ValueError on information loss. If False, log warnings.
@@ -633,49 +584,12 @@ class LLMRequest:
             - top_k is not supported (Claude-specific)
             - service_tier="standard_only" is not supported
         """
-        # Check for information loss
-        lost_info = []
-        if self.stop_sequences:
-            lost_info.append(f"stop_sequences={self.stop_sequences} (not supported by Responses API)")
-        if self.top_k is not None:
-            lost_info.append(f"top_k={self.top_k} (Claude-specific, not supported)")
-        if self.service_tier == "standard_only":
-            lost_info.append("service_tier='standard_only' (not supported by Responses API)")
-
-        if lost_info:
-            msg = f"Converting to Responses will lose information: {'; '.join(lost_info)}"
-            if strict:
-                raise ValueError(msg)
-            _LOGGER.warning(msg)
-
-        kwargs: dict[str, Any] = {
-            "input": self._messages_to_responses_input(),
-        }
-
-        if self.system_prompt:
-            kwargs["instructions"] = self.system_prompt
-
-        if self.max_output_tokens is not None:
-            kwargs["max_output_tokens"] = self.max_output_tokens
-        if self.temperature is not None:
-            kwargs["temperature"] = self.temperature
-        if self.top_p is not None:
-            kwargs["top_p"] = self.top_p
-        if self.stream:
-            kwargs["stream"] = True
-        if self.tools:
-            kwargs["tools"] = [_tool_to_responses(tool) for tool in self.tools]
-        if self.tool_choice is not None:
-            kwargs["tool_choice"] = _tool_choice_to_responses(self.tool_choice)
-        if self.metadata:
-            kwargs["metadata"] = self.metadata
-        if self.service_tier and self.service_tier != "standard_only":
-            kwargs["service_tier"] = self.service_tier
-
-        return kwargs
+        return ResponsesConverter().to_external(self, strict=strict)
 
     def to_messages_kwargs(self, *, strict: bool = True) -> dict[str, Any]:
         """Convert to Claude Messages API format.
+
+        This is a convenience wrapper around MessagesConverter.
 
         Args:
             strict: If True, raise ValueError on information loss. If False, log warnings.
@@ -694,60 +608,7 @@ class LLMRequest:
             - service_tier options are limited to "auto" and "standard_only"
             - tool schemas may need conversion (not implemented yet)
         """
-        # Check for information loss
-        lost_info = []
-        if self.service_tier not in (None, "auto", "standard_only"):
-            lost_info.append(f"service_tier='{self.service_tier}' (Claude only supports 'auto' and 'standard_only')")
-
-        # Check for filtered messages
-        filtered_messages = []
-        for msg in self.messages:
-            msg_dict = dict(msg)
-            role = msg_dict["role"]
-            if role in ("system", "developer"):
-                content = str(msg_dict.get("content", ""))[:50]
-                filtered_messages.append(f"{role} message: {content}...")
-
-        if filtered_messages:
-            lost_info.append(f"Messages filtered out (use system_prompt instead): {'; '.join(filtered_messages)}")
-
-        if lost_info:
-            msg = f"Converting to Claude Messages will lose information: {'; '.join(lost_info)}"
-            if strict:
-                raise ValueError(msg)
-            _LOGGER.warning(msg)
-
-        kwargs: dict[str, Any] = {
-            "messages": self._messages_to_claude_format(strict=strict),
-            "max_tokens": self.max_output_tokens or 1024,  # max_tokens is required by Claude
-        }
-
-        if self.system_prompt:
-            kwargs["system"] = self.system_prompt
-
-        if self.temperature is not None:
-            # Convert from OpenAI range (0-2) to Claude range (0-1)
-            kwargs["temperature"] = min(self.temperature / 2.0, 1.0)
-        if self.top_p is not None:
-            kwargs["top_p"] = self.top_p
-        if self.top_k is not None:
-            kwargs["top_k"] = self.top_k
-        if self.stream:
-            kwargs["stream"] = True
-        if self.tools:
-            # Convert tools to Anthropic format (adds explicit type: "custom")
-            kwargs["tools"] = [_tool_to_anthropic(tool) for tool in self.tools]
-        if self.tool_choice is not None:
-            kwargs["tool_choice"] = _tool_choice_to_anthropic(self.tool_choice)
-        if self.metadata:
-            # Claude uses metadata.user_id specifically
-            kwargs["metadata"] = self.metadata
-        if self.service_tier in ("auto", "standard_only"):
-            kwargs["service_tier"] = self.service_tier
-        if self.stop_sequences:
-            kwargs["stop_sequences"] = self.stop_sequences
-
-        return kwargs
+        return MessagesConverter().to_external(self, strict=strict)
 
     def _messages_to_responses_input(self) -> list[dict[str, Any]]:
         """Convert messages from internal format to Responses input items.
@@ -873,6 +734,213 @@ class LLMRequest:
         *,
         strict: bool = True,
     ) -> "LLMRequest":
+        """Create LLMRequest from OpenAI Chat Completions API kwargs.
+
+        This is a convenience wrapper around ChatCompletionConverter.
+
+        Args:
+            kwargs: OpenAI Chat Completions API parameters
+            strict: If True, raise ValueError for unhandled parameters. If False, log warnings.
+
+        Returns:
+            LLMRequest instance
+
+        Raises:
+            ValueError: If strict=True and there are unhandled parameters
+
+        Note:
+            Model parameter is ignored - it should be managed by the LLMClient
+        """
+        return ChatCompletionConverter().from_external(kwargs, strict=strict)
+
+    @classmethod
+    def from_responses(
+        cls,
+        kwargs: openai.types.responses.response_create_params.ResponseCreateParamsBase,
+        *,
+        strict: bool = True,
+    ) -> "LLMRequest":
+        """Create LLMRequest from OpenAI Responses API kwargs.
+
+        This is a convenience wrapper around ResponsesConverter.
+
+        Args:
+            kwargs: OpenAI Responses API parameters
+            strict: If True, raise ValueError for unhandled parameters. If False, log warnings.
+
+        Returns:
+            LLMRequest instance
+
+        Raises:
+            ValueError: If strict=True and there are unhandled parameters
+
+        Note:
+            Model parameter is ignored - it should be managed by the LLMClient
+        """
+        return ResponsesConverter().from_external(kwargs, strict=strict)
+
+    @classmethod
+    def from_messages(
+        cls,
+        kwargs: anthropic.types.MessageCreateParams,
+        *,
+        strict: bool = True,
+    ) -> "LLMRequest":
+        """Create LLMRequest from Claude Messages API kwargs.
+
+        This is a convenience wrapper around MessagesConverter.
+
+        Args:
+            kwargs: Claude Messages API parameters
+            strict: If True, raise ValueError for unhandled parameters. If False, log warnings.
+
+        Returns:
+            LLMRequest instance
+
+        Raises:
+            ValueError: If strict=True and there are unhandled parameters
+        """
+        return MessagesConverter().from_external(kwargs, strict=strict)
+
+
+@dataclasses.dataclass(frozen=True)
+class ChatCompletionConverter:
+    """Converts between LLMRequest and OpenAI Chat Completions format.
+
+    This converter handles bidirectional conversion between ARES's internal LLMRequest
+    format and the OpenAI Chat Completions API format.
+
+    Conversion Notes:
+        - top_k is not supported (Claude-specific)
+        - service_tier="standard_only" is not supported
+        - stop_sequences truncated to 4 (OpenAI limit)
+        - system_prompt is converted to/from system message in messages list
+        - ToolCallMessage flattened into AssistantMessage.tool_calls
+    """
+
+    def to_external(self, request: LLMRequest, *, strict: bool = True) -> dict[str, Any]:
+        """Convert ARES LLMRequest to OpenAI Chat Completions format.
+
+        Args:
+            request: ARES internal request format
+            strict: If True, raise ValueError on information loss. If False, log warnings.
+
+        Returns:
+            Dictionary of kwargs for openai.ChatCompletion.create() (without model)
+
+        Raises:
+            ValueError: If strict=True and information would be lost in conversion
+
+        Note:
+            Model parameter is NOT included - it should be added by the LLMClient
+        """
+        # Check for information loss
+        lost_info = []
+        if request.top_k is not None:
+            lost_info.append(f"top_k={request.top_k} (Claude-specific, not supported)")
+        if request.service_tier == "standard_only":
+            lost_info.append("service_tier='standard_only' (not supported by Chat API)")
+        if request.stop_sequences and len(request.stop_sequences) > 4:
+            lost_info.append(
+                f"stop_sequences truncated from {len(request.stop_sequences)} to 4 "
+                f"(Chat API limit: {request.stop_sequences[4:]} will be dropped)"
+            )
+
+        if lost_info:
+            msg = f"Converting to Chat Completions will lose information: {'; '.join(lost_info)}"
+            if strict:
+                raise ValueError(msg)
+            _LOGGER.warning(msg)
+
+        # Convert messages, flattening ToolCallMessage into AssistantMessage.tool_calls
+        chat_messages: list[dict[str, Any]] = []
+        pending_tool_calls: list[dict[str, Any]] = []
+
+        for msg in request.messages:
+            msg_dict = dict(msg)
+
+            # ToolCallMessage → collect for previous assistant message
+            if "call_id" in msg_dict and "name" in msg_dict and "arguments" in msg_dict:
+                # This is a ToolCallMessage
+                pending_tool_calls.append(
+                    {
+                        "id": msg_dict["call_id"],
+                        "type": "function",
+                        "function": {
+                            "name": msg_dict["name"],
+                            "arguments": msg_dict["arguments"],
+                        },
+                    }
+                )
+            else:
+                # Flush any pending tool calls to the last assistant message
+                if pending_tool_calls and chat_messages:
+                    last_msg = chat_messages[-1]
+                    if last_msg.get("role") == "assistant":
+                        last_msg["tool_calls"] = pending_tool_calls
+                        pending_tool_calls = []
+                    else:
+                        if strict:
+                            role = last_msg.get("role")
+                            raise ValueError(
+                                f"ToolCallMessage found but previous message is not assistant (role={role})"
+                            )
+                        _LOGGER.warning(
+                            "ToolCallMessage found but previous message is not assistant, discarding tool calls"
+                        )
+                        pending_tool_calls = []
+
+                # Add the current message
+                chat_messages.append(msg_dict)
+
+        # Flush any remaining tool calls
+        if pending_tool_calls and chat_messages:
+            last_msg = chat_messages[-1]
+            if last_msg.get("role") == "assistant":
+                last_msg["tool_calls"] = pending_tool_calls
+            elif strict:
+                raise ValueError("ToolCallMessage at end but last message is not assistant")
+
+        kwargs: dict[str, Any] = {
+            "messages": chat_messages,
+        }
+
+        # Add system prompt as first message if present
+        if request.system_prompt:
+            kwargs["messages"] = [
+                {"role": "system", "content": request.system_prompt},
+                *kwargs["messages"],
+            ]
+
+        # Add optional parameters (filter None values)
+        if request.max_output_tokens is not None:
+            kwargs["max_completion_tokens"] = request.max_output_tokens
+        if request.temperature is not None:
+            kwargs["temperature"] = request.temperature
+        if request.top_p is not None:
+            kwargs["top_p"] = request.top_p
+        if request.stream:
+            kwargs["stream"] = True
+        if request.tools:
+            kwargs["tools"] = [_tool_to_chat_completions(tool) for tool in request.tools]
+        if request.tool_choice is not None:
+            kwargs["tool_choice"] = _tool_choice_to_openai(request.tool_choice)
+        if request.metadata:
+            kwargs["metadata"] = request.metadata
+        if request.service_tier and request.service_tier != "standard_only":
+            kwargs["service_tier"] = request.service_tier
+        if request.stop_sequences:
+            # OpenAI Chat supports up to 4 stop sequences
+            kwargs["stop"] = request.stop_sequences[:4]
+
+        return kwargs
+
+    def from_external(
+        self,
+        kwargs: openai.types.chat.completion_create_params.CompletionCreateParams,
+        *,
+        strict: bool = True,
+    ) -> LLMRequest:
         """Create LLMRequest from OpenAI Chat Completions API kwargs.
 
         Args:
@@ -1003,7 +1071,7 @@ class LLMRequest:
         if system_prompt:
             final_system_prompt = _extract_string_content(system_prompt, strict=strict, context="System prompt")
 
-        return cls(
+        return LLMRequest(
             messages=filtered_messages,
             max_output_tokens=kwargs.get("max_completion_tokens") or kwargs.get("max_tokens"),
             temperature=kwargs.get("temperature"),
@@ -1017,13 +1085,85 @@ class LLMRequest:
             system_prompt=final_system_prompt,
         )
 
-    @classmethod
-    def from_responses(
-        cls,
+
+@dataclasses.dataclass(frozen=True)
+class ResponsesConverter:
+    """Converts between LLMRequest and OpenAI Responses format.
+
+    This converter handles bidirectional conversion between ARES's internal LLMRequest
+    format and the OpenAI Responses API format.
+
+    Conversion Notes:
+        - stop_sequences are not supported in Responses API
+        - top_k is not supported (Claude-specific)
+        - service_tier="standard_only" is not supported
+        - system_prompt mapped to/from instructions parameter
+        - messages converted to/from input items
+    """
+
+    def to_external(self, request: LLMRequest, *, strict: bool = True) -> dict[str, Any]:
+        """Convert ARES LLMRequest to OpenAI Responses format.
+
+        Args:
+            request: ARES internal request format
+            strict: If True, raise ValueError on information loss. If False, log warnings.
+
+        Returns:
+            Dictionary of kwargs for openai.Responses.create() (without model)
+
+        Raises:
+            ValueError: If strict=True and information would be lost in conversion
+
+        Note:
+            Model parameter is NOT included - it should be added by the LLMClient
+        """
+        # Check for information loss
+        lost_info = []
+        if request.stop_sequences:
+            lost_info.append(f"stop_sequences={request.stop_sequences} (not supported by Responses API)")
+        if request.top_k is not None:
+            lost_info.append(f"top_k={request.top_k} (Claude-specific, not supported)")
+        if request.service_tier == "standard_only":
+            lost_info.append("service_tier='standard_only' (not supported by Responses API)")
+
+        if lost_info:
+            msg = f"Converting to Responses will lose information: {'; '.join(lost_info)}"
+            if strict:
+                raise ValueError(msg)
+            _LOGGER.warning(msg)
+
+        kwargs: dict[str, Any] = {
+            "input": request._messages_to_responses_input(),
+        }
+
+        if request.system_prompt:
+            kwargs["instructions"] = request.system_prompt
+
+        if request.max_output_tokens is not None:
+            kwargs["max_output_tokens"] = request.max_output_tokens
+        if request.temperature is not None:
+            kwargs["temperature"] = request.temperature
+        if request.top_p is not None:
+            kwargs["top_p"] = request.top_p
+        if request.stream:
+            kwargs["stream"] = True
+        if request.tools:
+            kwargs["tools"] = [_tool_to_responses(tool) for tool in request.tools]
+        if request.tool_choice is not None:
+            kwargs["tool_choice"] = _tool_choice_to_responses(request.tool_choice)
+        if request.metadata:
+            kwargs["metadata"] = request.metadata
+        if request.service_tier and request.service_tier != "standard_only":
+            kwargs["service_tier"] = request.service_tier
+
+        return kwargs
+
+    def from_external(
+        self,
         kwargs: openai.types.responses.response_create_params.ResponseCreateParamsBase,
         *,
         strict: bool = True,
-    ) -> "LLMRequest":
+    ) -> LLMRequest:
         """Create LLMRequest from OpenAI Responses API kwargs.
 
         Args:
@@ -1166,7 +1306,7 @@ class LLMRequest:
             if temp_tools:
                 converted_tools = temp_tools
 
-        return cls(
+        return LLMRequest(
             messages=filtered_messages,
             max_output_tokens=kwargs.get("max_output_tokens"),
             temperature=kwargs.get("temperature"),
@@ -1179,13 +1319,99 @@ class LLMRequest:
             system_prompt=kwargs.get("instructions"),
         )
 
-    @classmethod
-    def from_messages(
-        cls,
+
+@dataclasses.dataclass(frozen=True)
+class MessagesConverter:
+    """Converts between LLMRequest and Anthropic Messages format.
+
+    This converter handles bidirectional conversion between ARES's internal LLMRequest
+    format and the Anthropic Messages API format.
+
+    Conversion Notes:
+        - temperature converted between OpenAI range (0-2) and Claude range (0-1)
+        - messages must alternate user/assistant (enforced by Claude API)
+        - system_prompt mapped to/from system parameter
+        - service_tier options limited to "auto" and "standard_only"
+        - top_k is Claude-specific (supported)
+    """
+
+    def to_external(self, request: LLMRequest, *, strict: bool = True) -> dict[str, Any]:
+        """Convert ARES LLMRequest to Claude Messages format.
+
+        Args:
+            request: ARES internal request format
+            strict: If True, raise ValueError on information loss. If False, log warnings.
+
+        Returns:
+            Dictionary of kwargs for anthropic.messages.create() (without model)
+
+        Raises:
+            ValueError: If strict=True and information would be lost in conversion
+
+        Note:
+            Model parameter is NOT included - it should be added by the LLMClient
+        """
+        # Check for information loss
+        lost_info = []
+        if request.service_tier not in (None, "auto", "standard_only"):
+            lost_info.append(f"service_tier='{request.service_tier}' (Claude only supports 'auto' and 'standard_only')")
+
+        # Check for filtered messages
+        filtered_messages = []
+        for msg in request.messages:
+            msg_dict = dict(msg)
+            role = msg_dict["role"]
+            if role in ("system", "developer"):
+                content = str(msg_dict.get("content", ""))[:50]
+                filtered_messages.append(f"{role} message: {content}...")
+
+        if filtered_messages:
+            lost_info.append(f"Messages filtered out (use system_prompt instead): {'; '.join(filtered_messages)}")
+
+        if lost_info:
+            msg = f"Converting to Claude Messages will lose information: {'; '.join(lost_info)}"
+            if strict:
+                raise ValueError(msg)
+            _LOGGER.warning(msg)
+
+        kwargs: dict[str, Any] = {
+            "messages": request._messages_to_claude_format(strict=strict),
+            "max_tokens": request.max_output_tokens or 1024,  # max_tokens is required by Claude
+        }
+
+        if request.system_prompt:
+            kwargs["system"] = request.system_prompt
+
+        if request.temperature is not None:
+            # Convert from OpenAI range (0-2) to Claude range (0-1)
+            kwargs["temperature"] = min(request.temperature / 2.0, 1.0)
+        if request.top_p is not None:
+            kwargs["top_p"] = request.top_p
+        if request.top_k is not None:
+            kwargs["top_k"] = request.top_k
+        if request.stream:
+            kwargs["stream"] = True
+        if request.tools:
+            # Convert tools to Anthropic format (adds explicit type: "custom")
+            kwargs["tools"] = [_tool_to_anthropic(tool) for tool in request.tools]
+        if request.tool_choice is not None:
+            kwargs["tool_choice"] = _tool_choice_to_anthropic(request.tool_choice)
+        if request.metadata:
+            # Claude uses metadata.user_id specifically
+            kwargs["metadata"] = request.metadata
+        if request.service_tier in ("auto", "standard_only"):
+            kwargs["service_tier"] = request.service_tier
+        if request.stop_sequences:
+            kwargs["stop_sequences"] = request.stop_sequences
+
+        return kwargs
+
+    def from_external(
+        self,
         kwargs: anthropic.types.MessageCreateParams,
         *,
         strict: bool = True,
-    ) -> "LLMRequest":
+    ) -> LLMRequest:
         """Create LLMRequest from Claude Messages API kwargs.
 
         Args:
@@ -1267,7 +1493,7 @@ class LLMRequest:
                         raise
                     _LOGGER.warning("Skipping invalid tool: %s", e)
 
-        return cls(
+        return LLMRequest(
             messages=filtered_messages,
             max_output_tokens=kwargs["max_tokens"],
             temperature=temperature,
