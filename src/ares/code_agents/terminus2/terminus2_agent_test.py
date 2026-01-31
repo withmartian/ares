@@ -33,7 +33,7 @@ class TmuxSimulator:
                 session_name = match.group(1)
                 self.sessions[session_name] = "active"
                 self.panes[session_name] = ""
-            return containers.ExecResult(output="", exit_code=0)
+            return containers.ExecResult(stdout="", stderr="", exit_code=0)
 
         elif "tmux send-keys" in command and "-l" in command:
             match = re.search(r"-t\s+(\S+)", command)
@@ -44,7 +44,7 @@ class TmuxSimulator:
                 if text_match and session_name in self.panes:
                     text = text_match.group(1) or text_match.group(2) or ""
                     self.panes[session_name] += text
-            return containers.ExecResult(output="", exit_code=0)
+            return containers.ExecResult(stdout="", stderr="", exit_code=0)
 
         elif "tmux send-keys" in command and "Enter" in command:
             match = re.search(r"-t\s+(\S+)", command)
@@ -55,7 +55,7 @@ class TmuxSimulator:
                     self.panes[session_name] += "\n"
                     if typed_command.strip():
                         self.panes[session_name] += f"[executed: {typed_command}]\n"
-            return containers.ExecResult(output="", exit_code=0)
+            return containers.ExecResult(stdout="", stderr="", exit_code=0)
 
         elif "tmux capture-pane" in command:
             match = re.search(r"-t\s+(\S+)", command)
@@ -63,7 +63,7 @@ class TmuxSimulator:
             if match:
                 session_name = match.group(1)
                 output = self.panes.get(session_name, "")
-            return containers.ExecResult(output=output, exit_code=0)
+            return containers.ExecResult(stdout=output, stderr="", exit_code=0)
 
         elif "tmux kill-session" in command:
             match = re.search(r"-t\s+(\S+)", command)
@@ -71,24 +71,24 @@ class TmuxSimulator:
                 session_name = match.group(1)
                 self.sessions.pop(session_name, None)
                 self.panes.pop(session_name, None)
-            return containers.ExecResult(output="", exit_code=0)
+            return containers.ExecResult(stdout="", stderr="", exit_code=0)
 
         elif "tmux has-session" in command:
             match = re.search(r"-t\s+(\S+)", command)
             if match:
                 session_name = match.group(1)
                 exit_code = 0 if session_name in self.sessions else 1
-                return containers.ExecResult(output="", exit_code=exit_code)
-            return containers.ExecResult(output="", exit_code=1)
+                return containers.ExecResult(stdout="", stderr="", exit_code=exit_code)
+            return containers.ExecResult(stdout="", stderr="", exit_code=1)
 
         elif "which tmux" in command:
-            return containers.ExecResult(output="/usr/bin/tmux", exit_code=0)
+            return containers.ExecResult(stdout="/usr/bin/tmux", stderr="", exit_code=0)
 
         elif "tmux set-option" in command:
-            return containers.ExecResult(output="", exit_code=0)
+            return containers.ExecResult(stdout="", stderr="", exit_code=0)
 
         # Default success for other commands
-        return containers.ExecResult(output="", exit_code=0)
+        return containers.ExecResult(stdout="", stderr="", exit_code=0)
 
 
 class TestTerminus2AgentBasics:

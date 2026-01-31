@@ -73,7 +73,7 @@ class MockContainer(containers.Container):
             return self.exec_responses[command]
 
         # Default to successful empty response
-        return containers.ExecResult(output="", exit_code=0)
+        return containers.ExecResult(stdout="", stderr="", exit_code=0)
 
     async def upload_files(self, local_paths: list[pathlib.Path], remote_paths: list[str]) -> None:
         """Record uploaded files."""

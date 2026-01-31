@@ -55,7 +55,8 @@ async def test_mock_container_exec_run_configured_response():
     """Test that exec_run uses configured responses."""
     container = mock_container.MockContainer()
     container.exec_responses["ls -la"] = containers.ExecResult(
-        output="file1.txt\nfile2.txt",
+        stdout="file1.txt\nfile2.txt",
+        stderr="",
         exit_code=0,
     )
 
@@ -72,8 +73,8 @@ async def test_mock_container_exec_run_custom_handler():
 
     def handler(command: str) -> containers.ExecResult:
         if "error" in command:
-            return containers.ExecResult(output="Error!", exit_code=1)
-        return containers.ExecResult(output=f"Executed: {command}", exit_code=0)
+            return containers.ExecResult(stdout="", stderr="Error!", exit_code=1)
+        return containers.ExecResult(stdout=f"Executed: {command}", stderr="", exit_code=0)
 
     container.exec_handler = handler
 

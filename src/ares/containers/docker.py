@@ -118,7 +118,9 @@ class DockerContainer(containers.Container):
             timeout=timeout_s,
         )
         result_str = result.output.decode("utf-8", errors="replace")
-        return containers.ExecResult(output=result_str, exit_code=result.exit_code)
+        # Docker provides combined stdout+stderr in output field
+        # Put it in stdout, leave stderr empty for now
+        return containers.ExecResult(stdout=result_str, stderr="", exit_code=result.exit_code)
 
     def stop_and_remove(self) -> None:
         """Stop and remove the container."""
