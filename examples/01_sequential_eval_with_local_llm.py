@@ -8,7 +8,7 @@ using two different code agents: MiniSWECodeAgent and Terminus2Agent.
 
 This example uses Qwen2-0.5B-Instruct with a Llama CPP-backed LLM client.
 Unfortunately this model is too weak to solve the task we've set it,
-so we only run it for 5 steps with each agent.
+so we only run it for 5 steps per agent.
 In example 02_sequential_eval_with_api.py we'll use a more powerful LLM.
 
 Prerequisites:
@@ -34,11 +34,17 @@ Example usage:
 
 import argparse
 import asyncio
+import functools
 
 import ares
+from ares.code_agents.terminus2 import terminus2_agent
+from ares.containers import docker
 from ares.contrib import llama_cpp
+from ares.environments import code_env
 
 from . import utils
+
+_MAX_STEPS = 5
 
 
 async def run_episode(preset: str, agent, label: str) -> None:
@@ -69,32 +75,73 @@ async def run_episode(preset: str, agent, label: str) -> None:
             total_reward += ts.reward
             step_count += 1
 
-            # We only run for 5 steps; this model isn't strong enough to solve the task.
-            if step_count >= 5:
+            # We only run for _MAX_STEPS; this model isn't strong enough to solve the task.
+            if step_count >= _MAX_STEPS:
                 break
 
         # Episode complete!
         print()
         print("=" * 80)
-        print(f"[{label}] Episode truncated after {step_count} steps")
+        print(f"[{label}] Episode completed after {step_count} steps")
         print(f"[{label}] Total reward: {total_reward}")
         print("=" * 80)
 
 
-_AGENTS = {
-    "mswea": ("sbv-mswea:0", "MiniSWECodeAgent"),
-    "terminus2": ("sbv-terminus2:0", "Terminus2Agent"),
-}
+async def run_terminus2_episode(agent, label: str) -> None:
+    """Run a single episode with Terminus2Agent, using min_turns to prevent early exit.
+
+    The weak local model tends to hallucinate task_complete=true early. We set min_turns
+    so the agent ignores premature completion signals for the first _MAX_STEPS turns.
+    """
+    print(f"\n{'=' * 80}")
+    print(f"Running: {label} (sbv-terminus2:0)")
+    print(f"{'=' * 80}\n")
+
+    # Load the first SWE-bench Verified task.
+    tasks = code_env.load_harbor_dataset(name="swebench-verified", version="1.0")
+
+    # Build the environment directly so we can pass min_turns to the agent factory.
+    # functools.partial bakes in min_turns while still satisfying the CodeAgentFactory protocol.
+    agent_factory = functools.partial(terminus2_agent.Terminus2Agent, min_turns=_MAX_STEPS)
+    env = code_env.CodeEnvironment(
+        tasks=tasks[:1],
+        container_factory=docker.DockerContainer,
+        code_agent_factory=agent_factory,
+    )
+
+    async with env:
+        ts = await env.reset()
+        step_count = 0
+        total_reward = 0.0
+
+        while not ts.last():
+            action = await agent(ts.observation)
+            utils.print_step(step_count, ts.observation, action)
+            ts = await env.step(action)
+
+            assert ts.reward is not None
+            total_reward += ts.reward
+            step_count += 1
+
+            if step_count >= _MAX_STEPS:
+                break
+
+        print()
+        print("=" * 80)
+        print(f"[{label}] Episode completed after {step_count} steps")
+        print(f"[{label}] Total reward: {total_reward}")
+        print("=" * 80)
 
 
 async def main(agent_choice: str) -> None:
     # Load Qwen2-0.5B-Instruct using a Llama CPP-backed LLM client.
     agent = llama_cpp.create_qwen2_0_5b_instruct_llama_cpp_client(n_ctx=32_768)
 
-    agents_to_run = list(_AGENTS.values()) if agent_choice == "both" else [_AGENTS[agent_choice]]
+    if agent_choice in ("mswea", "both"):
+        await run_episode("sbv-mswea:0", agent, "MiniSWECodeAgent")
 
-    for preset, label in agents_to_run:
-        await run_episode(preset, agent, label)
+    if agent_choice in ("terminus2", "both"):
+        await run_terminus2_episode(agent, "Terminus2Agent")
 
     print()
     print("🎉 You've seen ARES in action!")
