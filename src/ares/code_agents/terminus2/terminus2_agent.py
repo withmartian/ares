@@ -143,7 +143,6 @@ class Terminus2Agent(code_agent_base.CodeAgent):
 
     container: containers.Container
     llm_client: llm_clients.LLMClient
-    # TODO: Actually use the stat tracker in the agent.
     tracker: stat_tracker.StatTracker = dataclasses.field(default_factory=stat_tracker.NullStatTracker)
     parser_format: Literal["json", "xml"] = "json"
     max_turns: int = 1_000_000  # Match terminal-bench reference (effectively unlimited)
@@ -489,7 +488,8 @@ class Terminus2Agent(code_agent_base.CodeAgent):
         self._original_instruction = task  # Store for summarization
 
         # Initialize tmux session to capture initial terminal state
-        await self._ensure_tmux_session()
+        with self.tracker.timeit("t2/setup"):
+            await self._ensure_tmux_session()
 
         # Capture initial terminal state using incremental output
         # First call returns "Current Terminal Screen:\n{visible}" automatically
@@ -680,9 +680,10 @@ class Terminus2Agent(code_agent_base.CodeAgent):
                 )
 
         try:
-            response = await self.llm_client(
-                request.LLMRequest(messages=self._messages, system_prompt=self._system_prompt)
-            )
+            with self.tracker.timeit("t2/llm_request"):
+                response = await self.llm_client(
+                    request.LLMRequest(messages=self._messages, system_prompt=self._system_prompt)
+                )
             _LOGGER.debug("[%d] Received LLM response", id(self))
             return response
 
