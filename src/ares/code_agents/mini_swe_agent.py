@@ -38,10 +38,10 @@ _LOGGER = logging.getLogger(__name__)
 
 # Copied from minisweagent's default config.
 _TIMEOUT_TEMPLATE = """
-The last command <command>{action}</command> timed out and has been killed.
+The last command <command>{{ action }}</command> timed out and has been killed.
 The output of the command was:
 <output>
-{output}
+{{ output }}
 </output>
 Please try another command and make sure to avoid those requiring interactive input.
 """.strip()
@@ -106,8 +106,19 @@ def _render_format_error_template(format_error_template: str, actions: list[str]
 
 
 def _render_timeout_template(action: str, output: str) -> str:
-    # TODO: Use jinja2, and allow updating of configuration.
-    return _TIMEOUT_TEMPLATE.format(action=action, output=output)
+    """Render the timeout error message using Jinja2.
+
+    Args:
+        action: The action/command that timed out
+        output: Any partial output from the command (may be empty)
+
+    Returns:
+        Rendered timeout error message
+    """
+    return jinja2.Template(_TIMEOUT_TEMPLATE, undefined=jinja2.StrictUndefined).render(
+        action=action,
+        output=output,
+    )
 
 
 @dataclasses.dataclass(kw_only=True)
