@@ -77,10 +77,14 @@ export TIMEOUT_MINUTES=30
 ### Running the Server
 
 ```bash
-# Build the binary
-go build -o ares-proxy
+# Using Makefile (recommended)
+make build   # Build the binary
+make run     # Run with defaults (port 8080, 15 min timeout)
+make test    # Run all tests
+make clean   # Remove build artifacts
 
-# Run with defaults (port 8080, 15 min timeout)
+# Or manually
+go build -o ares-proxy
 ./ares-proxy
 
 # Run with custom configuration
@@ -141,15 +145,16 @@ for req in requests_list:
 ### Running Tests
 
 ```bash
-# Run all tests
-go test -v
+# Using Makefile (recommended)
+make test
 
-# Run specific test
-go test -v -run TestBroker_SubmitAndPoll
-
-# Run with coverage
-go test -cover
+# Or manually
+go test -v                                  # Run all tests
+go test -v -run TestBroker_SubmitAndPoll   # Run specific test
+go test -cover                              # Run with coverage
 ```
+
+Tests run automatically in CI via GitHub Actions when any files in `ares-proxy/` are modified.
 
 ### Project Structure
 
