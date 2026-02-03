@@ -42,26 +42,26 @@ Example usage:
     - Training Guide: https://docs.skyrl.ai/docs/training
 """
 
+from collections.abc import Callable, Coroutine
 import inspect
-from typing import Any, Callable, Coroutine, Union
+from typing import Any
 
+import ares
+from ares import llms
 import hydra
 import omegaconf
 import ray
 import skyrl_gym
 from skyrl_gym.envs import base_text_env
+from skyrl_train import utils as skyrl_train_utils
 from skyrl_train.entrypoints import main_base as skyrl_train_main_base
 from skyrl_train.generators import skyrl_gym_generator
-from skyrl_train import utils as skyrl_train_utils
-
-import ares
-from ares import llms
 
 
 class SkyRLAsyncGymGenerator(skyrl_gym_generator.SkyRLGymGenerator):
     """Wrapper around SkyRLGymGenerator to support async Gym Environments"""
 
-    async def _run_in_executor_if_available(self, func: Union[Callable, Coroutine], *args: Any, **kwargs: Any):
+    async def _run_in_executor_if_available(self, func: Callable | Coroutine, *args: Any, **kwargs: Any):
         if inspect.iscoroutinefunction(func):
             return await func(*args, **kwargs)
         else:
@@ -83,6 +83,9 @@ class ARESSkyRLGymEnv(base_text_env.BaseTextEnv):
             extras: Extra configuration including 'preset_name'
             **kwargs: Additional keyword arguments (for compatibility)
         """
+        del env_config  # unused
+        super().__init__()
+
         if extras is None:
             extras = kwargs
         self.preset_name = extras.get("preset_name", kwargs.get("preset_name"))
@@ -90,7 +93,9 @@ class ARESSkyRLGymEnv(base_text_env.BaseTextEnv):
             raise ValueError("preset_name must be provided in extras or kwargs")
         self.env: ares.Environment[llms.LLMResponse, llms.LLMRequest, float, float] | None = None
 
-    async def init(self, prompt: base_text_env.ConversationType) -> tuple[base_text_env.ConversationType, dict[str, Any]]:
+    async def init(
+        self, prompt: base_text_env.ConversationType
+    ) -> tuple[base_text_env.ConversationType, dict[str, Any]]:
         """Return the first prompt to be given to the model and optional metadata."""
         task_idx = int(prompt[0]["content"])
         self.env = ares.make(f"{self.preset_name}:{task_idx}")
@@ -166,6 +171,7 @@ def _make_ares_env(**kwargs):
     """Factory function for creating ARES environments."""
     return ARESSkyRLGymEnv(**kwargs)
 
+
 class ARESExp(skyrl_train_main_base.BasePPOExp):
     def __init__(self, cfg):
         # Register the custom environment before initialization
@@ -228,4 +234,3 @@ def main(cfg: omegaconf.DictConfig) -> None:
 
 if __name__ == "__main__":
     main()
-
