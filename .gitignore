@@ -125,3 +125,10 @@ output/
 
 # uv lock file (for libraries)
 uv.lock
+
+# Go
+ares-proxy/ares-proxy
+*.test
+*.out
+vendor/
+go.work
