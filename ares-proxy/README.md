@@ -2,6 +2,8 @@
 
 A lightweight HTTP proxy server that intercepts OpenAI-compatible chat completion requests and routes them through a queue-mediated polling system. Designed for use with the ARES (Agentic Research and Evaluation Suite) framework to enable RL-based control of LLM interactions.
 
+The proxy doesn't validate the request/response types; this should be handled by the clients.
+
 ## Overview
 
 ares-proxy acts as a man-in-the-middle proxy between LLM clients (like code agents) and LLM providers. Instead of directly forwarding requests to an LLM API, it:
@@ -36,7 +38,7 @@ This architecture enables the ARES RL loop to intercept and control LLM interact
 The core coordination engine that manages:
 - **Request queue**: Holds pending LLM requests
 - **Response channels**: Maps request IDs to response delivery channels
-- **Timeout handling**: Cleans up stale requests after a configurable timeout
+- **Timeout handling**: Cleans up stale requests after a configurable timeout (i.e. removes them)
 
 #### HTTP Endpoints (`main.go`)
 
