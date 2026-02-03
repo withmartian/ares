@@ -49,7 +49,10 @@ The core coordination engine that manages:
 2. **`GET /poll`**
    - Retrieves all pending requests from the queue
    - Clears the queue atomically
-   - Returns array of `PendingRequest` objects with IDs and timestamps
+   - Returns an array of pending requests, each containing:
+     - `id`: Unique request identifier
+     - `timestamp`: When the request was submitted
+     - `request`: The original request payload (chat completion JSON)
 
 3. **`POST /respond`**
    - Sends a response back to a waiting request
