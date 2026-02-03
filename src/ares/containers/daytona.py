@@ -153,7 +153,9 @@ class DaytonaContainer(containers.Container):
         if float(int_exit_code) != exit_code:
             raise ValueError(f"Exit code is not an integer: {exit_code}")
 
-        return containers.ExecResult(output=result.result, exit_code=int_exit_code)
+        # Daytona provides combined stdout+stderr in result field
+        # Put it in stdout, leave stderr empty for now
+        return containers.ExecResult(stdout=result.result, stderr="", exit_code=int_exit_code)
 
     def stop_and_remove(self) -> None:
         """Stop and remove the container."""
