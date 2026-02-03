@@ -56,18 +56,33 @@ func (b *Broker) SubmitRequest(ctx context.Context, requestBody json.RawMessage)
 		// Got a response!
 		return response, nil
 	case <-time.After(b.timeout):
-		// Timeout - clean up
+		// Timeout - clean up both map and queue
 		b.mu.Lock()
 		delete(b.pendingRequests, id)
+		b.removePendingRequestFromQueue(id)
 		b.mu.Unlock()
 		return nil, fmt.Errorf("request timeout after %s", b.timeout)
 	case <-ctx.Done():
-		// Client disconnected - clean up
+		// Client disconnected - clean up both map and queue
 		b.mu.Lock()
 		delete(b.pendingRequests, id)
+		b.removePendingRequestFromQueue(id)
 		b.mu.Unlock()
 		return nil, ctx.Err()
 	}
+}
+
+// removePendingRequestFromQueue removes a request from the queue by ID
+// Must be called with b.mu held
+func (b *Broker) removePendingRequestFromQueue(id string) {
+	// Filter out the request with matching ID
+	filtered := make([]PendingRequest, 0, len(b.requestQueue))
+	for _, req := range b.requestQueue {
+		if req.ID != id {
+			filtered = append(filtered, req)
+		}
+	}
+	b.requestQueue = filtered
 }
 
 // PollRequests returns all pending requests and clears the queue

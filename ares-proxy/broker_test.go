@@ -146,6 +146,12 @@ func TestBroker_Timeout(t *testing.T) {
 	if err.Error() != expectedError {
 		t.Errorf("Expected error %q, got %q", expectedError, err.Error())
 	}
+
+	// Verify that timed-out request is not in the queue
+	pending := broker.PollRequests()
+	if len(pending) != 0 {
+		t.Errorf("Expected empty queue after timeout, got %d requests", len(pending))
+	}
 }
 
 func TestBroker_ContextCancellation(t *testing.T) {
@@ -178,6 +184,12 @@ func TestBroker_ContextCancellation(t *testing.T) {
 		}
 	case <-time.After(1 * time.Second):
 		t.Fatal("Timeout waiting for context cancellation")
+	}
+
+	// Verify that cancelled request is not in the queue
+	pending := broker.PollRequests()
+	if len(pending) != 0 {
+		t.Errorf("Expected empty queue after cancellation, got %d requests", len(pending))
 	}
 }
 
@@ -233,5 +245,74 @@ func TestBroker_RequestTimestamp(t *testing.T) {
 	ts := pending[0].Timestamp
 	if ts.Before(before) || ts.After(after) {
 		t.Errorf("Timestamp %v not between %v and %v", ts, before, after)
+	}
+}
+
+func TestBroker_ExactlyOnceDelivery(t *testing.T) {
+	broker := NewBroker(200 * time.Millisecond)
+
+	// Submit 3 requests: one normal, one that will timeout, one that will be cancelled
+	ctx1 := context.Background()
+	ctx2 := context.Background()
+	ctx3, cancel3 := context.WithCancel(context.Background())
+
+	testRequest1 := json.RawMessage(`{"request": "1"}`)
+	testRequest2 := json.RawMessage(`{"request": "2"}`)
+	testRequest3 := json.RawMessage(`{"request": "3"}`)
+
+	// Submit all requests
+	go func() {
+		broker.SubmitRequest(ctx1, testRequest1)
+	}()
+	go func() {
+		broker.SubmitRequest(ctx2, testRequest2) // Will timeout
+	}()
+	go func() {
+		broker.SubmitRequest(ctx3, testRequest3)
+	}()
+
+	// Give them time to queue
+	time.Sleep(50 * time.Millisecond)
+
+	// First poll should return all 3 requests
+	pending1 := broker.PollRequests()
+	if len(pending1) != 3 {
+		t.Fatalf("Expected 3 pending requests, got %d", len(pending1))
+	}
+
+	// Second poll should be empty (exactly-once: already polled)
+	pending2 := broker.PollRequests()
+	if len(pending2) != 0 {
+		t.Errorf("Expected empty queue after first poll, got %d requests", len(pending2))
+	}
+
+	// Respond to request 1 only
+	testResponse := json.RawMessage(`{"response": "ok"}`)
+	err := broker.RespondToRequest(pending1[0].ID, testResponse)
+	if err != nil {
+		t.Errorf("Failed to respond to request 1: %v", err)
+	}
+
+	// Cancel request 3
+	cancel3()
+
+	// Wait for request 2 to timeout
+	time.Sleep(200 * time.Millisecond)
+
+	// Poll again - should still be empty (stale requests shouldn't reappear)
+	pending3 := broker.PollRequests()
+	if len(pending3) != 0 {
+		t.Errorf("Expected empty queue after timeout/cancel, got %d requests", len(pending3))
+	}
+
+	// Verify we can't respond to timed-out or cancelled requests
+	err = broker.RespondToRequest(pending1[1].ID, testResponse)
+	if err == nil {
+		t.Error("Expected error when responding to timed-out request")
+	}
+
+	err = broker.RespondToRequest(pending1[2].ID, testResponse)
+	if err == nil {
+		t.Error("Expected error when responding to cancelled request")
 	}
 }
