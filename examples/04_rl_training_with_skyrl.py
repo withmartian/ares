@@ -125,8 +125,9 @@ class ARESSkyRLGymEnv(base_text_env.BaseTextEnv):
             # Hack to approximate a context manager
             await self.env.__aexit__(None, None, None)
 
+        msgs = [] if ts.last() else ts.observation.messages
         return base_text_env.BaseTextEnvStepOutput(
-            observations=ts.observation.messages,  # type: ignore
+            observations=msgs,
             reward=ts.reward or 0.0,
             done=ts.last(),
             metadata={},
