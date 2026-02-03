@@ -8,9 +8,29 @@ from typing import Protocol
 
 @dataclasses.dataclass(frozen=True)
 class ExecResult:
-    # TODO: Maybe stdout/stderr?
-    output: str
+    """Result of executing a command in a container.
+
+    Attributes:
+        stdout: Standard output from the command.
+        stderr: Standard error output from the command.
+        exit_code: Exit code of the command (0 typically means success).
+        output: Combined stdout + stderr for backward compatibility.
+            This is a computed property - prefer using stdout/stderr directly.
+    """
+
+    stdout: str
+    stderr: str
     exit_code: int
+
+    @property
+    def output(self) -> str:
+        """Combined stdout and stderr for backward compatibility.
+
+        Returns stdout + stderr concatenated. For new code, prefer accessing
+        stdout and stderr separately for better error handling.
+        """
+        # Combine with stderr second so errors appear at the end
+        return self.stdout + self.stderr
 
 
 @dataclasses.dataclass(frozen=True)
