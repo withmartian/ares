@@ -17,20 +17,12 @@ from typing import Any, cast
 
 import anthropic.types
 
-from ares.llms.request import _VALID_ROLES
-from ares.llms.request import LLMRequest
-from ares.llms.request import Message
-from ares.llms.request import Tool
-from ares.llms.request import _extract_string_content
-from ares.llms.request import _tool_choice_from_anthropic
-from ares.llms.request import _tool_choice_to_anthropic
-from ares.llms.request import _tool_from_anthropic
-from ares.llms.request import _tool_to_anthropic
+from ares.llms import request as llm_request
 
 _LOGGER = logging.getLogger(__name__)
 
 
-def _messages_to_claude_format(messages: list[Message], *, strict: bool = True) -> list[dict[str, Any]]:
+def _messages_to_claude_format(messages: list[llm_request.Message], *, strict: bool = True) -> list[dict[str, Any]]:
     """Convert messages from Chat format to Claude alternating format.
 
     Args:
@@ -95,7 +87,7 @@ def _messages_to_claude_format(messages: list[Message], *, strict: bool = True) 
     return claude_messages
 
 
-def to_external(request: LLMRequest, *, strict: bool = True) -> dict[str, Any]:
+def to_external(request: llm_request.LLMRequest, *, strict: bool = True) -> dict[str, Any]:
     """Convert ARES LLMRequest to Claude Messages format.
 
     Args:
@@ -153,9 +145,9 @@ def to_external(request: LLMRequest, *, strict: bool = True) -> dict[str, Any]:
         kwargs["stream"] = True
     if request.tools:
         # Convert tools to Anthropic format (adds explicit type: "custom")
-        kwargs["tools"] = [_tool_to_anthropic(tool) for tool in request.tools]
+        kwargs["tools"] = [llm_request._tool_to_anthropic(tool) for tool in request.tools]
     if request.tool_choice is not None:
-        kwargs["tool_choice"] = _tool_choice_to_anthropic(request.tool_choice)
+        kwargs["tool_choice"] = llm_request._tool_choice_to_anthropic(request.tool_choice)
     if request.metadata:
         # Claude uses metadata.user_id specifically
         kwargs["metadata"] = request.metadata
@@ -171,7 +163,7 @@ def from_external(
     kwargs: anthropic.types.MessageCreateParams,
     *,
     strict: bool = True,
-) -> LLMRequest:
+) -> llm_request.LLMRequest:
     """Create LLMRequest from Claude Messages API kwargs.
 
     Args:
@@ -218,42 +210,42 @@ def from_external(
     system_param = kwargs.get("system")
     system_prompt = None
     if system_param:
-        system_prompt = _extract_string_content(system_param, strict=strict, context="System prompt")
+        system_prompt = llm_request._extract_string_content(system_param, strict=strict, context="System prompt")
 
     # Filter and validate messages
-    filtered_messages: list[Message] = []
+    filtered_messages: list[llm_request.Message] = []
     for msg in kwargs["messages"]:
         role = msg.get("role")
 
         # Validate role is supported
-        if role not in _VALID_ROLES:
+        if role not in llm_request._VALID_ROLES:
             if strict:
-                raise ValueError(f"Unsupported message role: {role}. Must be one of {_VALID_ROLES}")
+                raise ValueError(f"Unsupported message role: {role}. Must be one of {llm_request._VALID_ROLES}")
             _LOGGER.warning("Skipping message with unsupported role: %s", role)
             continue
 
         # Convert to our Message format, validating content
         message_dict = dict(msg)
         if "content" in message_dict:
-            message_dict["content"] = _extract_string_content(
+            message_dict["content"] = llm_request._extract_string_content(
                 message_dict["content"], strict=strict, context=f"Message content (role={role})"
             )
-        filtered_messages.append(cast(Message, message_dict))
+        filtered_messages.append(cast(llm_request.Message, message_dict))
 
     # Convert tools from Anthropic format to internal format
     tools_param = kwargs.get("tools")
-    converted_tools: list[Tool] | None = None
+    converted_tools: list[llm_request.Tool] | None = None
     if tools_param:
         converted_tools = []
         for tool in tools_param:
             try:
-                converted_tools.append(_tool_from_anthropic(tool))
+                converted_tools.append(llm_request._tool_from_anthropic(tool))
             except ValueError as e:
                 if strict:
                     raise
                 _LOGGER.warning("Skipping invalid tool: %s", e)
 
-    return LLMRequest(
+    return llm_request.LLMRequest(
         messages=filtered_messages,
         max_output_tokens=kwargs["max_tokens"],
         temperature=temperature,
@@ -261,7 +253,7 @@ def from_external(
         top_k=kwargs.get("top_k"),
         stream=bool(kwargs.get("stream", False)),
         tools=converted_tools,
-        tool_choice=_tool_choice_from_anthropic(cast(dict[str, Any] | None, kwargs.get("tool_choice"))),
+        tool_choice=llm_request._tool_choice_from_anthropic(cast(dict[str, Any] | None, kwargs.get("tool_choice"))),
         metadata=cast(dict[str, Any] | None, kwargs.get("metadata")),
         service_tier=kwargs.get("service_tier"),
         stop_sequences=cast(list[str] | None, kwargs.get("stop_sequences")),

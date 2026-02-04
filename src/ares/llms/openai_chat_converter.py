@@ -18,20 +18,12 @@ from typing import Any, cast
 import openai.types.chat
 import openai.types.chat.completion_create_params
 
-from ares.llms.request import _VALID_ROLES
-from ares.llms.request import LLMRequest
-from ares.llms.request import Message
-from ares.llms.request import Tool
-from ares.llms.request import _extract_string_content
-from ares.llms.request import _tool_choice_from_openai
-from ares.llms.request import _tool_choice_to_openai
-from ares.llms.request import _tool_from_chat_completions
-from ares.llms.request import _tool_to_chat_completions
+from ares.llms import request as llm_request
 
 _LOGGER = logging.getLogger(__name__)
 
 
-def to_external(request: LLMRequest, *, strict: bool = True) -> dict[str, Any]:
+def to_external(request: llm_request.LLMRequest, *, strict: bool = True) -> dict[str, Any]:
     """Convert ARES LLMRequest to OpenAI Chat Completions format.
 
     Args:
@@ -133,9 +125,9 @@ def to_external(request: LLMRequest, *, strict: bool = True) -> dict[str, Any]:
     if request.stream:
         kwargs["stream"] = True
     if request.tools:
-        kwargs["tools"] = [_tool_to_chat_completions(tool) for tool in request.tools]
+        kwargs["tools"] = [llm_request._tool_to_chat_completions(tool) for tool in request.tools]
     if request.tool_choice is not None:
-        kwargs["tool_choice"] = _tool_choice_to_openai(request.tool_choice)
+        kwargs["tool_choice"] = llm_request._tool_choice_to_openai(request.tool_choice)
     if request.metadata:
         kwargs["metadata"] = request.metadata
     if request.service_tier and request.service_tier != "standard_only":
@@ -151,7 +143,7 @@ def from_external(
     kwargs: openai.types.chat.completion_create_params.CompletionCreateParams,
     *,
     strict: bool = True,
-) -> LLMRequest:
+) -> llm_request.LLMRequest:
     """Create LLMRequest from OpenAI Chat Completions API kwargs.
 
     Args:
@@ -193,7 +185,7 @@ def from_external(
 
     # Extract system prompt and filter messages
     system_prompt = None
-    filtered_messages: list[Message] = []
+    filtered_messages: list[llm_request.Message] = []
 
     for msg in kwargs["messages"]:
         role = msg.get("role")
@@ -202,15 +194,15 @@ def from_external(
         if role in ("system", "developer"):
             if system_prompt is None:
                 content = msg.get("content", "")
-                system_prompt = _extract_string_content(
+                system_prompt = llm_request._extract_string_content(
                     content, strict=strict, context=f"System/developer message content (role={role})"
                 )
             continue
 
         # Validate role is supported
-        if role not in _VALID_ROLES:
+        if role not in llm_request._VALID_ROLES:
             if strict:
-                raise ValueError(f"Unsupported message role: {role}. Must be one of {_VALID_ROLES}")
+                raise ValueError(f"Unsupported message role: {role}. Must be one of {llm_request._VALID_ROLES}")
             _LOGGER.warning("Skipping message with unsupported role: %s", role)
             continue
 
@@ -223,11 +215,11 @@ def from_external(
 
             # Validate content if present
             if "content" in assistant_msg:
-                assistant_msg["content"] = _extract_string_content(
+                assistant_msg["content"] = llm_request._extract_string_content(
                     assistant_msg["content"], strict=strict, context="Assistant message content"
                 )
 
-            filtered_messages.append(cast(Message, assistant_msg))
+            filtered_messages.append(cast(llm_request.Message, assistant_msg))
 
             # Create separate ToolCallMessage for each tool call
             if isinstance(tool_calls_list, list):
@@ -236,7 +228,7 @@ def from_external(
                         function = tool_call.get("function", {})
                         filtered_messages.append(
                             cast(
-                                Message,
+                                llm_request.Message,
                                 {
                                     "call_id": tool_call.get("id", ""),
                                     "name": function.get("name", ""),
@@ -248,14 +240,14 @@ def from_external(
             # Convert to our Message format, validating content
             message_dict = dict(msg)
             if "content" in message_dict:
-                message_dict["content"] = _extract_string_content(
+                message_dict["content"] = llm_request._extract_string_content(
                     message_dict["content"], strict=strict, context=f"Message content (role={role})"
                 )
-            filtered_messages.append(cast(Message, message_dict))
+            filtered_messages.append(cast(llm_request.Message, message_dict))
 
     # Convert tools from OpenAI to Claude format
     tools_param = kwargs.get("tools")
-    converted_tools: list[Tool] | None = None
+    converted_tools: list[llm_request.Tool] | None = None
     if tools_param:
         converted_tools = []
         for tool in tools_param:
@@ -265,7 +257,7 @@ def from_external(
                     raise ValueError(f"Unsupported tool type: {tool_type}. Only 'function' tools are supported.")
                 _LOGGER.warning("Skipping tool with unsupported type: %s", tool_type)
                 continue
-            converted_tools.append(_tool_from_chat_completions(cast(openai.types.chat.ChatCompletionToolParam, tool)))
+            converted_tools.append(llm_request._tool_from_chat_completions(cast(openai.types.chat.ChatCompletionToolParam, tool)))
 
     # Handle stop sequences - convert single string to list
     stop_param = kwargs.get("stop")
@@ -278,16 +270,16 @@ def from_external(
     # Handle system prompt - extract string from various formats
     final_system_prompt: str | None = None
     if system_prompt:
-        final_system_prompt = _extract_string_content(system_prompt, strict=strict, context="System prompt")
+        final_system_prompt = llm_request._extract_string_content(system_prompt, strict=strict, context="System prompt")
 
-    return LLMRequest(
+    return llm_request.LLMRequest(
         messages=filtered_messages,
         max_output_tokens=kwargs.get("max_completion_tokens") or kwargs.get("max_tokens"),
         temperature=kwargs.get("temperature"),
         top_p=kwargs.get("top_p"),
         stream=bool(kwargs.get("stream", False)),
         tools=converted_tools,
-        tool_choice=_tool_choice_from_openai(cast(str | dict[str, Any] | None, kwargs.get("tool_choice"))),
+        tool_choice=llm_request._tool_choice_from_openai(cast(str | dict[str, Any] | None, kwargs.get("tool_choice"))),
         metadata=cast(dict[str, Any] | None, kwargs.get("metadata")),
         service_tier=kwargs.get("service_tier"),
         stop_sequences=stop_sequences,
