@@ -1,0 +1,309 @@
+"""Converter for OpenAI Responses API format.
+
+This module provides bidirectional conversion between ARES's internal LLMRequest format
+and the OpenAI Responses API format. The module itself conforms to the
+RequestConverter Protocol through its to_external and from_external functions.
+
+Conversion Notes:
+    - stop_sequences are not supported in Responses API
+    - top_k is not supported (Claude-specific)
+    - service_tier="standard_only" is not supported
+    - system_prompt mapped to/from instructions parameter
+    - messages converted to/from input items
+"""
+
+import logging
+from typing import Any, cast
+
+import openai.types.responses
+import openai.types.responses.response_create_params
+
+from ares.llms.request import _VALID_ROLES
+from ares.llms.request import LLMRequest
+from ares.llms.request import Message
+from ares.llms.request import Tool
+from ares.llms.request import UserMessage
+from ares.llms.request import _extract_string_content
+from ares.llms.request import _tool_choice_from_openai
+from ares.llms.request import _tool_choice_to_responses
+from ares.llms.request import _tool_from_responses
+from ares.llms.request import _tool_to_responses
+
+_LOGGER = logging.getLogger(__name__)
+
+
+def _messages_to_responses_input(messages: list[Message]) -> list[dict[str, Any]]:
+    """Convert messages from internal format to Responses input items.
+
+    Args:
+        messages: List of messages in internal format
+
+    Returns:
+        List of input items for Responses API
+
+    Note:
+        - ToolCallMessage → function_call items
+        - ToolCallResponseMessage → function_call_output items
+        - Other messages → message items
+    """
+    input_items = []
+    for msg in messages:
+        msg_dict = dict(msg)  # Convert to regular dict for type safety
+
+        # ToolCallMessage (tool invocation) → function_call
+        if "call_id" in msg_dict and "name" in msg_dict and "arguments" in msg_dict:
+            item: dict[str, Any] = {
+                "type": "function_call",
+                "call_id": msg_dict["call_id"],
+                "name": msg_dict["name"],
+                "arguments": msg_dict["arguments"],
+            }
+            input_items.append(item)
+
+        # ToolCallResponseMessage (tool result) → function_call_output
+        elif msg_dict.get("role") == "tool":
+            item = {
+                "type": "function_call_output",
+                "output": msg_dict.get("content", ""),
+            }
+            # Include call_id if present (required for routing)
+            if "tool_call_id" in msg_dict:
+                item["call_id"] = msg_dict["tool_call_id"]
+
+            input_items.append(item)
+
+        # Regular messages → message items
+        else:
+            role = msg_dict.get("role")
+            item = {
+                "type": "message",
+                "role": role,
+                "content": msg_dict.get("content", ""),
+            }
+
+            # Include optional name field if present
+            if "name" in msg_dict:
+                item["name"] = msg_dict["name"]
+
+            input_items.append(item)
+
+    return input_items
+
+
+def to_external(request: LLMRequest, *, strict: bool = True) -> dict[str, Any]:
+    """Convert ARES LLMRequest to OpenAI Responses format.
+
+    Args:
+        request: ARES internal request format
+        strict: If True, raise ValueError on information loss. If False, log warnings.
+
+    Returns:
+        Dictionary of kwargs for openai.Responses.create() (without model)
+
+    Raises:
+        ValueError: If strict=True and information would be lost in conversion
+
+    Note:
+        Model parameter is NOT included - it should be added by the LLMClient
+    """
+    # Check for information loss
+    lost_info = []
+    if request.stop_sequences:
+        lost_info.append(f"stop_sequences={request.stop_sequences} (not supported by Responses API)")
+    if request.top_k is not None:
+        lost_info.append(f"top_k={request.top_k} (Claude-specific, not supported)")
+    if request.service_tier == "standard_only":
+        lost_info.append("service_tier='standard_only' (not supported by Responses API)")
+
+    if lost_info:
+        msg = f"Converting to Responses will lose information: {'; '.join(lost_info)}"
+        if strict:
+            raise ValueError(msg)
+        _LOGGER.warning(msg)
+
+    kwargs: dict[str, Any] = {
+        "input": _messages_to_responses_input(request.messages),
+    }
+
+    if request.system_prompt:
+        kwargs["instructions"] = request.system_prompt
+
+    if request.max_output_tokens is not None:
+        kwargs["max_output_tokens"] = request.max_output_tokens
+    if request.temperature is not None:
+        kwargs["temperature"] = request.temperature
+    if request.top_p is not None:
+        kwargs["top_p"] = request.top_p
+    if request.stream:
+        kwargs["stream"] = True
+    if request.tools:
+        kwargs["tools"] = [_tool_to_responses(tool) for tool in request.tools]
+    if request.tool_choice is not None:
+        kwargs["tool_choice"] = _tool_choice_to_responses(request.tool_choice)
+    if request.metadata:
+        kwargs["metadata"] = request.metadata
+    if request.service_tier and request.service_tier != "standard_only":
+        kwargs["service_tier"] = request.service_tier
+
+    return kwargs
+
+
+def from_external(
+    kwargs: openai.types.responses.response_create_params.ResponseCreateParamsBase,
+    *,
+    strict: bool = True,
+) -> LLMRequest:
+    """Create LLMRequest from OpenAI Responses API kwargs.
+
+    Args:
+        kwargs: OpenAI Responses API parameters
+        strict: If True, raise ValueError for unhandled parameters. If False, log warnings.
+
+    Returns:
+        LLMRequest instance
+
+    Raises:
+        ValueError: If strict=True and there are unhandled parameters
+
+    Note:
+        Model parameter is ignored - it should be managed by the LLMClient
+    """
+    # Define parameters we actually store/handle
+    handled_params = {
+        "model",  # Handled by being ignored (LLMClient manages this)
+        "input",
+        "max_output_tokens",
+        "temperature",
+        "top_p",
+        "stream",
+        "tools",
+        "tool_choice",
+        "metadata",
+        "service_tier",
+        "instructions",
+    }
+
+    # Check for unhandled parameters
+    unhandled = set(kwargs.keys()) - handled_params
+    if unhandled:
+        msg = f"Unhandled Responses parameters (will be ignored): {sorted(unhandled)}"
+        if strict:
+            raise ValueError(msg)
+        _LOGGER.warning(msg)
+
+    # Convert input items to messages
+    input_param = kwargs.get("input", [])
+    filtered_messages: list[Message] = []
+
+    if isinstance(input_param, str):
+        filtered_messages = [UserMessage(role="user", content=input_param)]
+    elif isinstance(input_param, list):
+        for item in input_param:
+            item_type = item.get("type")
+
+            # Handle function_call (tool invocations)
+            if item_type == "function_call":
+                call_id = item.get("call_id")
+                name = item.get("name")
+                arguments = item.get("arguments", "")
+
+                if call_id is None or name is None:
+                    if strict:
+                        raise ValueError(
+                            f"Tool call (function_call) missing required 'call_id' or 'name' field. Item: {item}"
+                        )
+                    _LOGGER.warning("Tool call (function_call) missing required fields, skipping. Item: %s", item)
+                    continue
+
+                # Create ToolCallMessage
+                filtered_messages.append(
+                    cast(
+                        Message,
+                        {
+                            "call_id": call_id,
+                            "name": name,
+                            "arguments": arguments if isinstance(arguments, str) else str(arguments),
+                        },
+                    )
+                )
+
+            # Handle function_call_output (tool results)
+            elif item_type == "function_call_output":
+                call_id = item.get("call_id")
+                output = item.get("output", "")
+                output_str = output if isinstance(output, str) else str(output)
+
+                if call_id is None:
+                    if strict:
+                        raise ValueError(
+                            "Tool result (function_call_output) missing required 'call_id' field for routing. "
+                            f"Output: {output_str[:50]}..."
+                        )
+                    _LOGGER.warning(
+                        "Tool result (function_call_output) missing 'call_id' field (output: %s...). "
+                        "This may cause routing issues.",
+                        output_str[:50],
+                    )
+                    # Create tool message without call_id
+                    filtered_messages.append(cast(Message, {"role": "tool", "content": output_str}))
+                else:
+                    # Create tool message with call_id
+                    filtered_messages.append(
+                        cast(Message, {"role": "tool", "content": output_str, "tool_call_id": call_id})
+                    )
+
+            # Handle regular messages
+            elif item_type == "message":
+                role = item.get("role")
+
+                # Validate role is supported
+                if role not in _VALID_ROLES:
+                    if strict:
+                        raise ValueError(f"Unsupported message role: {role}. Must be one of {_VALID_ROLES}")
+                    _LOGGER.warning("Skipping message with unsupported role: %s", role)
+                    continue
+
+                # Extract content - use helper to detect unsupported block formats
+                content_param = item.get("content", "")
+                content_str = _extract_string_content(
+                    content_param, strict=strict, context=f"Message content (role={role})"
+                )
+
+                # Build message dict with required fields
+                message_dict: dict[str, Any] = {"role": role, "content": content_str}
+
+                # Include optional name field if present
+                if "name" in item:
+                    message_dict["name"] = item["name"]
+
+                # Cast to Message after validating role and building dict
+                filtered_messages.append(cast(Message, message_dict))
+
+    # Convert tools from Responses format to Claude format
+    tools_param = kwargs.get("tools")
+    converted_tools: list[Tool] | None = None
+    if tools_param:
+        temp_tools: list[Tool] = []
+        for tool in tools_param:
+            try:
+                temp_tools.append(_tool_from_responses(tool))
+            except ValueError as e:
+                if strict:
+                    raise
+                _LOGGER.warning("Skipping tool that cannot be converted: %s", e)
+        # Only set converted_tools if we successfully converted at least one tool
+        if temp_tools:
+            converted_tools = temp_tools
+
+    return LLMRequest(
+        messages=filtered_messages,
+        max_output_tokens=kwargs.get("max_output_tokens"),
+        temperature=kwargs.get("temperature"),
+        top_p=kwargs.get("top_p"),
+        stream=bool(kwargs.get("stream", False)),
+        tools=converted_tools,
+        tool_choice=_tool_choice_from_openai(cast(str | dict[str, Any] | None, kwargs.get("tool_choice"))),
+        metadata=cast(dict[str, Any] | None, kwargs.get("metadata")),
+        service_tier=kwargs.get("service_tier"),
+        system_prompt=kwargs.get("instructions"),
+    )
