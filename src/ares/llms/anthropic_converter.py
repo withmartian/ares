@@ -80,8 +80,13 @@ def _messages_to_claude_format(messages: list[Message], *, strict: bool = True) 
                 dropped_count += 1
                 continue
 
-        msg_dict["role"] = role
-        claude_messages.append(msg_dict)
+        # Keep only role and content - Claude API only accepts these fields
+        claude_messages.append(
+            {
+                "role": role,
+                "content": msg_dict.get("content", ""),
+            }
+        )
         last_role = role
 
     if dropped_count > 0 and not strict:
