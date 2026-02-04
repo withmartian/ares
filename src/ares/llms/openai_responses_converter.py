@@ -18,21 +18,12 @@ from typing import Any, cast
 import openai.types.responses
 import openai.types.responses.response_create_params
 
-from ares.llms.request import _VALID_ROLES
-from ares.llms.request import LLMRequest
-from ares.llms.request import Message
-from ares.llms.request import Tool
-from ares.llms.request import UserMessage
-from ares.llms.request import _extract_string_content
-from ares.llms.request import _tool_choice_from_openai
-from ares.llms.request import _tool_choice_to_responses
-from ares.llms.request import _tool_from_responses
-from ares.llms.request import _tool_to_responses
+from ares.llms import request as llm_request
 
 _LOGGER = logging.getLogger(__name__)
 
 
-def _messages_to_responses_input(messages: list[Message]) -> list[dict[str, Any]]:
+def _messages_to_responses_input(messages: list[llm_request.Message]) -> list[dict[str, Any]]:
     """Convert messages from internal format to Responses input items.
 
     Args:
@@ -90,7 +81,7 @@ def _messages_to_responses_input(messages: list[Message]) -> list[dict[str, Any]
     return input_items
 
 
-def to_external(request: LLMRequest, *, strict: bool = True) -> dict[str, Any]:
+def to_external(request: llm_request.LLMRequest, *, strict: bool = True) -> dict[str, Any]:
     """Convert ARES LLMRequest to OpenAI Responses format.
 
     Args:
@@ -137,9 +128,9 @@ def to_external(request: LLMRequest, *, strict: bool = True) -> dict[str, Any]:
     if request.stream:
         kwargs["stream"] = True
     if request.tools:
-        kwargs["tools"] = [_tool_to_responses(tool) for tool in request.tools]
+        kwargs["tools"] = [llm_request._tool_to_responses(tool) for tool in request.tools]
     if request.tool_choice is not None:
-        kwargs["tool_choice"] = _tool_choice_to_responses(request.tool_choice)
+        kwargs["tool_choice"] = llm_request._tool_choice_to_responses(request.tool_choice)
     if request.metadata:
         kwargs["metadata"] = request.metadata
     if request.service_tier and request.service_tier != "standard_only":
@@ -152,7 +143,7 @@ def from_external(
     kwargs: openai.types.responses.response_create_params.ResponseCreateParamsBase,
     *,
     strict: bool = True,
-) -> LLMRequest:
+) -> llm_request.LLMRequest:
     """Create LLMRequest from OpenAI Responses API kwargs.
 
     Args:
@@ -193,10 +184,10 @@ def from_external(
 
     # Convert input items to messages
     input_param = kwargs.get("input", [])
-    filtered_messages: list[Message] = []
+    filtered_messages: list[llm_request.Message] = []
 
     if isinstance(input_param, str):
-        filtered_messages = [UserMessage(role="user", content=input_param)]
+        filtered_messages = [llm_request.UserMessage(role="user", content=input_param)]
     elif isinstance(input_param, list):
         for item in input_param:
             item_type = item.get("type")
@@ -218,7 +209,7 @@ def from_external(
                 # Create ToolCallMessage
                 filtered_messages.append(
                     cast(
-                        Message,
+                        llm_request.Message,
                         {
                             "call_id": call_id,
                             "name": name,
@@ -245,11 +236,11 @@ def from_external(
                         output_str[:50],
                     )
                     # Create tool message without call_id
-                    filtered_messages.append(cast(Message, {"role": "tool", "content": output_str}))
+                    filtered_messages.append(cast(llm_request.Message, {"role": "tool", "content": output_str}))
                 else:
                     # Create tool message with call_id
                     filtered_messages.append(
-                        cast(Message, {"role": "tool", "content": output_str, "tool_call_id": call_id})
+                        cast(llm_request.Message, {"role": "tool", "content": output_str, "tool_call_id": call_id})
                     )
 
             # Handle regular messages
@@ -257,15 +248,15 @@ def from_external(
                 role = item.get("role")
 
                 # Validate role is supported
-                if role not in _VALID_ROLES:
+                if role not in llm_request._VALID_ROLES:
                     if strict:
-                        raise ValueError(f"Unsupported message role: {role}. Must be one of {_VALID_ROLES}")
+                        raise ValueError(f"Unsupported message role: {role}. Must be one of {llm_request._VALID_ROLES}")
                     _LOGGER.warning("Skipping message with unsupported role: %s", role)
                     continue
 
                 # Extract content - use helper to detect unsupported block formats
                 content_param = item.get("content", "")
-                content_str = _extract_string_content(
+                content_str = llm_request._extract_string_content(
                     content_param, strict=strict, context=f"Message content (role={role})"
                 )
 
@@ -277,16 +268,16 @@ def from_external(
                     message_dict["name"] = item["name"]
 
                 # Cast to Message after validating role and building dict
-                filtered_messages.append(cast(Message, message_dict))
+                filtered_messages.append(cast(llm_request.Message, message_dict))
 
     # Convert tools from Responses format to Claude format
     tools_param = kwargs.get("tools")
-    converted_tools: list[Tool] | None = None
+    converted_tools: list[llm_request.Tool] | None = None
     if tools_param:
-        temp_tools: list[Tool] = []
+        temp_tools: list[llm_request.Tool] = []
         for tool in tools_param:
             try:
-                temp_tools.append(_tool_from_responses(tool))
+                temp_tools.append(llm_request._tool_from_responses(tool))
             except ValueError as e:
                 if strict:
                     raise
@@ -295,14 +286,14 @@ def from_external(
         if temp_tools:
             converted_tools = temp_tools
 
-    return LLMRequest(
+    return llm_request.LLMRequest(
         messages=filtered_messages,
         max_output_tokens=kwargs.get("max_output_tokens"),
         temperature=kwargs.get("temperature"),
         top_p=kwargs.get("top_p"),
         stream=bool(kwargs.get("stream", False)),
         tools=converted_tools,
-        tool_choice=_tool_choice_from_openai(cast(str | dict[str, Any] | None, kwargs.get("tool_choice"))),
+        tool_choice=llm_request._tool_choice_from_openai(cast(str | dict[str, Any] | None, kwargs.get("tool_choice"))),
         metadata=cast(dict[str, Any] | None, kwargs.get("metadata")),
         service_tier=kwargs.get("service_tier"),
         system_prompt=kwargs.get("instructions"),
