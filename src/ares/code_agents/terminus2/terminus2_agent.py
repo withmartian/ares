@@ -135,7 +135,6 @@ class Terminus2Agent(code_agent_base.CodeAgent):
         llm_client: The LLM client for making requests.
         parser_format: The response format to use ("json" or "xml").
         max_turns: Maximum number of LLM interactions before stopping.
-        min_turns: Minimum number of turns before honoring task_complete (default: 0).
         timeout_s: Default timeout for command execution in seconds.
         enable_summarization: Enable context summarization when context limit is exceeded.
         tmux_pane_width: Width of tmux pane in characters (default: 160).
@@ -148,7 +147,6 @@ class Terminus2Agent(code_agent_base.CodeAgent):
     tracker: stat_tracker.StatTracker = dataclasses.field(default_factory=stat_tracker.NullStatTracker)
     parser_format: Literal["json", "xml"] = "json"
     max_turns: int = 1_000_000  # Match terminal-bench reference (effectively unlimited)
-    min_turns: int = 0  # Minimum turns before honoring task_complete
     timeout_s: float = _DEFAULT_TIMEOUT_S
     enable_summarization: bool = True
     tmux_pane_width: int = 160
@@ -611,16 +609,7 @@ class Terminus2Agent(code_agent_base.CodeAgent):
 
                 # Handle task completion
                 if parsed.task_complete:
-                    if self._turn_count < self.min_turns:
-                        # Ignore task_complete before min_turns
-                        _LOGGER.info(
-                            "[%d] Ignoring task_complete at turn %d (min_turns=%d).",
-                            id(self),
-                            self._turn_count,
-                            self.min_turns,
-                        )
-                        self._pending_completion = False
-                    elif self._pending_completion:
+                    if self._pending_completion:
                         # Second time marking complete - actually finish
                         _LOGGER.info("[%d] Task marked complete (confirmed). Finishing.", id(self))
                         self._add_message("user", "Task marked as complete. Finishing execution.")
