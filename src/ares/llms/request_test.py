@@ -10,6 +10,9 @@ import openai.types.shared_params
 import pytest
 
 from ares.llms import request as request_lib
+from ares.llms import anthropic_converter
+from ares.llms import openai_chat_converter
+from ares.llms import openai_responses_converter
 
 
 class TestStructuredContentHandling:
@@ -34,7 +37,7 @@ class TestStructuredContentHandling:
         )
 
         with pytest.raises(ValueError, match=r"list of blocks.*structured content"):
-            request_lib.LLMRequest.from_responses(kwargs, strict=True)
+            openai_responses_converter.from_external(kwargs, strict=True)
 
     def test_from_responses_with_structured_content_non_strict(self):
         """Test that structured content returns empty string in non-strict mode."""
@@ -55,7 +58,7 @@ class TestStructuredContentHandling:
         )
 
         # Should not raise, but content will be empty
-        request = request_lib.LLMRequest.from_responses(kwargs, strict=False)
+        request = openai_responses_converter.from_external(kwargs, strict=False)
         assert len(request.messages) == 1
         assert request.messages[0].get("content") == ""
 
@@ -80,7 +83,7 @@ class TestStructuredContentHandling:
         )
 
         with pytest.raises(ValueError, match=r"list of blocks.*structured content"):
-            request_lib.LLMRequest.from_chat_completion(kwargs, strict=True)
+            openai_chat_converter.from_external(kwargs, strict=True)
 
     def test_from_messages_with_structured_content_strict(self):
         """Test that structured content in Claude messages raises error in strict mode."""
@@ -104,7 +107,7 @@ class TestStructuredContentHandling:
         )
 
         with pytest.raises(ValueError, match=r"list of blocks.*structured content"):
-            request_lib.LLMRequest.from_messages(kwargs, strict=True)
+            anthropic_converter.from_external(kwargs, strict=True)
 
     def test_system_prompt_with_structured_content_strict(self):
         """Test that structured system prompt raises error in strict mode."""
@@ -119,7 +122,7 @@ class TestStructuredContentHandling:
         )
 
         with pytest.raises(ValueError, match=r"list of blocks.*structured content"):
-            request_lib.LLMRequest.from_messages(kwargs, strict=True)
+            anthropic_converter.from_external(kwargs, strict=True)
 
 
 class TestLLMRequestChatCompletionConversion:
@@ -130,7 +133,7 @@ class TestLLMRequestChatCompletionConversion:
         request = request_lib.LLMRequest(
             messages=[{"role": "user", "content": "Hello"}],
         )
-        kwargs = request.to_chat_completion_kwargs()
+        kwargs = openai_chat_converter.to_external(request)
 
         assert kwargs["messages"] == [{"role": "user", "content": "Hello"}]
         assert "temperature" not in kwargs
@@ -156,7 +159,7 @@ class TestLLMRequestChatCompletionConversion:
             service_tier="default",
             stop_sequences=["STOP", "END"],
         )
-        kwargs = request.to_chat_completion_kwargs()
+        kwargs = openai_chat_converter.to_external(request)
 
         assert kwargs["max_completion_tokens"] == 100
         assert kwargs["temperature"] == 0.7
@@ -184,7 +187,7 @@ class TestLLMRequestChatCompletionConversion:
             messages=[{"role": "user", "content": "Hello"}],
             system_prompt="You are a helpful assistant.",
         )
-        kwargs = request.to_chat_completion_kwargs()
+        kwargs = openai_chat_converter.to_external(request)
 
         assert len(kwargs["messages"]) == 2
         assert kwargs["messages"][0] == {"role": "system", "content": "You are a helpful assistant."}
@@ -196,7 +199,7 @@ class TestLLMRequestChatCompletionConversion:
             messages=[{"role": "user", "content": "Hello"}],
             stop_sequences=["A", "B", "C", "D", "E", "F"],
         )
-        kwargs = request.to_chat_completion_kwargs(strict=False)
+        kwargs = openai_chat_converter.to_external(request, strict=False)
 
         assert kwargs["stop"] == ["A", "B", "C", "D"]
 
@@ -206,7 +209,7 @@ class TestLLMRequestChatCompletionConversion:
             messages=[{"role": "user", "content": "Hello"}],
             top_k=40,
         )
-        kwargs = request.to_chat_completion_kwargs(strict=False)
+        kwargs = openai_chat_converter.to_external(request, strict=False)
 
         assert "top_k" not in kwargs
 
@@ -216,7 +219,7 @@ class TestLLMRequestChatCompletionConversion:
             messages=[{"role": "user", "content": "Hello"}],
             service_tier="standard_only",
         )
-        kwargs = request.to_chat_completion_kwargs(strict=False)
+        kwargs = openai_chat_converter.to_external(request, strict=False)
 
         assert "service_tier" not in kwargs
 
@@ -226,7 +229,7 @@ class TestLLMRequestChatCompletionConversion:
             "model": "gpt-4o",
             "messages": [{"role": "user", "content": "Hello"}],
         }
-        request = request_lib.LLMRequest.from_chat_completion(kwargs)
+        request = openai_chat_converter.from_external(kwargs)
 
         assert list(request.messages) == [{"role": "user", "content": "Hello"}]
         assert request.max_output_tokens is None
@@ -256,7 +259,7 @@ class TestLLMRequestChatCompletionConversion:
             "service_tier": "default",
             "stop": ["STOP", "END"],
         }
-        request = request_lib.LLMRequest.from_chat_completion(kwargs)
+        request = openai_chat_converter.from_external(kwargs)
 
         assert request.max_output_tokens == 100
         assert request.temperature == 0.7
@@ -284,7 +287,7 @@ class TestLLMRequestChatCompletionConversion:
                 {"role": "user", "content": "Hello"},
             ],
         }
-        request = request_lib.LLMRequest.from_chat_completion(kwargs)
+        request = openai_chat_converter.from_external(kwargs)
 
         assert request.system_prompt == "You are helpful."
         assert list(request.messages) == [{"role": "user", "content": "Hello"}]
@@ -296,7 +299,7 @@ class TestLLMRequestChatCompletionConversion:
             "messages": [{"role": "user", "content": "Hello"}],
             "max_tokens": 100,
         }
-        request = request_lib.LLMRequest.from_chat_completion(kwargs)
+        request = openai_chat_converter.from_external(kwargs)
 
         assert request.max_output_tokens == 100
 
@@ -309,7 +312,7 @@ class TestLLMRequestChatCompletionConversion:
                 request_lib.ToolCallMessage(call_id="call_123", name="get_weather", arguments='{"location":"LA"}'),
             ],
         )
-        kwargs = request.to_chat_completion_kwargs()
+        kwargs = openai_chat_converter.to_external(request)
 
         # Should have 2 messages (user + assistant with tool_calls)
         assert len(kwargs["messages"]) == 2
@@ -342,7 +345,7 @@ class TestLLMRequestChatCompletionConversion:
                 },
             ],
         }
-        request = request_lib.LLMRequest.from_chat_completion(kwargs)
+        request = openai_chat_converter.from_external(kwargs)
 
         # Should have 3 messages: user, assistant, tool_call
         assert len(request.messages) == 3
@@ -377,8 +380,8 @@ class TestLLMRequestChatCompletionConversion:
             "tool_choice": "auto",
             "metadata": {"user_id": "123"},
         }
-        request = request_lib.LLMRequest.from_chat_completion(original)
-        converted = request.to_chat_completion_kwargs()
+        request = openai_chat_converter.from_external(original)
+        converted = openai_chat_converter.to_external(request)
 
         assert converted["messages"] == original["messages"]
         assert converted["max_completion_tokens"] == original["max_completion_tokens"]
@@ -398,7 +401,7 @@ class TestLLMRequestResponsesConversion:
         request = request_lib.LLMRequest(
             messages=[{"role": "user", "content": "Hello"}],
         )
-        kwargs = request.to_responses_kwargs()
+        kwargs = openai_responses_converter.to_external(request)
 
         assert kwargs["input"] == [{"type": "message", "role": "user", "content": "Hello"}]
         assert "temperature" not in kwargs
@@ -422,7 +425,7 @@ class TestLLMRequestResponsesConversion:
             metadata={"user_id": "123"},
             service_tier="default",
         )
-        kwargs = request.to_responses_kwargs()
+        kwargs = openai_responses_converter.to_external(request)
 
         assert kwargs["max_output_tokens"] == 100
         assert kwargs["temperature"] == 0.7
@@ -448,7 +451,7 @@ class TestLLMRequestResponsesConversion:
             messages=[{"role": "user", "content": "Hello"}],
             system_prompt="You are a helpful assistant.",
         )
-        kwargs = request.to_responses_kwargs()
+        kwargs = openai_responses_converter.to_external(request)
 
         assert kwargs["instructions"] == "You are a helpful assistant."
 
@@ -458,7 +461,7 @@ class TestLLMRequestResponsesConversion:
             messages=[{"role": "user", "content": "Hello"}],
             stop_sequences=["STOP"],
         )
-        kwargs = request.to_responses_kwargs(strict=False)
+        kwargs = openai_responses_converter.to_external(request, strict=False)
 
         assert "stop_sequences" not in kwargs
         assert "stop" not in kwargs
@@ -469,7 +472,7 @@ class TestLLMRequestResponsesConversion:
             messages=[{"role": "user", "content": "Hello"}],
             top_k=40,
         )
-        kwargs = request.to_responses_kwargs(strict=False)
+        kwargs = openai_responses_converter.to_external(request, strict=False)
 
         assert "top_k" not in kwargs
 
@@ -479,7 +482,7 @@ class TestLLMRequestResponsesConversion:
             "model": "gpt-4o",
             "input": "Hello",
         }
-        request = request_lib.LLMRequest.from_responses(kwargs)
+        request = openai_responses_converter.from_external(kwargs)
 
         assert list(request.messages) == [{"role": "user", "content": "Hello"}]
 
@@ -505,7 +508,7 @@ class TestLLMRequestResponsesConversion:
             "service_tier": "default",
             "instructions": "You are helpful.",
         }
-        request = request_lib.LLMRequest.from_responses(kwargs)
+        request = openai_responses_converter.from_external(kwargs)
 
         assert request.max_output_tokens == 100
         assert request.temperature == 0.7
@@ -529,7 +532,7 @@ class TestLLMRequestResponsesConversion:
         kwargs: openai.types.responses.response_create_params.ResponseCreateParams = {
             "input": "Hello, world!",
         }
-        request = request_lib.LLMRequest.from_responses(kwargs)
+        request = openai_responses_converter.from_external(kwargs)
 
         assert list(request.messages) == [{"role": "user", "content": "Hello, world!"}]
 
@@ -542,7 +545,7 @@ class TestLLMRequestResponsesConversion:
                 {"type": "message", "role": "assistant", "content": "Hi!"},
             ],
         }
-        request = request_lib.LLMRequest.from_responses(kwargs)
+        request = openai_responses_converter.from_external(kwargs)
 
         assert list(request.messages) == [
             {"role": "user", "content": "Hello"},
@@ -558,7 +561,7 @@ class TestLLMRequestResponsesConversion:
                 request_lib.ToolCallResponseMessage(role="tool", content="Sunny, 72°F", tool_call_id="call_123"),
             ],
         )
-        kwargs = request.to_responses_kwargs()
+        kwargs = openai_responses_converter.to_external(request)
 
         # Tool message should be converted to function_call_output format
         tool_output = kwargs["input"][2]
@@ -578,7 +581,7 @@ class TestLLMRequestResponsesConversion:
             model="gpt-4o",
             input=inputs,
         )
-        request = request_lib.LLMRequest.from_responses(kwargs)
+        request = openai_responses_converter.from_external(kwargs)
 
         tool_msg = request.messages[1]
         assert tool_msg.get("role") == "tool"
@@ -597,7 +600,7 @@ class TestLLMRequestResponsesConversion:
             input=inputs,  # type: ignore[arg-type]
         )
         with pytest.raises(ValueError, match=r"Tool .*missing required.*call_id"):
-            request_lib.LLMRequest.from_responses(kwargs, strict=True)
+            openai_responses_converter.from_external(kwargs, strict=True)
 
     def test_from_responses_tool_missing_id_non_strict(self):
         """Test that missing call_id logs warning in non-strict mode."""
@@ -609,7 +612,7 @@ class TestLLMRequestResponsesConversion:
             model="gpt-4o",
             input=inputs,  # type: ignore[arg-type]
         )
-        request = request_lib.LLMRequest.from_responses(kwargs, strict=False)
+        request = openai_responses_converter.from_external(kwargs, strict=False)
 
         # Should still parse the message but without tool_call_id
         assert len(request.messages) == 1
@@ -626,7 +629,7 @@ class TestLLMRequestResponsesConversion:
                 request_lib.ToolCallMessage(call_id="call_123", name="get_weather", arguments='{"location":"SF"}'),
             ],
         )
-        kwargs = request.to_responses_kwargs()
+        kwargs = openai_responses_converter.to_external(request)
 
         # ToolCallMessage should be converted to function_call format
         tool_call = kwargs["input"][2]
@@ -650,7 +653,7 @@ class TestLLMRequestResponsesConversion:
             model="gpt-4o",
             input=inputs,
         )
-        request = request_lib.LLMRequest.from_responses(kwargs)
+        request = openai_responses_converter.from_external(kwargs)
 
         tool_call_msg = request.messages[1]
         assert "call_id" in tool_call_msg
@@ -667,14 +670,14 @@ class TestLLMRequestResponsesConversion:
             ],
         )
         # Convert to Responses format (should use function_call_output)
-        responses_kwargs = original.to_responses_kwargs()
+        responses_kwargs = openai_responses_converter.to_external(original)
 
         # Verify it uses function_call_output format
         assert responses_kwargs["input"][1]["type"] == "function_call_output"
         assert responses_kwargs["input"][1]["call_id"] == "call_789"
 
         # Convert back and verify tool_call_id is preserved
-        request2 = request_lib.LLMRequest.from_responses(
+        request2 = openai_responses_converter.from_external(
             cast(openai.types.responses.response_create_params.ResponseCreateParamsBase, responses_kwargs)
         )
 
@@ -693,7 +696,7 @@ class TestLLMRequestResponsesConversion:
         }
 
         with pytest.raises(ValueError, match=r"Unsupported tool type for conversion"):
-            request_lib.LLMRequest.from_responses(kwargs, strict=True)
+            openai_responses_converter.from_external(kwargs, strict=True)
 
     def test_from_responses_unsupported_tool_type_non_strict(self):
         """Test that unsupported tool type is skipped in non-strict mode."""
@@ -714,7 +717,7 @@ class TestLLMRequestResponsesConversion:
         }
 
         # Should not raise, but only include the supported tool
-        request = request_lib.LLMRequest.from_responses(kwargs, strict=False)
+        request = openai_responses_converter.from_external(kwargs, strict=False)
 
         assert request.tools is not None
         assert len(request.tools) == 1
@@ -733,7 +736,7 @@ class TestLLMRequestResponsesConversion:
         }
 
         # Should not raise, but tools should be None since no valid tools were converted
-        request = request_lib.LLMRequest.from_responses(kwargs, strict=False)
+        request = openai_responses_converter.from_external(kwargs, strict=False)
 
         assert request.tools is None
 
@@ -750,7 +753,7 @@ class TestLLMRequestResponsesConversion:
             ],
             tool_choice={"type": "tool", "name": "search"},
         )
-        kwargs = request.to_responses_kwargs()
+        kwargs = openai_responses_converter.to_external(request)
 
         # Responses API should use flat format: {"type": "function", "name": "search"}
         assert kwargs["tool_choice"] == {"type": "function", "name": "search"}
@@ -768,7 +771,7 @@ class TestLLMRequestResponsesConversion:
             ],
             tool_choice={"type": "tool", "name": "search"},
         )
-        kwargs = request.to_chat_completion_kwargs()
+        kwargs = openai_chat_converter.to_external(request)
 
         # Chat Completions API should use nested format: {"type": "function", "function": {"name": "search"}}
         assert kwargs["tool_choice"] == {"type": "function", "function": {"name": "search"}}
@@ -782,7 +785,7 @@ class TestLLMRequestMessagesConversion:
         request = request_lib.LLMRequest(
             messages=[{"role": "user", "content": "Hello"}],
         )
-        kwargs = request.to_messages_kwargs()
+        kwargs = anthropic_converter.to_external(request)
 
         assert kwargs["messages"] == [{"role": "user", "content": "Hello"}]
         assert kwargs["max_tokens"] == 1024  # Default required by Claude
@@ -808,7 +811,7 @@ class TestLLMRequestMessagesConversion:
             service_tier="auto",
             stop_sequences=["STOP", "END"],
         )
-        kwargs = request.to_messages_kwargs()
+        kwargs = anthropic_converter.to_external(request)
 
         assert kwargs["max_tokens"] == 100
         assert kwargs["temperature"] == 0.7  # Converted from 1.4
@@ -843,7 +846,7 @@ class TestLLMRequestMessagesConversion:
                 messages=[{"role": "user", "content": "Hello"}],
                 temperature=openai_temp,
             )
-            kwargs = request.to_messages_kwargs()
+            kwargs = anthropic_converter.to_external(request)
             assert kwargs["temperature"] == claude_temp
 
     def test_to_messages_with_system_prompt(self):
@@ -852,7 +855,7 @@ class TestLLMRequestMessagesConversion:
             messages=[{"role": "user", "content": "Hello"}],
             system_prompt="You are a helpful assistant.",
         )
-        kwargs = request.to_messages_kwargs()
+        kwargs = anthropic_converter.to_external(request)
 
         assert kwargs["system"] == "You are a helpful assistant."
 
@@ -862,7 +865,7 @@ class TestLLMRequestMessagesConversion:
             messages=[{"role": "user", "content": "Hello"}],
             service_tier="flex",  # Not supported by Claude
         )
-        kwargs = request.to_messages_kwargs(strict=False)
+        kwargs = anthropic_converter.to_external(request, strict=False)
 
         assert "service_tier" not in kwargs
 
@@ -877,7 +880,7 @@ class TestLLMRequestMessagesConversion:
             ],
             system_prompt="System message",
         )
-        kwargs = request.to_messages_kwargs(strict=False)
+        kwargs = anthropic_converter.to_external(request, strict=False)
 
         assert len(kwargs["messages"]) == 2
         assert kwargs["messages"][0]["role"] == "user"
@@ -893,7 +896,7 @@ class TestLLMRequestMessagesConversion:
         request = request_lib.LLMRequest(
             messages=messages,
         )
-        kwargs = request.to_messages_kwargs()
+        kwargs = anthropic_converter.to_external(request)
 
         assert kwargs["messages"][2]["role"] == "user"
 
@@ -904,7 +907,7 @@ class TestLLMRequestMessagesConversion:
             "messages": [{"role": "user", "content": "Hello"}],
             "max_tokens": 100,
         }
-        request = request_lib.LLMRequest.from_messages(kwargs)
+        request = anthropic_converter.from_external(kwargs)
 
         assert list(request.messages) == [{"role": "user", "content": "Hello"}]
         assert request.max_output_tokens == 100
@@ -935,7 +938,7 @@ class TestLLMRequestMessagesConversion:
             "stop_sequences": ["STOP"],
             "system": "You are helpful.",
         }
-        request = request_lib.LLMRequest.from_messages(kwargs)
+        request = anthropic_converter.from_external(kwargs)
 
         assert request.max_output_tokens == 100
         assert request.temperature == 1.4  # Converted from 0.7
@@ -968,7 +971,7 @@ class TestLLMRequestMessagesConversion:
                 "max_tokens": 100,
                 "temperature": claude_temp,
             }
-            request = request_lib.LLMRequest.from_messages(kwargs)
+            request = anthropic_converter.from_external(kwargs)
             assert request.temperature == openai_temp
 
     def test_to_messages_strict_alternation_error(self):
@@ -980,7 +983,7 @@ class TestLLMRequestMessagesConversion:
             ],
         )
         with pytest.raises(ValueError, match="Messages must alternate"):
-            request.to_messages_kwargs(strict=True)
+            anthropic_converter.to_external(request, strict=True)
 
     def test_to_messages_non_strict_drops_duplicates(self):
         """Test that non-alternating messages are dropped in non-strict mode."""
@@ -993,7 +996,7 @@ class TestLLMRequestMessagesConversion:
                 request_lib.UserMessage(role="user", content="Great"),
             ],
         )
-        kwargs = request.to_messages_kwargs(strict=False)
+        kwargs = anthropic_converter.to_external(request, strict=False)
 
         # Should keep first of each consecutive group
         assert len(kwargs["messages"]) == 3
@@ -1013,12 +1016,12 @@ class TestLLMRequestCrossAPIConversion:
             "max_completion_tokens": 100,
             "temperature": 0.7,
         }
-        request = request_lib.LLMRequest.from_chat_completion(original_chat)
-        responses_kwargs = request.to_responses_kwargs()
-        request2 = request_lib.LLMRequest.from_responses(
+        request = openai_chat_converter.from_external(original_chat)
+        responses_kwargs = openai_responses_converter.to_external(request)
+        request2 = openai_responses_converter.from_external(
             cast(openai.types.responses.response_create_params.ResponseCreateParamsBase, responses_kwargs)
         )
-        final_chat = request2.to_chat_completion_kwargs()
+        final_chat = openai_chat_converter.to_external(request2)
 
         # Note: model will be dropped in the conversion.
         assert "model" not in final_chat
@@ -1032,8 +1035,8 @@ class TestLLMRequestCrossAPIConversion:
             "messages": [{"role": "user", "content": "Hello"}],
             "temperature": 1.0,
         }
-        request = request_lib.LLMRequest.from_chat_completion(chat_params)
-        claude_kwargs = request.to_messages_kwargs()
+        request = openai_chat_converter.from_external(chat_params)
+        claude_kwargs = anthropic_converter.to_external(request)
 
         assert claude_kwargs["temperature"] == 0.5  # 1.0 / 2
 
@@ -1045,8 +1048,8 @@ class TestLLMRequestCrossAPIConversion:
             "max_tokens": 100,
             "temperature": 0.5,
         }
-        request = request_lib.LLMRequest.from_messages(messages_params)
-        chat_kwargs = request.to_chat_completion_kwargs()
+        request = anthropic_converter.from_external(messages_params)
+        chat_kwargs = openai_chat_converter.to_external(request)
 
         assert chat_kwargs["temperature"] == 1.0  # 0.5 * 2
 
@@ -1063,9 +1066,9 @@ class TestLLMRequestCrossAPIConversion:
         )
 
         # Convert to all formats
-        chat_kwargs = original.to_chat_completion_kwargs()
-        responses_kwargs = original.to_responses_kwargs()
-        messages_kwargs = original.to_messages_kwargs()
+        chat_kwargs = openai_chat_converter.to_external(original)
+        responses_kwargs = openai_responses_converter.to_external(original)
+        messages_kwargs = anthropic_converter.to_external(original)
 
         # Verify core params are present in all
         assert chat_kwargs["max_completion_tokens"] == 100
