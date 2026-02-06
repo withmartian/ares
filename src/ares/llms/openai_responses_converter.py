@@ -286,6 +286,17 @@ def from_external(
         if temp_tools:
             converted_tools = temp_tools
 
+    # Convert tool_choice from Responses flat format to Chat nested format
+    # Responses: {"type": "function", "name": "..."}
+    # Chat: {"type": "function", "function": {"name": "..."}}
+    tool_choice_param = kwargs.get("tool_choice")
+    if isinstance(tool_choice_param, dict) and tool_choice_param.get("type") == "function" and "name" in tool_choice_param:
+        tool_choice_param = {"type": "function", "function": {"name": tool_choice_param["name"]}}
+
+    resolved_tool_choice = llm_request._tool_choice_from_openai(
+        cast(str | dict[str, Any] | None, tool_choice_param)
+    )
+
     return llm_request.LLMRequest(
         messages=filtered_messages,
         max_output_tokens=kwargs.get("max_output_tokens"),
@@ -293,7 +304,7 @@ def from_external(
         top_p=kwargs.get("top_p"),
         stream=bool(kwargs.get("stream", False)),
         tools=converted_tools,
-        tool_choice=llm_request._tool_choice_from_openai(cast(str | dict[str, Any] | None, kwargs.get("tool_choice"))),
+        tool_choice=resolved_tool_choice,
         metadata=cast(dict[str, Any] | None, kwargs.get("metadata")),
         service_tier=kwargs.get("service_tier"),
         system_prompt=kwargs.get("instructions"),
