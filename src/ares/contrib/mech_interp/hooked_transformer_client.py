@@ -2,14 +2,11 @@
 
 from collections.abc import Callable, Sequence
 import dataclasses
-import inspect
 from typing import Any
 
 import torch
 import transformer_lens
 
-from ares.environments import base as ares_env
-from ares.environments import code_env
 from ares import llms
 
 
