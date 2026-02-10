@@ -16,6 +16,12 @@ Override container factory or add tracking:
     >>> tracker = stat_tracker.LoggingStatTracker()
     >>> env = ares.make("sbv-mswea", container_factory=daytona.DaytonaContainer, tracker=tracker)
 
+Collect episode trajectories:
+
+    >>> from ares.environments.trajectory import JsonTrajectoryCollector
+    >>> collector = JsonTrajectoryCollector(output_dir="./trajectories")
+    >>> env = ares.make("sbv-mswea", trajectory_collector=collector)
+
 To see available presets:
 
     >>> all_presets = ares.info()  # Get list of all presets
@@ -35,7 +41,7 @@ For advanced usage, register custom presets:
     >>> ares.registry.register_preset("my-env", MyEnvSpec())
 
 All other functionality is available via submodules:
-- ares.environments: Environment implementations
+- ares.environments: Environment implementations and trajectory collection
 - ares.code_agents: Code agent implementations
 - ares.containers: Container management
 - ares.llms: LLM client implementations
@@ -47,6 +53,12 @@ All other functionality is available via submodules:
 from ares import presets  # noqa: F401
 from ares.environments.base import Environment
 from ares.environments.base import TimeStep
+
+# Trajectory collection
+from ares.environments.trajectory import EpisodeTrajectory
+from ares.environments.trajectory import JsonTrajectoryCollector
+from ares.environments.trajectory import StepRecord
+from ares.environments.trajectory import TrajectoryCollector
 from ares.registry import EnvironmentInfo
 
 # Import registry functions to expose at top level
@@ -58,7 +70,11 @@ from ares.registry import make
 __all__ = [
     "Environment",
     "EnvironmentInfo",
+    "EpisodeTrajectory",
+    "JsonTrajectoryCollector",
+    "StepRecord",
     "TimeStep",
+    "TrajectoryCollector",
     "info",
     "list_presets",
     "make",

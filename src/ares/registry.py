@@ -20,6 +20,7 @@ from typing import Protocol, overload
 from ares.containers import containers
 from ares.containers import docker
 from ares.environments import base
+from ares.environments import trajectory
 from ares.experiment_tracking import stat_tracker
 
 _LOGGER = logging.getLogger(__name__)
@@ -261,6 +262,7 @@ class EnvironmentSpec(Protocol):
         selector: TaskSelector,
         container_factory: containers.ContainerFactory,
         tracker: stat_tracker.StatTracker | None = None,
+        trajectory_collector: trajectory.TrajectoryCollector | None = None,
     ) -> base.Environment:
         """Create and return an environment instance.
 
@@ -268,6 +270,7 @@ class EnvironmentSpec(Protocol):
             selector: Task selector to filter which tasks to include.
             container_factory: Factory for creating containers. Required.
             tracker: Statistics tracker for monitoring. Optional.
+            trajectory_collector: Trajectory collector for recording episodes. Optional.
 
         Returns:
             A configured environment instance ready for use in the RL loop.
@@ -407,12 +410,14 @@ def register_env(
                 selector: TaskSelector,
                 container_factory: containers.ContainerFactory,
                 tracker: stat_tracker.StatTracker | None = None,
+                trajectory_collector: trajectory.TrajectoryCollector | None = None,
             ) -> base.Environment:
                 """Delegate to the decorated function."""
                 return func(
                     selector=selector,
                     container_factory=container_factory,
                     tracker=tracker,
+                    trajectory_collector=trajectory_collector,
                 )
 
         # Register the auto-generated spec
@@ -529,6 +534,7 @@ def make(
     *,
     container_factory: containers.ContainerFactory = docker.DockerContainer,
     tracker: stat_tracker.StatTracker | None = None,
+    trajectory_collector: trajectory.TrajectoryCollector | None = None,
 ) -> base.Environment:
     """Create an environment instance from a registered preset.
 
@@ -546,6 +552,9 @@ def make(
             - "sbv-mswea@2/8" - Shard 2 out of 8 total shards
         container_factory: Factory for creating containers. Defaults to DockerContainer.
         tracker: Statistics tracker for monitoring. Optional.
+        trajectory_collector: Trajectory collector for recording episode data. Optional.
+            When provided, every episode will have its (observation, action, reward, discount)
+            sequence recorded via the collector. See :mod:`ares.environments.trajectory`.
 
     Returns:
         An environment instance configured according to the preset.
@@ -582,6 +591,12 @@ def make(
         >>> from ares.experiment_tracking import stat_tracker
         >>> tracker = stat_tracker.LoggingStatTracker()
         >>> env = make("sbv-mswea", tracker=tracker)
+
+        Collect episode trajectories:
+
+        >>> from ares.environments.trajectory import JsonTrajectoryCollector
+        >>> collector = JsonTrajectoryCollector(output_dir="./trajectories")
+        >>> env = make("sbv-mswea", trajectory_collector=collector)
     """
     # Parse the selector syntax
     preset_id_clean, selector = _parse_selector(preset_id)
@@ -592,14 +607,21 @@ def make(
 
     spec = _REGISTRY[preset_id_clean]
     _LOGGER.debug(
-        "Creating environment from preset '%s' with selector=%s, container_factory=%s, tracker=%s",
+        "Creating environment from preset '%s' with selector=%s, container_factory=%s, "
+        "tracker=%s, trajectory_collector=%s",
         preset_id_clean,
         selector,
         container_factory,
         tracker,
+        trajectory_collector,
     )
 
-    env = spec.get_env(selector=selector, container_factory=container_factory, tracker=tracker)
+    env = spec.get_env(
+        selector=selector,
+        container_factory=container_factory,
+        tracker=tracker,
+        trajectory_collector=trajectory_collector,
+    )
 
     _LOGGER.debug("Successfully created environment from preset '%s'", preset_id_clean)
     return env
