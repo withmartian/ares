@@ -3,27 +3,14 @@
 from collections.abc import Callable, Sequence
 import dataclasses
 import inspect
-from typing import Any, Protocol, Union, runtime_checkable
+from typing import Any
 
 import torch
 import transformer_lens
 
-from ares.contrib.mech_interp import hook_utils
 from ares.environments import base as ares_env
 from ares.environments import code_env
 from ares import llms
-
-
-HookNameFn = Callable[[str], str]
-
-
-@runtime_checkable
-class StateIdFn(Protocol):
-    """A function that returns the `name` param of `add_hook`/`run_with_hooks` if the hook should be applied given
-    the current state - otherwise `None` if it should not.
-    """
-    async def __call__(self, state: hook_utils.FullyObservableState) -> str | Callable[[str], bool] | None:
-        ...
 
 
 @dataclasses.dataclass
@@ -60,10 +47,8 @@ class HookedTransformerLLMClient:
     """
 
     model: transformer_lens.HookedTransformer
-    # QUESTION: Is it better to include the "state" object in the name/id fn or in the hook fn?
-    fwd_hooks: list[tuple[Union[str, HookNameFn, StateIdFn], transformer_lens.hook_points.HookFunction]] | None = None
     # TODO: Identify better default max_new_tokens size
-    max_new_tokens: int = 2048
+    max_new_tokens: int = 512
     generation_kwargs: dict[str, Any] = dataclasses.field(default_factory=dict)
     _format_messages_fn: Callable[[Sequence[Any]], str] | None = dataclasses.field(default=None, repr=False)
 
@@ -84,43 +69,10 @@ class HookedTransformerLLMClient:
             formatted_parts.append(f"{role.upper()}: {content}")
         return "\n\n".join(formatted_parts)
 
-    async def _call_with_hooks(
-        self,
-        input_ids: torch.Tensor,
-        state: hook_utils.FullyObservableState,
-        **gen_kwargs: Any,
-    ) -> torch.Tensor:
-        # self.model.reset_hooks(direction="fwd", including_permanent=False)
-
-        if self.fwd_hooks is not None:
-            for name_or_id_fn, hook_fn in self.fwd_hooks:
-                # Check if this is a StateIdFn, or if it is the standard format to run in all states
-                if inspect.iscoroutinefunction(name_or_id_fn):
-                    name = await name_or_id_fn(state)
-                else:
-                    name = name_or_id_fn
-
-                self.model.add_hook(name, hook_fn, is_permanent=False)  # type: ignore
-
-        with torch.no_grad():
-            # TODO: Should we make use of the `__call__(..., return_type="logits | loss")` here instead?
-            # Generate completion
-            # Note: HookedTransformer.generate returns full sequence including input
-            outputs = self.model.generate(
-                input_ids,
-                **gen_kwargs,
-            )
-        
-        # self.model.reset_hooks(direction="fwd", including_permanent=False)
-
-        assert isinstance(outputs, torch.Tensor)  # typing
-        return outputs
-
     async def __call__(
         self,
         request: llms.LLMRequest,
-        env: code_env.CodeEnvironment | None = None,
-        timestep: ares_env.TimeStep | None = None,
+        max_output_tokens: int | None = None,
     ) -> llms.LLMResponse:
         """Generate a completion using the HookedTransformer.
 
@@ -130,26 +82,30 @@ class HookedTransformerLLMClient:
         Returns:
             LLM response with chat completion and cost information.
         """
+        max_output_tokens = max_output_tokens or request.max_output_tokens or self.max_new_tokens
+
         # Format messages into text
-        messages_list = list(request.messages)
-        input_text = self.format_messages_fn(messages_list)
+        messages_list = []
+        if request.system_prompt:
+            messages_list.append({"role": "system", "content": request.system_prompt})
+        messages_list.extend(request.messages)
 
         # Tokenize input
-        input_ids = self.model.to_tokens(input_text, prepend_bos=True)
-        num_input_tokens = input_ids.shape[-1]
-
         # TODO: Need to support various truncation methods
-        # Truncate if input + max_new_tokens would exceed model's context window
-        max_position = self.model.cfg.n_ctx
-        if num_input_tokens + self.max_new_tokens > max_position:
-            # Leave room for generation
-            max_input_tokens = max_position - self.max_new_tokens
-            input_ids = input_ids[:, :max_input_tokens]
-            num_input_tokens = input_ids.shape[-1]
+        #       ESPECIALLY keeping the <assistant> token to indicate a new turn
+        assert self.model.tokenizer is not None
+        input_ids = self.model.tokenizer.apply_chat_template(
+            messages_list,
+            add_generation_prompt=True,
+            truncation=True,
+            max_length=self.model.cfg.n_ctx - max_output_tokens,
+        )
+        input_ids = torch.tensor(input_ids).unsqueeze(0)
+        num_input_tokens = input_ids.shape[-1]
 
         # Prepare generation kwargs
         gen_kwargs = {
-            "max_new_tokens": self.max_new_tokens,
+            "max_new_tokens": max_output_tokens,
             **self.generation_kwargs,
         }
 
@@ -158,16 +114,15 @@ class HookedTransformerLLMClient:
         if request.temperature is not None:
             gen_kwargs["temperature"] = request.temperature
 
-        outputs = await self._call_with_hooks(
-            input_ids,
-            state=hook_utils.FullyObservableState(
-                timestep=timestep,
-                # TODO: Figure out typing here
-                container=env._container if env is not None else None,
-                step_num=0  # TODO: How to calculate?,
-            ),
-            **gen_kwargs,
-        )
+        with torch.no_grad():
+            # TODO: Should we make use of the `__call__(..., return_type="logits | loss")` here instead?
+            # Generate completion
+            # Note: HookedTransformer.generate returns full sequence including input
+            outputs = self.model.generate(
+                input_ids,
+                **gen_kwargs,
+            )
+        assert isinstance(outputs, torch.Tensor)  # typing
 
         # Extract only the generated tokens
         num_output_tokens = outputs.shape[-1] - num_input_tokens
