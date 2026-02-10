@@ -126,6 +126,7 @@ class CodeEnvironment(base.Environment[response.LLMResponse, request.LLMRequest 
         result = base.TimeStep(step_type="FIRST", reward=ts.reward, discount=ts.discount, observation=ts.observation)
 
         # Record the FIRST step in the trajectory.
+        # FIRST steps have only observation; action/reward/discount are None per dm_env semantics.
         if self._trajectory_collector is not None:
             assert self._current_task is not None
             self._trajectory_collector.begin_episode(task_name=self._current_task.name)
@@ -135,8 +136,8 @@ class CodeEnvironment(base.Environment[response.LLMResponse, request.LLMRequest 
                     step_type="FIRST",
                     observation=trajectory_mod.serialize_llm_request(result.observation),
                     action=None,
-                    reward=result.reward,
-                    discount=result.discount,
+                    reward=None,
+                    discount=None,
                     timestamp=time.time(),
                 )
             )
