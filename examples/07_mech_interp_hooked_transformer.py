@@ -15,11 +15,10 @@ Example usage:
 
 import asyncio
 
-from transformer_lens import HookedTransformer
-
 import ares
 from ares.contrib.mech_interp import ActivationCapture
 from ares.contrib.mech_interp import HookedTransformerLLMClient
+from transformer_lens import HookedTransformer
 
 from . import utils
 

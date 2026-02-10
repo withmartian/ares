@@ -79,9 +79,7 @@ class TrajectoryActivations:
 
         # Convert back to ActivationCache objects if needed, or just use dicts
         # For now, we'll keep them as ActivationCache objects for API compatibility
-        step_activations = [
-            ActivationCache(cache_dict, model=None) for cache_dict in step_activations_dicts
-        ]
+        step_activations = [ActivationCache(cache_dict, model=None) for cache_dict in step_activations_dicts]
 
         return cls(
             step_activations=step_activations,
