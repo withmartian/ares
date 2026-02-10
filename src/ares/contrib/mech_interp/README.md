@@ -12,7 +12,7 @@ Traditional mechanistic interpretability focuses on static, single-step analysis
 ARES enables **trajectory-level mechanistic interpretability** by:
 1. Capturing activations across entire agent episodes
 2. Studying how internal representations evolve during multi-step reasoning
-3. Identifying critical moments where interventions significantly alter episode-level outcomes
+3. [COMING SOON] Identifying critical moments where interventions significantly alter episode-level outcomes
 4. Seeing how activations differ across different agent frameworks for the same task
 5. You tell us!
 
@@ -151,106 +151,7 @@ with automatic_activation_capture(model) as capture:
 
 ### 3. InterventionManager
 
-TODO: This needs to rework, can just use step nums with better identifying of interesting behavior
-
-Apply causal interventions during agent execution to study model behavior.
-
-```python
-from transformer_lens import HookedTransformer
-from ares.contrib.mech_interp import (
-    HookedTransformerLLMClient,
-    FullyObservableState,
-)
-
-async def has_readme(state: FullyObservableState) -> str | None:
-    # Function to only runs hooks when the environment contains a README
-    cmd_output = await state.container.exec_run("ls", workdir="/path/to/app")
-    if "README.md" in cmd_output.output and state.step_num > 1:
-        return "blocks.1.attn.hook_pattern"
-    else:
-        return None
-
-model = HookedTransformer.from_pretrained("gpt2-medium")
-client = HookedTransformerLLMClient(
-    model=model,
-    fwd_hooks=[
-        # The mean ablation hook is defined exactly the same as classic transformer_lens
-        ("blocks.1.attn.hook_pattern@step2", mean_ablation_hook),
-    ],
-    max_new_tokens=1024,
-    generation_kwargs={"temperature": 0.7}
-)
-
-
-# Run with interventions
-async with env:
-    ts = await env.reset()
-
-    while not ts.last():
-        action = await client(
-            ts.observation,
-            # Should also include the env and timestep here so that
-            # we can reference the env in the has_readme function.
-            # Do not need to pass if hooks do not depend on state
-            env=env,
-            timestep=ts,
-        )
-        ts = await env.step(action)
-```
-
-### 4. Hook Utilities
-
-Pre-built hooks for common interventions:
-
-**Zero Ablation:**
-```python
-from ares.contrib.mech_interp import create_zero_ablation_hook
-
-# Ablate specific positions
-hook = create_zero_ablation_hook(positions=[10, 11, 12])
-
-# Ablate specific attention heads
-hook = create_zero_ablation_hook(heads=[0, 1])
-```
-
-**Path Patching:**
-```python
-from ares.contrib.mech_interp import create_path_patching_hook
-
-# Run clean and corrupted inputs
-clean_cache, _ = model.run_with_cache(clean_tokens)
-corrupted_cache, _ = model.run_with_cache(corrupted_tokens)
-
-# Patch clean activations into corrupted run
-hook = create_path_patching_hook(
-    clean_activation=clean_cache["blocks.0.hook_resid_post"],
-    positions=[5, 6, 7]
-)
-```
-
-**Mean Ablation:**
-```python
-from ares.contrib.mech_interp import create_mean_ablation_hook
-
-# Compute mean activation over dataset
-mean_cache = compute_mean_activations(model, dataset)
-
-hook = create_mean_ablation_hook(
-    mean_activation=mean_cache["blocks.0.hook_resid_post"],
-    positions=[10, 11, 12]
-)
-```
-
-**Attention Knockout:**
-```python
-from ares.contrib.mech_interp import create_attention_knockout_hook
-
-# Prevent position 20 from attending to positions 0-10
-hook = create_attention_knockout_hook(
-    source_positions=[20],
-    target_positions=list(range(11))
-)
-```
+Coming Soon!
 
 ## Research Use Cases
 
@@ -272,6 +173,8 @@ for step in range(len(trajectory)):
 ```
 
 ### 2. Identifying Critical Decision Points
+
+NOTE: This example relies on a `InterventionManager` component that we are still finalizing the interface for. Nice support for intervention via hooks is coming soon!
 
 Find steps where small perturbations significantly alter outcomes:
 
@@ -366,73 +269,6 @@ for model in models:
 
 # Compare attention patterns, activation magnitudes, etc.
 compare_trajectories(trajectories)
-```
-
-## Advanced Examples
-
-### Example: Finding "Code Understanding" Circuits
-
-```python
-import torch
-from transformer_lens import HookedTransformer
-from ares.contrib.mech_interp import *
-from ares.environments import swebench_env
-
-async def find_code_understanding_circuits():
-    model = HookedTransformer.from_pretrained("gpt2-medium")
-    client = HookedTransformerLLMClient(model=model)
-
-    # 1. Collect baseline trajectory on a task
-    tasks = swebench_env.swebench_verified_tasks()
-    success_task = [t for t in tasks if is_success(t)][0]
-
-    with ActivationCapture(model) as capture:
-        baseline_reward = await run_episode(swebench_env.SweBenchEnv([success_task]), client, capture)
-
-    baseline_trajectory = capture.get_trajectory()
-
-    # 2. For each layer and step, ablate and measure impact
-    impact_matrix = torch.zeros(model.cfg.n_layers, len(baseline_trajectory))
-
-    for layer in range(model.cfg.n_layers):
-        for step in range(len(baseline_trajectory)):
-            manager = InterventionManager(model)
-            manager.add_intervention(
-                hook_name=f"blocks.{layer}.hook_resid_post",
-                hook_fn=create_mean_ablation_hook(),
-                apply_at_steps=[step]
-            )
-
-            with manager:
-                perturbed_reward = await run_episode(swebench_env.SweBenchEnv([success_task]), client)
-
-            impact_matrix[layer, step] = abs(baseline_reward - perturbed_reward)
-
-    # 3. Identify critical (layer, step) pairs
-    critical_components = (impact_matrix > threshold).nonzero()
-
-    print(f"Found {len(critical_components)} critical components")
-
-    # 4. Drill down to attention heads in critical layers
-    for layer, step in critical_components[:10]:  # Top 10
-        for head in range(model.cfg.n_heads):
-            manager = InterventionManager(model)
-            manager.add_intervention(
-                hook_name=f"blocks.{layer}.attn.hook_result",
-                hook_fn=create_zero_ablation_hook(heads=[head]),
-                apply_at_steps=[step.item()]
-            )
-
-            with manager:
-                head_reward = await run_episode(swebench_env.SweBenchEnv([success_task]), client)
-
-            if abs(baseline_reward - head_reward) > head_threshold:
-                print(f"Critical: Layer {layer}, Step {step}, Head {head}")
-
-                # Visualize attention pattern
-                attn_pattern = baseline_trajectory.get_activation(step, f"blocks.{layer}.attn.hook_pattern")
-                visualize_attention(attn_pattern[:, head, :, :])
-
 ```
 
 ## Performance Tips
