@@ -290,7 +290,11 @@ def from_external(
     # Responses: {"type": "function", "name": "..."}
     # Chat: {"type": "function", "function": {"name": "..."}}
     tool_choice_param = kwargs.get("tool_choice")
-    if isinstance(tool_choice_param, dict) and tool_choice_param.get("type") == "function" and "name" in tool_choice_param:
+    if (
+        isinstance(tool_choice_param, dict)
+        and tool_choice_param.get("type") == "function"
+        and "name" in tool_choice_param
+    ):
         tool_choice_param = {"type": "function", "function": {"name": tool_choice_param["name"]}}
 
     resolved_tool_choice = llm_request._tool_choice_from_openai(

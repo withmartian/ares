@@ -39,6 +39,7 @@ import llama_cpp
 import openai.types.chat.chat_completion
 
 from ares.llms import llm_clients
+from ares.llms import openai_chat_converter
 from ares.llms import request
 from ares.llms import response
 
@@ -84,8 +85,6 @@ class LlamaCppLLMClient(llm_clients.LLMClient):
             LLMResponse with the generated completion
         """
         _LOGGER.debug("[%d] Requesting LLM.", id(self))
-
-        from ares.llms import openai_chat_converter
 
         completion_kwargs = openai_chat_converter.to_external(req)
         # Since llama-cpp-python sets default temperature to 0.2, we explicitly

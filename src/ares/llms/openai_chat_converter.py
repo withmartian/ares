@@ -257,7 +257,9 @@ def from_external(
                     raise ValueError(f"Unsupported tool type: {tool_type}. Only 'function' tools are supported.")
                 _LOGGER.warning("Skipping tool with unsupported type: %s", tool_type)
                 continue
-            converted_tools.append(llm_request._tool_from_chat_completions(cast(openai.types.chat.ChatCompletionToolParam, tool)))
+            converted_tools.append(
+                llm_request._tool_from_chat_completions(cast(openai.types.chat.ChatCompletionToolParam, tool))
+            )
 
     # Handle stop sequences - convert single string to list
     stop_param = kwargs.get("stop")

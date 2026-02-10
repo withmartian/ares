@@ -9,10 +9,10 @@ import openai.types.responses.response_create_params
 import openai.types.shared_params
 import pytest
 
-from ares.llms import request as request_lib
 from ares.llms import anthropic_converter
 from ares.llms import openai_chat_converter
 from ares.llms import openai_responses_converter
+from ares.llms import request as request_lib
 
 
 class TestStructuredContentHandling:
