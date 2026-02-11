@@ -100,6 +100,12 @@ class HookedTransformerLLMClient:
         input_ids = torch.tensor(input_ids).unsqueeze(0)
         num_input_tokens = input_ids.shape[-1]
 
+        # Print text - REMOVE AT SOME POINT
+        input_text = self.model.to_string(input_ids)
+        if not isinstance(input_text, str):
+            input_text = input_text[0]
+        print(f"\n\nTEXT INPUT: {input_text}\n\n")
+
         # Prepare generation kwargs
         gen_kwargs = {
             "max_new_tokens": max_output_tokens,
@@ -128,6 +134,9 @@ class HookedTransformerLLMClient:
         # Decode output
         output_text = self.model.to_string(output_ids)
         assert isinstance(output_text, str)  # typing
+
+        # Print text - REMOVE AT SOME POINT
+        print(f"\n\nTEXT OUTPUT: {output_text}\n\n")
 
         return llms.LLMResponse(
             data=[llms.TextData(content=output_text)],
