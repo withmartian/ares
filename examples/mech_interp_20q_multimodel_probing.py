@@ -25,13 +25,12 @@ import pathlib
 
 import ares
 from ares.contrib.mech_interp import ActivationCapture
-from ares.contrib.mech_interp.hooked_transformer_client import create_hooked_transformer_client_with_chat_template
+from ares.contrib.mech_interp.hooked_transformer_client import HookedTransformerLLMClient
 import matplotlib.pyplot as plt
 import numpy as np
 from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import StratifiedKFold
 from transformer_lens import HookedTransformer
-from transformers import AutoTokenizer
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -41,9 +40,7 @@ SEED = 42
 np.random.seed(SEED)
 
 MODELS = [
-    "Qwen/Qwen2.5-0.5B-Instruct",
-    "Qwen/Qwen2.5-1.5B-Instruct",
-    "Qwen/Qwen2.5-3B-Instruct",
+    "gpt2",
 ]
 
 DEVICE = "mps"  # Apple Silicon GPU. Use "cpu" if you hit MPS issues.
@@ -308,12 +305,10 @@ async def run_all_models() -> list[PerStepProbeResult]:
 
         print(f"Loading {model_name} on {DEVICE}...")
         model = HookedTransformer.from_pretrained(model_name, device=DEVICE)
-        tokenizer = AutoTokenizer.from_pretrained(model_name)
-        client = create_hooked_transformer_client_with_chat_template(
+        client = HookedTransformerLLMClient(
             model=model,
-            tokenizer=tokenizer,
             max_new_tokens=MAX_NEW_TOKENS,
-            verbose=False,
+            generation_kwargs={"verbose": False},
         )
 
         n_layers = model.cfg.n_layers
@@ -340,7 +335,7 @@ async def run_all_models() -> list[PerStepProbeResult]:
         )
         all_results.append(result)
 
-        del model, tokenizer, client
+        del model, client
         _free_gpu_memory()
 
     return all_results

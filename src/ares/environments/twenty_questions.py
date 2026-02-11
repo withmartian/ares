@@ -23,8 +23,8 @@ _LOGGER = logging.getLogger(__name__)
 # Oracle system prompt template - instructs the LLM to answer yes/no questions
 # Note: ArCHeR uses a single-line prompt string for this template
 ORACLE_PROMPT_TEMPLATE = (
-    "You are playing a game called twenty questions with me. The rule of twenty question is that "
-    "you are given a hidden word, and I am guessing what the word is within twenty questions. "
+    'You are playing a game called twenty questions with me. The rule of twenty question is that '
+    'you are given a hidden word, and I am guessing what the word is within twenty questions. '
     'For every question, if it is an invalid question, you should answer "Invalid Question.". '
     'For any valid question, you should answer either "Yes." or "No.". '
     'Now the hidden word given to you is "{word}", and the question for the current round is '
@@ -266,7 +266,8 @@ class TwentyQuestionsEnvironment(base.Environment[response.LLMResponse, request.
             self._requires_reset = True
             reward = 0.0  # Success reward (0 is better than negative)
             observation_content = (
-                "\n".join(self._conversation_history) + f"\n\nYou win! The object was {self._hidden_object}."
+                "\n".join(self._conversation_history)
+                + f"\n\nYou win! The object was {self._hidden_object}."
             )
 
             observation = request.LLMRequest(
