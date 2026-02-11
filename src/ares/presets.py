@@ -22,6 +22,7 @@ from ares.code_agents.terminus2 import terminus2_agent
 from ares.containers import containers
 from ares.environments import base
 from ares.environments import code_env
+from ares.environments import twenty_questions
 from ares.experiment_tracking import stat_tracker
 
 _LOGGER = logging.getLogger(__name__)
@@ -81,6 +82,53 @@ class HarborSpec:
         )
 
 
+@dataclasses.dataclass(frozen=True)
+class TwentyQuestionsSpec:
+    """Environment spec for Twenty Questions game."""
+
+    objects: tuple[str, ...] | None = None
+    oracle_model: str = "gpt-4o-mini"
+    step_limit: int = 20
+
+    def get_info(self) -> registry.EnvironmentInfo:
+        """Return metadata about Twenty Questions environment."""
+        num_objects = len(self.objects) if self.objects is not None else len(twenty_questions.DEFAULT_OBJECT_LIST)
+        description = f"Twenty Questions game with {num_objects} objects using {self.oracle_model} oracle"
+        return registry.EnvironmentInfo(
+            name="20q" if self.objects is None else "20q-custom",
+            description=description,
+            num_tasks=num_objects,
+        )
+
+    def get_env(
+        self,
+        *,
+        selector: registry.TaskSelector,
+        container_factory: containers.ContainerFactory,
+        tracker: stat_tracker.StatTracker | None = None,
+    ) -> base.Environment:
+        """Create Twenty Questions environment.
+
+        Note: Twenty Questions doesn't use containers or task selection.
+        The selector and container_factory parameters are ignored.
+        """
+        # Warn if a non-trivial selector is provided
+        if not isinstance(selector, registry.SliceSelector) or selector.start is not None or selector.end is not None:
+            _LOGGER.warning(
+                "Twenty Questions environment does not use task selection. "
+                "Selector %s will be ignored. Objects are randomly selected each episode.",
+                selector,
+            )
+
+        del selector, container_factory  # Unused - Twenty Questions doesn't need containers
+        return twenty_questions.TwentyQuestionsEnvironment(
+            objects=self.objects,
+            oracle_model=self.oracle_model,
+            step_limit=self.step_limit,
+            tracker=tracker,
+        )
+
+
 def _register_default_presets() -> None:
     """Register all default ARES environment presets.
 
@@ -102,6 +150,16 @@ def _register_default_presets() -> None:
                     code_agent_id=code_agent_id,
                 ),
             )
+
+    # Register Twenty Questions preset
+    registry.register_preset(
+        "20q",
+        TwentyQuestionsSpec(
+            objects=None,  # Use default full object list
+            oracle_model="gpt-4o-mini",
+            step_limit=20,
+        ),
+    )
 
     _LOGGER.debug("Registered %d default presets", len(registry._list_presets()))
 
