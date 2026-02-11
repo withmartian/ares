@@ -46,7 +46,7 @@ docs = [
     "sphinx-rtd-theme>=2.0.0",
     "sphinx-autodoc-typehints>=1.25.0",
 ]
-transformer-lens = ["transformer-lens>=2.10.0"]
+transformer-lens = ["transformer-lens>=2.10.0", "scikit-learn>=1.5.0", "matplotlib>=3.9.0"]
 
 [project.urls]
 Homepage = "https://github.com/withmartian/ares"

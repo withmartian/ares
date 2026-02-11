@@ -54,14 +54,43 @@ The project uses ruff for linting/formatting (line length: 120) and follows Goog
 
 ### Running Examples
 ```bash
-# Run the minimal loop example with local Docker
-uv run -m examples.01_minimal_loop
+# Sequential eval with local Docker + local LLM
+uv run -m examples.01_sequential_eval_with_local_llm
 
-# Run with local LLM
-uv run -m examples.02_local_llm
+# Sequential eval with API
+uv run -m examples.02_sequential_eval_with_api
+
+# Parallel eval with API
+uv run -m examples.03_parallel_eval_with_api
 ```
 
 Examples demonstrate basic usage patterns and require the examples dependency group.
+
+## Public API
+
+The primary user-facing API is the registry system exposed at the top level:
+
+```python
+import ares
+
+# Create environment from preset (defaults to local Docker containers)
+env = ares.make("sbv-mswea")
+
+# Task selection syntax
+env = ares.make("sbv-mswea:0")       # Single task at index 0
+env = ares.make("sbv-mswea:0:10")    # Slice of tasks 0-9
+env = ares.make("sbv-mswea@2/8")     # Shard 2 of 8
+
+# List available presets
+ares.info()                           # All presets
+ares.info("sbv-mswea")               # Specific preset info
+
+# Override container backend
+from ares.containers import daytona
+env = ares.make("sbv-mswea", container_factory=daytona.DaytonaContainer)
+```
+
+The registry is populated by `presets.py` (imported automatically by `__init__.py`). Custom presets can be registered via `ares.registry.register_preset()` or the `@register_env` decorator.
 
 ## High-Level Architecture
 
@@ -164,7 +193,20 @@ Without this pattern, agents would need explicit RL-aware interfaces, breaking t
   - Retry logic with tenacity (3 attempts, exponential backoff)
   - Integrated cost tracking via `accounting.py`
 
-#### 5. Supporting Modules
+#### 5. ARES Proxy (`ares-proxy/`)
+
+Go-based HTTP proxy that acts as man-in-the-middle between code agents and LLM APIs. Enables the queue-mediated pattern over HTTP (agents don't need to be in the same process):
+- `POST /v1/chat/completions` - Receives agent LLM requests (blocks until response arrives)
+- `GET /poll` - Environment polls for pending requests
+- `POST /respond` - Environment sends responses back to agents
+- Has its own test suite: `make test` in `ares-proxy/`
+
+#### 6. Supporting Modules
+
+**Registry (`registry.py`, `presets.py`):**
+- `make()`, `info()`, `register_preset()`, `@register_env` decorator
+- Task selectors: `IndexSelector`, `SliceSelector`, `ShardSelector`
+- `presets.py` registers default environment configurations
 
 **Configuration (`config.py`):**
 - Pydantic Settings-based configuration from `.env`
@@ -175,6 +217,14 @@ Without this pattern, agents would need explicit RL-aware interfaces, breaking t
 - `StatTracker` Protocol with context manager for timing: `with tracker.timeit(name):`
 - Implementations: `NullStatTracker` (no-op), `LoggingStatTracker`, `TensorboardStatTracker`
 - Non-intrusive performance monitoring
+
+**Contrib (`src/ares/contrib/`):**
+- `llama_cpp.py` - Local LLM support via llama-cpp-python
+- `eval_visualizer.py` - TUI for evaluation visualization (Rich/Textual)
+- `mech_interp/` - Mechanistic interpretability tools (transformer-lens integration)
+
+**Testing Utilities (`src/ares/testing/`):**
+- `mock_container.py`, `mock_llm.py` - Mock implementations for unit testing without external dependencies
 
 **Async Utilities (`async_utils.py`):**
 - `ValueAndFuture[ValType, FutureType]` - Pairs values with futures for coordination
@@ -270,9 +320,10 @@ Create `.env` file from `.env.example`:
 
 ## CI/CD
 
-GitHub Actions workflow runs on PRs and main branch:
-- Linting with `ruff check`
-- Formatting check with `ruff format --check`
+GitHub Actions workflows run on PRs and main branch:
+- **ruff.yml**: Linting (`ruff check`) and formatting (`ruff format --check`)
+- **unit-tests.yml**: Python tests (`uv run -m pytest -q`)
+- **go-tests.yml**: Go tests for ares-proxy (`make test` and `make build`, only on ares-proxy/ changes)
 
 Before pushing, ensure:
 ```bash
