@@ -23,6 +23,114 @@ from ares.llms import request as llm_request
 _LOGGER = logging.getLogger(__name__)
 
 
+def _tool_to_chat_completions(tool: llm_request.Tool) -> openai.types.chat.ChatCompletionToolParam:
+    """Convert Tool from ARES internal format to OpenAI Chat Completions format.
+
+    Args:
+        tool: Tool in ARES internal format (flat with input_schema)
+
+    Returns:
+        Tool in OpenAI Chat Completions format (nested with type and function.parameters)
+    """
+    return openai.types.chat.ChatCompletionToolParam(
+        type="function",
+        function=openai.types.shared_params.FunctionDefinition(
+            name=tool["name"],
+            description=tool["description"],
+            parameters=cast(dict[str, object], tool["input_schema"]),
+        ),
+    )
+
+
+def _tool_from_chat_completions(chat_completions_tool: openai.types.chat.ChatCompletionToolParam) -> llm_request.Tool:
+    """Convert tool from OpenAI Chat Completions format to ARES internal format.
+
+    Args:
+        chat_completions_tool: Tool in OpenAI Chat Completions format (nested with type and function.parameters)
+
+    Returns:
+        Tool in ARES internal format (flat with input_schema)
+    """
+    function = chat_completions_tool["function"]
+    parameters = function.get("parameters", {"type": "object", "properties": {}})
+
+    # Validate that parameters is a valid JSONSchema
+    if not isinstance(parameters, dict):
+        raise ValueError(f"Tool parameters must be a dict, got {type(parameters)}")
+    if "type" not in parameters:
+        raise ValueError("Tool parameters must have a 'type' field")
+
+    return llm_request.Tool(
+        name=function["name"],
+        description=function.get("description", ""),
+        input_schema=cast(llm_request.JSONSchema, parameters),
+    )
+
+
+def _tool_choice_to_openai(tool_choice: llm_request.ToolChoice | None) -> str | dict[str, Any] | None:
+    """Convert ARES internal ToolChoice to OpenAI Chat Completions format.
+
+    Args:
+        tool_choice: ARES internal tool choice
+
+    Returns:
+        Tool choice in OpenAI format:
+        - "auto": Model decides
+        - "required": Must use at least one tool
+        - "none": Must not use any tools
+        - {"type": "function", "function": {"name": "..."}}: Specific function
+    """
+    if tool_choice is None:
+        return None
+
+    if tool_choice == "auto":
+        return "auto"
+    elif tool_choice == "any":
+        return "required"  # Map "any" to OpenAI's "required"
+    elif tool_choice == "none":
+        return "none"
+    elif isinstance(tool_choice, dict) and tool_choice.get("type") == "tool":
+        return {
+            "type": "function",
+            "function": {"name": tool_choice["name"]},
+        }
+
+    return None
+
+
+def _tool_choice_from_openai(
+    tool_choice: str | dict[str, Any] | None,
+) -> llm_request.ToolChoice | None:
+    """Convert OpenAI Chat Completions tool_choice to internal format.
+
+    Args:
+        tool_choice: OpenAI tool choice parameter
+
+    Returns:
+        Internal ToolChoice format
+    """
+    if tool_choice is None:
+        return None
+
+    if isinstance(tool_choice, str):
+        from typing import Literal
+
+        result = {"auto": "auto", "required": "any", "none": "none"}.get(tool_choice)
+        if not result:
+            raise ValueError(f"Unsupported tool choice: {tool_choice}")
+        return cast(Literal["auto", "any", "none"], result)
+
+    elif isinstance(tool_choice, dict):
+        choice_type = tool_choice.get("type")
+        if choice_type == "function":
+            # {"type": "function", "function": {"name": "x"}} -> {"type": "tool", "name": "x"}
+            function_data = tool_choice.get("function", {})
+            if isinstance(function_data, dict) and "name" in function_data:
+                return llm_request.ToolChoiceTool(type="tool", name=function_data["name"])
+
+    return None
+
+
 def to_external(request: llm_request.LLMRequest, *, strict: bool = True) -> dict[str, Any]:
     """Convert ARES LLMRequest to OpenAI Chat Completions format.
 
@@ -125,9 +233,9 @@ def to_external(request: llm_request.LLMRequest, *, strict: bool = True) -> dict
     if request.stream:
         kwargs["stream"] = True
     if request.tools:
-        kwargs["tools"] = [llm_request._tool_to_chat_completions(tool) for tool in request.tools]
+        kwargs["tools"] = [_tool_to_chat_completions(tool) for tool in request.tools]
     if request.tool_choice is not None:
-        kwargs["tool_choice"] = llm_request._tool_choice_to_openai(request.tool_choice)
+        kwargs["tool_choice"] = _tool_choice_to_openai(request.tool_choice)
     if request.metadata:
         kwargs["metadata"] = request.metadata
     if request.service_tier and request.service_tier != "standard_only":
@@ -257,9 +365,7 @@ def from_external(
                     raise ValueError(f"Unsupported tool type: {tool_type}. Only 'function' tools are supported.")
                 _LOGGER.warning("Skipping tool with unsupported type: %s", tool_type)
                 continue
-            converted_tools.append(
-                llm_request._tool_from_chat_completions(cast(openai.types.chat.ChatCompletionToolParam, tool))
-            )
+            converted_tools.append(_tool_from_chat_completions(cast(openai.types.chat.ChatCompletionToolParam, tool)))
 
     # Handle stop sequences - convert single string to list
     stop_param = kwargs.get("stop")
@@ -281,7 +387,7 @@ def from_external(
         top_p=kwargs.get("top_p"),
         stream=bool(kwargs.get("stream", False)),
         tools=converted_tools,
-        tool_choice=llm_request._tool_choice_from_openai(cast(str | dict[str, Any] | None, kwargs.get("tool_choice"))),
+        tool_choice=_tool_choice_from_openai(cast(str | dict[str, Any] | None, kwargs.get("tool_choice"))),
         metadata=cast(dict[str, Any] | None, kwargs.get("metadata")),
         service_tier=kwargs.get("service_tier"),
         stop_sequences=stop_sequences,

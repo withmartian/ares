@@ -6,7 +6,6 @@ import openai.types.responses
 import openai.types.responses.response_create_params
 import pytest
 
-from ares.llms import openai_chat_converter
 from ares.llms import openai_responses_converter
 from ares.llms import request as request_lib
 
@@ -405,39 +404,3 @@ class TestLLMRequestResponsesConversion:
         request = openai_responses_converter.from_external(kwargs, strict=False)
 
         assert request.tools is None
-
-    def test_to_responses_specific_tool_choice_flat_format(self):
-        """Test that specific tool choice uses flat format for Responses API."""
-        request = request_lib.LLMRequest(
-            messages=[{"role": "user", "content": "Hello"}],
-            tools=[
-                {
-                    "name": "search",
-                    "description": "Search the web",
-                    "input_schema": {"type": "object", "properties": {}},
-                }
-            ],
-            tool_choice={"type": "tool", "name": "search"},
-        )
-        kwargs = openai_responses_converter.to_external(request)
-
-        # Responses API should use flat format: {"type": "function", "name": "search"}
-        assert kwargs["tool_choice"] == {"type": "function", "name": "search"}
-
-    def test_to_chat_completion_specific_tool_choice_nested_format(self):
-        """Test that specific tool choice uses nested format for Chat Completions API."""
-        request = request_lib.LLMRequest(
-            messages=[{"role": "user", "content": "Hello"}],
-            tools=[
-                {
-                    "name": "search",
-                    "description": "Search the web",
-                    "input_schema": {"type": "object", "properties": {}},
-                }
-            ],
-            tool_choice={"type": "tool", "name": "search"},
-        )
-        kwargs = openai_chat_converter.to_external(request)
-
-        # Chat Completions API should use nested format: {"type": "function", "function": {"name": "search"}}
-        assert kwargs["tool_choice"] == {"type": "function", "function": {"name": "search"}}

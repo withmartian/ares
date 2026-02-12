@@ -97,3 +97,39 @@ class TestLLMRequestCrossAPIConversion:
         assert chat_kwargs["metadata"] == {"user_id": "123"}
         assert responses_kwargs["metadata"] == {"user_id": "123"}
         assert messages_kwargs["metadata"] == {"user_id": "123"}
+
+    def test_responses_tool_choice_flat_format(self):
+        """Test that Responses API uses flat tool_choice format."""
+        request = request_lib.LLMRequest(
+            messages=[{"role": "user", "content": "Hello"}],
+            tools=[
+                {
+                    "name": "search",
+                    "description": "Search the web",
+                    "input_schema": {"type": "object", "properties": {}},
+                }
+            ],
+            tool_choice={"type": "tool", "name": "search"},
+        )
+        kwargs = openai_responses_converter.to_external(request)
+
+        # Responses API uses flat format: {"type": "function", "name": "search"}
+        assert kwargs["tool_choice"] == {"type": "function", "name": "search"}
+
+    def test_chat_tool_choice_nested_format(self):
+        """Test that Chat Completions API uses nested tool_choice format."""
+        request = request_lib.LLMRequest(
+            messages=[{"role": "user", "content": "Hello"}],
+            tools=[
+                {
+                    "name": "search",
+                    "description": "Search the web",
+                    "input_schema": {"type": "object", "properties": {}},
+                }
+            ],
+            tool_choice={"type": "tool", "name": "search"},
+        )
+        kwargs = openai_chat_converter.to_external(request)
+
+        # Chat Completions API uses nested format: {"type": "function", "function": {"name": "search"}}
+        assert kwargs["tool_choice"] == {"type": "function", "function": {"name": "search"}}

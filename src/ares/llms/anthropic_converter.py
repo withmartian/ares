@@ -22,6 +22,128 @@ from ares.llms import request as llm_request
 _LOGGER = logging.getLogger(__name__)
 
 
+def _tool_to_anthropic(tool: llm_request.Tool) -> anthropic.types.ToolParam:
+    """Convert Tool from ARES internal format to Anthropic Messages format.
+
+    Args:
+        tool: Tool in ARES internal format (flat with input_schema)
+
+    Returns:
+        Tool in Anthropic Messages format (custom tool with type, name, description, input_schema)
+    """
+    return anthropic.types.ToolParam(
+        type="custom",
+        name=tool["name"],
+        description=tool["description"],
+        input_schema=cast(dict[str, object], tool["input_schema"]),
+    )
+
+
+def _tool_from_anthropic(
+    anthropic_tool: anthropic.types.ToolUnionParam,
+) -> llm_request.Tool:
+    """Convert tool from Anthropic Messages format to ARES internal format.
+
+    Args:
+        anthropic_tool: Tool in Anthropic format (ToolParam with type='custom'/None, or built-in tool types)
+
+    Returns:
+        Tool in ARES internal format
+
+    Raises:
+        ValueError: If tool type is unsupported or required fields are missing
+
+    Note:
+        Only supports ToolParam with type='custom' or type=None. Built-in tool types
+        (bash_20250124, text_editor_*, web_search_*) are not supported.
+    """
+    # Check tool type - we only accept "custom" (or None which defaults to custom)
+    # Reject built-in tool types like bash_20250124, text_editor_*, web_search_*
+    tool_type = anthropic_tool.get("type")
+    if tool_type is not None and tool_type != "custom":
+        raise ValueError(
+            f"Unsupported tool type: {tool_type}. Only 'custom' tools are supported. "
+            f"Built-in tools (bash, text_editor, web_search) are not supported."
+        )
+
+    # Validate required fields
+    if "name" not in anthropic_tool:
+        raise ValueError("Tool missing required 'name' field")
+
+    if "input_schema" not in anthropic_tool:
+        raise ValueError(f"Tool '{anthropic_tool.get('name')}' missing required 'input_schema' field")
+
+    # Validate input_schema structure
+    input_schema = anthropic_tool["input_schema"]
+    if not isinstance(input_schema, dict):
+        raise ValueError(f"Tool '{anthropic_tool['name']}' input_schema must be a dict, got {type(input_schema)}")
+
+    if "type" not in input_schema:
+        raise ValueError(f"Tool '{anthropic_tool['name']}' input_schema must have a 'type' field")
+
+    return llm_request.Tool(
+        name=anthropic_tool["name"],
+        description=anthropic_tool.get("description", ""),
+        input_schema=cast(llm_request.JSONSchema, input_schema),
+    )
+
+
+def _tool_choice_to_anthropic(tool_choice: llm_request.ToolChoice | None) -> dict[str, Any] | None:
+    """Convert internal ToolChoice to Anthropic Messages format.
+
+    Args:
+        tool_choice: Internal tool choice
+
+    Returns:
+        Tool choice in Anthropic format:
+        - {"type": "auto"}: Model decides
+        - {"type": "any"}: Must use at least one tool
+        - {"type": "none"}: Must not use any tools
+        - {"type": "tool", "name": "..."}: Specific tool
+    """
+    if tool_choice is None:
+        return None
+
+    if tool_choice == "auto":
+        return {"type": "auto"}
+    elif tool_choice == "any":
+        return {"type": "any"}
+    elif tool_choice == "none":
+        return {"type": "none"}
+    elif isinstance(tool_choice, dict) and tool_choice.get("type") == "tool":
+        return {"type": "tool", "name": tool_choice["name"]}
+
+    return None
+
+
+def _tool_choice_from_anthropic(
+    tool_choice: dict[str, Any] | None,
+) -> llm_request.ToolChoice | None:
+    """Convert Anthropic Messages tool_choice to internal format.
+
+    Args:
+        tool_choice: Anthropic tool choice parameter
+
+    Returns:
+        Internal ToolChoice format
+    """
+    if tool_choice is None:
+        return None
+
+    if isinstance(tool_choice, dict):
+        choice_type = tool_choice.get("type")
+        if choice_type == "auto":
+            return "auto"
+        elif choice_type == "any":
+            return "any"
+        elif choice_type == "none":
+            return "none"
+        elif choice_type == "tool" and "name" in tool_choice:
+            return llm_request.ToolChoiceTool(type="tool", name=tool_choice["name"])
+
+    return None
+
+
 def _messages_to_claude_format(messages: list[llm_request.Message], *, strict: bool = True) -> list[dict[str, Any]]:
     """Convert messages from Chat format to Claude alternating format.
 
@@ -145,9 +267,9 @@ def to_external(request: llm_request.LLMRequest, *, strict: bool = True) -> dict
         kwargs["stream"] = True
     if request.tools:
         # Convert tools to Anthropic format (adds explicit type: "custom")
-        kwargs["tools"] = [llm_request._tool_to_anthropic(tool) for tool in request.tools]
+        kwargs["tools"] = [_tool_to_anthropic(tool) for tool in request.tools]
     if request.tool_choice is not None:
-        kwargs["tool_choice"] = llm_request._tool_choice_to_anthropic(request.tool_choice)
+        kwargs["tool_choice"] = _tool_choice_to_anthropic(request.tool_choice)
     if request.metadata:
         # Claude uses metadata.user_id specifically
         kwargs["metadata"] = request.metadata
@@ -239,7 +361,7 @@ def from_external(
         converted_tools = []
         for tool in tools_param:
             try:
-                converted_tools.append(llm_request._tool_from_anthropic(tool))
+                converted_tools.append(_tool_from_anthropic(tool))
             except ValueError as e:
                 if strict:
                     raise
@@ -253,7 +375,7 @@ def from_external(
         top_k=kwargs.get("top_k"),
         stream=bool(kwargs.get("stream", False)),
         tools=converted_tools,
-        tool_choice=llm_request._tool_choice_from_anthropic(cast(dict[str, Any] | None, kwargs.get("tool_choice"))),
+        tool_choice=_tool_choice_from_anthropic(cast(dict[str, Any] | None, kwargs.get("tool_choice"))),
         metadata=cast(dict[str, Any] | None, kwargs.get("metadata")),
         service_tier=kwargs.get("service_tier"),
         stop_sequences=cast(list[str] | None, kwargs.get("stop_sequences")),

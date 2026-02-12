@@ -2,14 +2,7 @@
 
 import dataclasses
 import logging
-from typing import Any, Literal, NotRequired, Protocol, Required, TypedDict, cast
-
-import anthropic.types
-import openai.types.chat
-import openai.types.chat.completion_create_params
-import openai.types.responses
-import openai.types.responses.response_create_params
-import openai.types.shared_params
+from typing import Any, Literal, NotRequired, Protocol, Required, TypedDict
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -139,369 +132,6 @@ class ToolChoiceTool(TypedDict):
 ToolChoice = Literal["auto", "any", "none"] | ToolChoiceTool
 
 
-def _tool_to_chat_completions(tool: Tool) -> openai.types.chat.ChatCompletionToolParam:
-    """Convert Tool from ARES internal format to OpenAI Chat Completions format.
-
-    Args:
-        tool: Tool in ARES internal format (flat with input_schema)
-
-    Returns:
-        Tool in OpenAI Chat Completions format (nested with type and function.parameters)
-    """
-    return openai.types.chat.ChatCompletionToolParam(
-        type="function",
-        function=openai.types.shared_params.FunctionDefinition(
-            name=tool["name"],
-            description=tool["description"],
-            parameters=cast(dict[str, object], tool["input_schema"]),
-        ),
-    )
-
-
-def _tool_from_chat_completions(chat_completions_tool: openai.types.chat.ChatCompletionToolParam) -> Tool:
-    """Convert tool from OpenAI Chat Completions format to ARES internal format.
-
-    Args:
-        chat_completions_tool: Tool in OpenAI Chat Completions format (nested with type and function.parameters)
-
-    Returns:
-        Tool in ARES internal format (flat with input_schema)
-    """
-    function = chat_completions_tool["function"]
-    parameters = function.get("parameters", {"type": "object", "properties": {}})
-
-    # Validate that parameters is a valid JSONSchema
-    if not isinstance(parameters, dict):
-        raise ValueError(f"Tool parameters must be a dict, got {type(parameters)}")
-    if "type" not in parameters:
-        raise ValueError("Tool parameters must have a 'type' field")
-
-    return Tool(
-        name=function["name"],
-        description=function.get("description", ""),
-        input_schema=cast(JSONSchema, parameters),
-    )
-
-
-def _tool_to_responses(tool: Tool) -> openai.types.responses.FunctionToolParam:
-    """Convert Tool from ARES internal format to OpenAI Responses format.
-
-    Args:
-        tool: Tool in ARES internal format (flat with input_schema)
-
-    Returns:
-        Tool in OpenAI Responses format (flat with type, name, description, parameters)
-    """
-    return openai.types.responses.FunctionToolParam(
-        type="function",
-        name=tool["name"],
-        description=tool["description"],
-        parameters=cast(dict[str, object], tool["input_schema"]),
-        strict=True,
-    )
-
-
-def _tool_from_responses(responses_tool: openai.types.responses.ToolParam) -> Tool:
-    """Convert tool from OpenAI Responses format to ARES internal format.
-
-    Args:
-        responses_tool: Tool in OpenAI Responses format (flat with type, name, parameters)
-
-    Returns:
-        Tool in ARES internal format (flat with input_schema)
-
-    Note:
-        Currently only supports FunctionToolParam. Other tool types are not converted.
-    """
-    # Only handle FunctionToolParam for now
-    if responses_tool.get("type") == "function":
-        # Type guard: if type is "function", this is FunctionToolParam
-        func_tool = cast(openai.types.responses.FunctionToolParam, responses_tool)
-        parameters = func_tool.get("parameters") or {"type": "object", "properties": {}}
-
-        # Validate that parameters is a valid JSONSchema
-        if not isinstance(parameters, dict):
-            raise ValueError(f"Tool parameters must be a dict, got {type(parameters)}")
-        if "type" not in parameters:
-            raise ValueError("Tool parameters must have a 'type' field")
-
-        return Tool(
-            name=func_tool["name"],
-            description=func_tool.get("description") or "",
-            input_schema=cast(JSONSchema, parameters),
-        )
-    # For other tool types, we can't convert them to Claude format
-    raise ValueError(f"Unsupported tool type for conversion: {responses_tool.get('type')}")
-
-
-def _tool_to_anthropic(tool: Tool) -> anthropic.types.ToolParam:
-    """Convert Tool from ARES internal format to Anthropic Messages format.
-
-    Args:
-        tool: Tool in ARES internal format (flat with input_schema)
-
-    Returns:
-        Tool in Anthropic Messages format (custom tool with type, name, description, input_schema)
-    """
-    return anthropic.types.ToolParam(
-        type="custom",
-        name=tool["name"],
-        description=tool["description"],
-        input_schema=cast(dict[str, object], tool["input_schema"]),
-    )
-
-
-def _tool_from_anthropic(
-    anthropic_tool: anthropic.types.ToolUnionParam,
-) -> Tool:
-    """Convert tool from Anthropic Messages format to ARES internal format.
-
-    Args:
-        anthropic_tool: Tool in Anthropic format (ToolParam with type='custom'/None, or built-in tool types)
-
-    Returns:
-        Tool in ARES internal format
-
-    Raises:
-        ValueError: If tool type is unsupported or required fields are missing
-
-    Note:
-        Only supports ToolParam with type='custom' or type=None. Built-in tool types
-        (bash_20250124, text_editor_*, web_search_*) are not supported.
-    """
-    # Check tool type - we only accept "custom" (or None which defaults to custom)
-    # Reject built-in tool types like bash_20250124, text_editor_*, web_search_*
-    tool_type = anthropic_tool.get("type")
-    if tool_type is not None and tool_type != "custom":
-        raise ValueError(
-            f"Unsupported tool type: {tool_type}. Only 'custom' tools are supported. "
-            f"Built-in tools (bash, text_editor, web_search) are not supported."
-        )
-
-    # Validate required fields
-    if "name" not in anthropic_tool:
-        raise ValueError("Tool missing required 'name' field")
-
-    if "input_schema" not in anthropic_tool:
-        raise ValueError(f"Tool '{anthropic_tool.get('name')}' missing required 'input_schema' field")
-
-    # Validate input_schema structure
-    input_schema = anthropic_tool["input_schema"]
-    if not isinstance(input_schema, dict):
-        raise ValueError(f"Tool '{anthropic_tool['name']}' input_schema must be a dict, got {type(input_schema)}")
-
-    if "type" not in input_schema:
-        raise ValueError(f"Tool '{anthropic_tool['name']}' input_schema must have a 'type' field")
-
-    return Tool(
-        name=anthropic_tool["name"],
-        description=anthropic_tool.get("description", ""),
-        input_schema=cast(JSONSchema, input_schema),
-    )
-
-
-def _tool_choice_to_openai(tool_choice: ToolChoice | None) -> str | dict[str, Any] | None:
-    """Convert ARES internal ToolChoice to OpenAI Chat Completions format.
-
-    Args:
-        tool_choice: ARES internal tool choice
-
-    Returns:
-        Tool choice in OpenAI format:
-        - "auto": Model decides
-        - "required": Must use at least one tool
-        - "none": Must not use any tools
-        - {"type": "function", "function": {"name": "..."}}: Specific function
-    """
-    if tool_choice is None:
-        return None
-
-    if tool_choice == "auto":
-        return "auto"
-    elif tool_choice == "any":
-        return "required"  # Map "any" to OpenAI's "required"
-    elif tool_choice == "none":
-        return "none"
-    elif isinstance(tool_choice, dict) and tool_choice.get("type") == "tool":
-        return {
-            "type": "function",
-            "function": {"name": tool_choice["name"]},
-        }
-
-    return None
-
-
-def _tool_choice_to_responses(tool_choice: ToolChoice | None) -> str | dict[str, Any] | None:
-    """Convert ARES internal ToolChoice to OpenAI Responses format.
-
-    Args:
-        tool_choice: ARES internal tool choice
-
-    Returns:
-        Tool choice in OpenAI Responses format:
-        - "auto": Model decides
-        - "required": Must use at least one tool
-        - "none": Must not use any tools
-        - {"type": "function", "name": "..."}: Specific function (flat structure)
-    """
-    if tool_choice is None:
-        return None
-
-    if tool_choice == "auto":
-        return "auto"
-    elif tool_choice == "any":
-        return "required"  # Map "any" to OpenAI's "required"
-    elif tool_choice == "none":
-        return "none"
-    elif isinstance(tool_choice, dict) and tool_choice.get("type") == "tool":
-        # Responses API uses flat structure: {"type": "function", "name": "..."}
-        return {
-            "type": "function",
-            "name": tool_choice["name"],
-        }
-
-    return None
-
-
-def _tool_choice_from_openai(
-    tool_choice: str | dict[str, Any] | None,
-) -> ToolChoice | None:
-    """Convert OpenAI Chat Completions tool_choice to internal format.
-
-    Args:
-        tool_choice: OpenAI tool choice parameter
-
-    Returns:
-        Internal ToolChoice format
-    """
-    if tool_choice is None:
-        return None
-
-    if isinstance(tool_choice, str):
-        result = {"auto": "auto", "required": "any", "none": "none"}.get(tool_choice)
-        if not result:
-            raise ValueError(f"Unsupported tool choice: {tool_choice}")
-        return cast(Literal["auto", "any", "none"], result)
-
-    elif isinstance(tool_choice, dict):
-        choice_type = tool_choice.get("type")
-        if choice_type == "function":
-            # {"type": "function", "function": {"name": "x"}} -> {"type": "tool", "name": "x"}
-            function_data = tool_choice.get("function", {})
-            if isinstance(function_data, dict) and "name" in function_data:
-                return ToolChoiceTool(type="tool", name=function_data["name"])
-
-    return None
-
-
-def _tool_choice_to_anthropic(tool_choice: ToolChoice | None) -> dict[str, Any] | None:
-    """Convert internal ToolChoice to Anthropic Messages format.
-
-    Args:
-        tool_choice: Internal tool choice
-
-    Returns:
-        Tool choice in Anthropic format:
-        - {"type": "auto"}: Model decides
-        - {"type": "any"}: Must use at least one tool
-        - {"type": "none"}: Must not use any tools
-        - {"type": "tool", "name": "..."}: Specific tool
-    """
-    if tool_choice is None:
-        return None
-
-    if tool_choice == "auto":
-        return {"type": "auto"}
-    elif tool_choice == "any":
-        return {"type": "any"}
-    elif tool_choice == "none":
-        return {"type": "none"}
-    elif isinstance(tool_choice, dict) and tool_choice.get("type") == "tool":
-        return {"type": "tool", "name": tool_choice["name"]}
-
-    return None
-
-
-def _tool_choice_from_anthropic(
-    tool_choice: dict[str, Any] | None,
-) -> ToolChoice | None:
-    """Convert Anthropic Messages tool_choice to internal format.
-
-    Args:
-        tool_choice: Anthropic tool choice parameter
-
-    Returns:
-        Internal ToolChoice format
-    """
-    if tool_choice is None:
-        return None
-
-    if isinstance(tool_choice, dict):
-        choice_type = tool_choice.get("type")
-        if choice_type == "auto":
-            return "auto"
-        elif choice_type == "any":
-            return "any"
-        elif choice_type == "none":
-            return "none"
-        elif choice_type == "tool" and "name" in tool_choice:
-            return ToolChoiceTool(type="tool", name=tool_choice["name"])
-
-    return None
-
-
-class RequestConverter[RequestType](Protocol):
-    """Converts between ARES LLMRequest and external API formats.
-
-    This protocol defines the interface for bidirectional conversion between ARES's internal
-    LLMRequest format and external API request formats (OpenAI Chat Completions, OpenAI Responses,
-    Anthropic Messages, etc.).
-
-    Type Parameters:
-        RequestType: The external API's request parameters type (e.g., dict[str, Any] for kwargs)
-
-    Note:
-        Implementations are provided as modules with module-level to_external() and from_external()
-        functions. The module itself conforms to this Protocol through structural subtyping.
-        The model parameter is NOT included in conversions - it should be managed by the LLMClient.
-
-        Available converters:
-        - openai_chat_converter: OpenAI Chat Completions API
-        - openai_responses_converter: OpenAI Responses API
-        - anthropic_converter: Anthropic Messages API
-    """
-
-    def to_external(self, request: "LLMRequest", *, strict: bool = True) -> RequestType:
-        """Convert ARES LLMRequest to external API format.
-
-        Args:
-            request: ARES internal request format
-            strict: If True, raise ValueError on information loss. If False, log warnings.
-
-        Returns:
-            Request parameters in external API format (without model parameter)
-
-        Raises:
-            ValueError: If strict=True and information would be lost in conversion
-        """
-        ...
-
-    def from_external(self, kwargs: RequestType, *, strict: bool = True) -> "LLMRequest":
-        """Convert external API format to ARES LLMRequest.
-
-        Args:
-            kwargs: External API request parameters
-            strict: If True, raise ValueError for unhandled parameters. If False, log warnings.
-
-        Returns:
-            LLMRequest instance
-
-        Raises:
-            ValueError: If strict=True and there are unhandled parameters
-        """
-        ...
-
-
 @dataclasses.dataclass(frozen=True, kw_only=True)
 class LLMRequest:
     """Unified request format for OpenAI Chat Completions, OpenAI Responses, and Claude Messages APIs.
@@ -546,3 +176,54 @@ class LLMRequest:
     system_prompt: str | None = None
     top_k: int | None = None
 
+
+class RequestConverter[RequestType](Protocol):
+    """Converts between ARES LLMRequest and external API formats.
+
+    This protocol defines the interface for bidirectional conversion between ARES's internal
+    LLMRequest format and external API request formats (OpenAI Chat Completions, OpenAI Responses,
+    Anthropic Messages, etc.).
+
+    Type Parameters:
+        RequestType: The external API's request parameters type (e.g., dict[str, Any] for kwargs)
+
+    Note:
+        Implementations are provided as modules with module-level to_external() and from_external()
+        functions. The module itself conforms to this Protocol through structural subtyping.
+        The model parameter is NOT included in conversions - it should be managed by the LLMClient.
+
+        Available converters:
+        - openai_chat_converter: OpenAI Chat Completions API
+        - openai_responses_converter: OpenAI Responses API
+        - anthropic_converter: Anthropic Messages API
+    """
+
+    def to_external(self, request: LLMRequest, *, strict: bool = True) -> RequestType:
+        """Convert ARES LLMRequest to external API format.
+
+        Args:
+            request: ARES internal request format
+            strict: If True, raise ValueError on information loss. If False, log warnings.
+
+        Returns:
+            Request parameters in external API format (without model parameter)
+
+        Raises:
+            ValueError: If strict=True and information would be lost in conversion
+        """
+        ...
+
+    def from_external(self, request: RequestType, *, strict: bool = True) -> LLMRequest:
+        """Convert external API format to ARES LLMRequest.
+
+        Args:
+            request: External API request parameters
+            strict: If True, raise ValueError for unhandled parameters. If False, log warnings.
+
+        Returns:
+            LLMRequest instance
+
+        Raises:
+            ValueError: If strict=True and there are unhandled parameters
+        """
+        ...
