@@ -41,6 +41,7 @@ Note: The background batching task automatically exits when the client is garbag
 """
 
 import asyncio
+import collections
 from collections.abc import Callable
 import dataclasses
 import functools
@@ -409,10 +410,3 @@ class TransformersLLMClient(llm_clients.LLMClient):
             )
 
         return responses
-
-
-# Convenience factory for popular small models
-create_qwen2_0_5b_instruct_client = functools.partial(
-    TransformersLLMClient,
-    model_name="Qwen/Qwen2.5-0.5B-Instruct",
-)

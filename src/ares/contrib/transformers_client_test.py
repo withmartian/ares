@@ -1,6 +1,7 @@
 """Unit tests for TransformersLLMClient."""
 
 import asyncio
+import contextlib
 from unittest import mock
 
 import pytest
@@ -10,6 +11,89 @@ import transformers
 from ares.contrib import transformers_client
 from ares.llms import request as request_lib
 from ares.llms import response as response_lib
+
+# Helper functions for mocking
+
+
+def create_mock_batch(input_ids=None, attention_mask=None):
+    """Create a mock batch with __getitem__ for tokenizer output.
+
+    Args:
+        input_ids: Tensor for input_ids. Defaults to [[1, 2, 3]]
+        attention_mask: Tensor for attention_mask. Defaults to [[1, 1, 1]]
+    """
+    if input_ids is None:
+        input_ids = torch.tensor([[1, 2, 3]])
+    if attention_mask is None:
+        attention_mask = torch.tensor([[1, 1, 1]])
+
+    mock_batch = mock.MagicMock()
+    mock_batch.__getitem__ = lambda _, key: input_ids if key == "input_ids" else attention_mask
+    mock_batch.to = mock.Mock(return_value=mock_batch)
+    return mock_batch
+
+
+def create_mock_tokenizer(batch_responses=None, batch_size_fn=None):
+    """Create a configured mock tokenizer.
+
+    Args:
+        batch_responses: List of response strings for batch_decode. Defaults to ["Response text"]
+        batch_size_fn: Optional callable(*args, **kwargs) -> mock_batch for dynamic batching
+    """
+    mock_tokenizer = mock.MagicMock()
+    mock_tokenizer.apply_chat_template.return_value = "User: test\nAssistant:"
+    mock_tokenizer.pad_token_id = 0
+
+    if batch_size_fn:
+        mock_tokenizer.side_effect = batch_size_fn
+    else:
+        mock_tokenizer.return_value = create_mock_batch()
+
+    mock_tokenizer.batch_decode.return_value = batch_responses or ["Response text"]
+    return mock_tokenizer
+
+
+def create_mock_model_output(sequences, hidden_states=None, attentions=None):
+    """Create a mock model generate output.
+
+    Args:
+        sequences: Tensor of output token sequences
+        hidden_states: Optional tuple of hidden state tensors
+        attentions: Optional tuple of attention tensors
+    """
+    mock_output = mock.MagicMock()
+    mock_output.sequences = sequences
+    if hidden_states is not None:
+        mock_output.hidden_states = hidden_states
+    if attentions is not None:
+        mock_output.attentions = attentions
+    return mock_output
+
+
+@contextlib.contextmanager
+def setup_client_mocks(client, mock_model, mock_tokenizer):
+    """Context manager that patches _model and _tokenizer properties.
+
+    Args:
+        client: TransformersLLMClient instance
+        mock_model: Mock model to return
+        mock_tokenizer: Mock tokenizer to return
+    """
+    with (
+        mock.patch.object(
+            type(client),
+            "_model",
+            new_callable=mock.PropertyMock,
+            return_value=mock_model,
+        ),
+        mock.patch.object(
+            type(client),
+            "_tokenizer",
+            new_callable=mock.PropertyMock,
+            return_value=mock_tokenizer,
+        ),
+    ):
+        yield
 
 
 class TestDeviceDetection:
@@ -160,42 +244,13 @@ class TestTransformersLLMClientBatching:
             batch_wait_ms=10,  # Short wait for testing
         )
 
-        # Create mock model and tokenizer
+        mock_tokenizer = create_mock_tokenizer()
         mock_model = mock.MagicMock()
-        mock_tokenizer = mock.MagicMock()
-
-        # Configure tokenizer mock
-        mock_tokenizer.apply_chat_template.return_value = "User: test\nAssistant:"
-        mock_tokenizer.pad_token_id = 0
-
-        # Mock the tokenizer call to return BatchEncoding-like dict
-        mock_batch = mock.MagicMock()
-        mock_batch.__getitem__ = (
-            lambda _, key: torch.tensor([[1, 2, 3]]) if key == "input_ids" else torch.tensor([[1, 1, 1]])
+        mock_model.generate.return_value = create_mock_model_output(
+            sequences=torch.tensor([[1, 2, 3, 4, 5, 6]])  # 3 input + 3 generated
         )
-        mock_batch.to = mock.Mock(return_value=mock_batch)
-        mock_tokenizer.return_value = mock_batch
-        mock_tokenizer.batch_decode.return_value = ["Response text"]
 
-        # Configure model mock
-        mock_output = mock.MagicMock()
-        mock_output.sequences = torch.tensor([[1, 2, 3, 4, 5, 6]])  # 3 input + 3 generated
-        mock_model.generate.return_value = mock_output
-
-        with (
-            mock.patch.object(
-                type(client),
-                "_model",
-                new_callable=mock.PropertyMock,
-                return_value=mock_model,
-            ),
-            mock.patch.object(
-                type(client),
-                "_tokenizer",
-                new_callable=mock.PropertyMock,
-                return_value=mock_tokenizer,
-            ),
-        ):
+        with setup_client_mocks(client, mock_model, mock_tokenizer):
             req = request_lib.LLMRequest(
                 messages=[{"role": "user", "content": "test"}],
             )
@@ -218,48 +273,25 @@ class TestTransformersLLMClientBatching:
             max_batch_size=3,
         )
 
-        # Create mock model and tokenizer
-        mock_model = mock.MagicMock()
-        mock_tokenizer = mock.MagicMock()
-
-        # Configure tokenizer for batch
-        mock_tokenizer.apply_chat_template.return_value = "User: test\nAssistant:"
-        mock_tokenizer.pad_token_id = 0
-
         # Mock tokenizer to return batch of 3
         def tokenizer_side_effect(*args, **_):
             batch_size = len(args[0]) if args else 1
-            mock_batch = mock.MagicMock()
-            mock_batch.__getitem__ = lambda _, key: (
-                torch.zeros((batch_size, 5), dtype=torch.long)
-                if key == "input_ids"
-                else torch.ones((batch_size, 5), dtype=torch.long)
+            return create_mock_batch(
+                input_ids=torch.zeros((batch_size, 5), dtype=torch.long),
+                attention_mask=torch.ones((batch_size, 5), dtype=torch.long),
             )
-            mock_batch.to = mock.Mock(return_value=mock_batch)
-            return mock_batch
 
-        mock_tokenizer.side_effect = tokenizer_side_effect
-        mock_tokenizer.batch_decode.return_value = ["Response 1", "Response 2", "Response 3"]
+        mock_tokenizer = create_mock_tokenizer(
+            batch_responses=["Response 1", "Response 2", "Response 3"],
+            batch_size_fn=tokenizer_side_effect,
+        )
 
-        # Configure model to return batch
-        mock_output = mock.MagicMock()
-        mock_output.sequences = torch.zeros((3, 8), dtype=torch.long)  # 3 requests, 8 tokens each
-        mock_model.generate.return_value = mock_output
+        mock_model = mock.MagicMock()
+        mock_model.generate.return_value = create_mock_model_output(
+            sequences=torch.zeros((3, 8), dtype=torch.long)  # 3 requests, 8 tokens each
+        )
 
-        with (
-            mock.patch.object(
-                type(client),
-                "_model",
-                new_callable=mock.PropertyMock,
-                return_value=mock_model,
-            ),
-            mock.patch.object(
-                type(client),
-                "_tokenizer",
-                new_callable=mock.PropertyMock,
-                return_value=mock_tokenizer,
-            ),
-        ):
+        with setup_client_mocks(client, mock_model, mock_tokenizer):
             # Submit 3 requests concurrently
             requests = [request_lib.LLMRequest(messages=[{"role": "user", "content": f"test {i}"}]) for i in range(3)]
 
@@ -292,42 +324,15 @@ class TestTransformersLLMClientActivationHooks:
             activation_callback=capture_callback,
         )
 
-        # Create mock model and tokenizer
+        mock_tokenizer = create_mock_tokenizer(batch_responses=["Response"])
         mock_model = mock.MagicMock()
-        mock_tokenizer = mock.MagicMock()
-
-        mock_tokenizer.apply_chat_template.return_value = "User: test\nAssistant:"
-        mock_tokenizer.pad_token_id = 0
-
-        mock_batch = mock.MagicMock()
-        mock_batch.__getitem__ = (
-            lambda _, key: torch.tensor([[1, 2, 3]]) if key == "input_ids" else torch.tensor([[1, 1, 1]])
+        mock_model.generate.return_value = create_mock_model_output(
+            sequences=torch.tensor([[1, 2, 3, 4, 5]]),
+            hidden_states=(torch.randn(1, 5, 768),),  # (batch, seq, hidden)
+            attentions=(torch.randn(1, 12, 5, 5),),  # (batch, heads, seq, seq)
         )
-        mock_batch.to = mock.Mock(return_value=mock_batch)
-        mock_tokenizer.return_value = mock_batch
-        mock_tokenizer.batch_decode.return_value = ["Response"]
 
-        # Configure model with hidden states and attentions
-        mock_output = mock.MagicMock()
-        mock_output.sequences = torch.tensor([[1, 2, 3, 4, 5]])
-        mock_output.hidden_states = (torch.randn(1, 5, 768),)  # (batch, seq, hidden)
-        mock_output.attentions = (torch.randn(1, 12, 5, 5),)  # (batch, heads, seq, seq)
-        mock_model.generate.return_value = mock_output
-
-        with (
-            mock.patch.object(
-                type(client),
-                "_model",
-                new_callable=mock.PropertyMock,
-                return_value=mock_model,
-            ),
-            mock.patch.object(
-                type(client),
-                "_tokenizer",
-                new_callable=mock.PropertyMock,
-                return_value=mock_tokenizer,
-            ),
-        ):
+        with setup_client_mocks(client, mock_model, mock_tokenizer):
             req = request_lib.LLMRequest(
                 messages=[{"role": "user", "content": "test"}],
             )
@@ -359,38 +364,11 @@ class TestTransformersLLMClientActivationHooks:
             activation_callback=capture_callback,
         )
 
+        mock_tokenizer = create_mock_tokenizer(batch_responses=["Response"])
         mock_model = mock.MagicMock()
-        mock_tokenizer = mock.MagicMock()
+        mock_model.generate.return_value = create_mock_model_output(sequences=torch.tensor([[1, 2, 3, 4, 5]]))
 
-        mock_tokenizer.apply_chat_template.return_value = "User: test\nAssistant:"
-        mock_tokenizer.pad_token_id = 0
-
-        mock_batch = mock.MagicMock()
-        mock_batch.__getitem__ = (
-            lambda _, key: torch.tensor([[1, 2, 3]]) if key == "input_ids" else torch.tensor([[1, 1, 1]])
-        )
-        mock_batch.to = mock.Mock(return_value=mock_batch)
-        mock_tokenizer.return_value = mock_batch
-        mock_tokenizer.batch_decode.return_value = ["Response"]
-
-        mock_output = mock.MagicMock()
-        mock_output.sequences = torch.tensor([[1, 2, 3, 4, 5]])
-        mock_model.generate.return_value = mock_output
-
-        with (
-            mock.patch.object(
-                type(client),
-                "_model",
-                new_callable=mock.PropertyMock,
-                return_value=mock_model,
-            ),
-            mock.patch.object(
-                type(client),
-                "_tokenizer",
-                new_callable=mock.PropertyMock,
-                return_value=mock_tokenizer,
-            ),
-        ):
+        with setup_client_mocks(client, mock_model, mock_tokenizer):
             req = request_lib.LLMRequest(
                 messages=[{"role": "user", "content": "test"}],
             )
