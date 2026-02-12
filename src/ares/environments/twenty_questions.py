@@ -23,11 +23,14 @@ _LOGGER = logging.getLogger(__name__)
 # Oracle system prompt template - instructs the LLM to answer yes/no questions
 # Note: ArCHeR uses a single-line prompt string for this template
 ORACLE_PROMPT_TEMPLATE = (
-    'You are playing a game called twenty questions with me. The rule of twenty question is that '
+    'You are playing a game called twenty questions with me. The rule of twenty questions is that '
     'you are given a hidden word, and I am guessing what the word is within twenty questions. '
-    'For every question, if it is an invalid question, you should answer "Invalid Question.". '
-    'For any valid question, you should answer either "Yes." or "No.". '
-    'Now the hidden word given to you is "{word}", and the question for the current round is '
+    'The player may include extra reasoning or commentary alongside their question. '
+    'Your job is to find the yes/no question in their message and answer it. '
+    'If the message contains a valid yes/no question (even if surrounded by other text), '
+    'extract it and answer either "Yes." or "No.". '
+    'Only answer "Invalid Question." if there is truly no yes/no question present at all. '
+    'Now the hidden word given to you is "{word}", and the player\'s message for the current round is: '
     '"{question}". Your response is:'
 )
 
