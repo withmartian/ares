@@ -231,40 +231,70 @@ class TransformersLLMClient(llm_clients.LLMClient):
     async def _inference_loop(self, weak_self: weakref.ReferenceType) -> None:
         """Background task that batches and processes requests.
 
+        Groups requests by (temperature, max_tokens) during collection to preserve per-request
+        semantics. Collects until batch_wait_ms elapses OR any group reaches max_batch_size.
+
+        Tradeoff: Grouping at collection time is more efficient than collecting mixed batches
+        and splitting later, but less efficient than a full meta-queue with per-parameter timers.
+        Future: Could extend to a queue-of-queues where each parameter combo gets its own queue
+        and timer, allowing truly independent batching per parameter set.
+
         Args:
             weak_self: Weakref to the client - task exits when client is GC'd
         """
         while weak_self() is not None:
             try:
-                # Wait for first request (with timeout to check _running periodically)
+                # Wait for first request (with timeout to check GC periodically)
                 try:
                     first_item = await asyncio.wait_for(
                         self._request_queue.get(),
-                        timeout=60.0,  # Check _running every 60s
+                        timeout=60.0,
                     )
                 except TimeoutError:
                     continue
 
-                # Collect batch of requests
-                batch: list[ValueAndFuture[request.LLMRequest, response.LLMResponse]] = [first_item]
+                # Extract parameters from first item
+                kwargs = first_item.value.to_chat_completion_kwargs()
+                temp = kwargs.get("temperature")
+                max_tokens = kwargs.get("max_completion_tokens")
+                first_params = (
+                    self.temperature if temp is None else temp,
+                    self.max_new_tokens if max_tokens is None else max_tokens,
+                )
 
-                # Wait for more requests up to batch_wait_ms
+                # Group requests by (temperature, max_tokens)
+                groups: dict[tuple[float, int], list[ValueAndFuture[request.LLMRequest, response.LLMResponse]]] = (
+                    collections.defaultdict(list)
+                )
+                groups[first_params].append(first_item)
+
+                # Collect more requests until timeout OR any group is full
                 deadline = asyncio.get_event_loop().time() + (self.batch_wait_ms / 1000.0)
 
-                while len(batch) < self.max_batch_size:
+                while (
+                    asyncio.get_event_loop().time() < deadline
+                    and max((len(group) for group in groups.values()), default=0) < self.max_batch_size
+                ):
                     timeout = max(0, deadline - asyncio.get_event_loop().time())
-                    if timeout <= 0:
-                        break
 
                     try:
                         item = await asyncio.wait_for(self._request_queue.get(), timeout=timeout)
-                        batch.append(item)
+                        kwargs = item.value.to_chat_completion_kwargs()
+                        temp = kwargs.get("temperature")
+                        max_tokens = kwargs.get("max_completion_tokens")
+                        params = (
+                            self.temperature if temp is None else temp,
+                            self.max_new_tokens if max_tokens is None else max_tokens,
+                        )
+                        groups[params].append(item)
                     except TimeoutError:
                         break
 
-                # Process batch
-                _LOGGER.debug("Processing batch of %d request(s)", len(batch))
-                await self._process_batch(batch)
+                # Process all groups
+                for params, group in groups.items():
+                    if group:
+                        _LOGGER.debug("Processing batch of %d request(s) for params %s", len(group), params)
+                        await self._process_batch(group, params)
 
             except Exception as e:
                 _LOGGER.exception("Error in inference loop: %s", e)
@@ -272,32 +302,22 @@ class TransformersLLMClient(llm_clients.LLMClient):
     async def _process_batch(
         self,
         batch: list[ValueAndFuture[request.LLMRequest, response.LLMResponse]],
+        params: tuple[float, int],
     ) -> None:
-        """Process a batch of requests using batch inference.
+        """Process a batch of requests with homogeneous parameters.
 
         Args:
-            batch: List of request-future pairs
+            batch: List of request-future pairs (all with same temperature/max_tokens)
+            params: (temperature, max_new_tokens) for this batch
         """
         try:
-            # Extract requests
-            requests = [item.value for item in batch]
+            temperature, max_new_tokens = params
 
-            # Convert requests to chat format and prepare inputs
+            # Convert requests to chat format
             chat_conversations = []
-            temperatures = []
-            max_tokens_list = []
-
-            for req in requests:
-                # Convert to chat completion format
-                kwargs = req.to_chat_completion_kwargs()
+            for item in batch:
+                kwargs = item.value.to_chat_completion_kwargs()
                 chat_conversations.append(kwargs["messages"])
-                temperatures.append(kwargs.get("temperature", self.temperature))
-                max_tokens_list.append(kwargs.get("max_completion_tokens", self.max_new_tokens))
-
-            # Use the max of all max_tokens requests for the batch
-            max_new_tokens = max(max_tokens_list)
-            # Use the mean temperature (or could use per-request temperatures with generate's generation_config)
-            temperature = sum(temperatures) / len(temperatures)
 
             # Run inference in thread pool (transformers is not async)
             responses = await asyncio.to_thread(
