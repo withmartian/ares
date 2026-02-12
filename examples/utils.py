@@ -28,7 +28,8 @@ def print_step(
     print("-" * 80)
 
     if observation is not None:
-        observation_content = list(observation.messages)[-1].get("content", "")
+        messages = list(observation.messages)
+        observation_content = messages[-1].get("content", "") if messages else "(no messages)"
         observation_preview = str(observation_content)[:200]
         if len(str(observation_content)) > 200:
             observation_preview += "..."
