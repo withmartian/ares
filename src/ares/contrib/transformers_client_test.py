@@ -53,23 +53,6 @@ def create_mock_tokenizer(batch_responses=None, batch_size_fn=None):
     return mock_tokenizer
 
 
-def create_mock_model_output(sequences, hidden_states=None, attentions=None):
-    """Create a mock model generate output.
-
-    Args:
-        sequences: Tensor of output token sequences
-        hidden_states: Optional tuple of hidden state tensors
-        attentions: Optional tuple of attention tensors
-    """
-    mock_output = mock.MagicMock()
-    mock_output.sequences = sequences
-    if hidden_states is not None:
-        mock_output.hidden_states = hidden_states
-    if attentions is not None:
-        mock_output.attentions = attentions
-    return mock_output
-
-
 @contextlib.contextmanager
 def setup_client_mocks(client, mock_model, mock_tokenizer):
     """Context manager that patches _model and _tokenizer properties.
@@ -171,7 +154,6 @@ class TestTransformersLLMClientInitialization:
             torch_dtype="float32",
             max_new_tokens=256,
             temperature=0.5,
-            output_hidden_states=True,
         )
         assert client.batch_wait_ms == 100
         assert client.max_batch_size == 16
@@ -179,7 +161,6 @@ class TestTransformersLLMClientInitialization:
         assert client.torch_dtype == "float32"
         assert client.max_new_tokens == 256
         assert client.temperature == 0.5
-        assert client.output_hidden_states is True
 
     def test_cached_properties(self):
         """Test cached properties are initialized correctly."""
@@ -246,9 +227,7 @@ class TestTransformersLLMClientBatching:
 
         mock_tokenizer = create_mock_tokenizer()
         mock_model = mock.MagicMock()
-        mock_model.generate.return_value = create_mock_model_output(
-            sequences=torch.tensor([[1, 2, 3, 4, 5, 6]])  # 3 input + 3 generated
-        )
+        mock_model.generate.return_value = torch.tensor([[1, 2, 3, 4, 5, 6]])  # 3 input + 3 generated
 
         with setup_client_mocks(client, mock_model, mock_tokenizer):
             req = request_lib.LLMRequest(
@@ -287,9 +266,7 @@ class TestTransformersLLMClientBatching:
         )
 
         mock_model = mock.MagicMock()
-        mock_model.generate.return_value = create_mock_model_output(
-            sequences=torch.zeros((3, 8), dtype=torch.long)  # 3 requests, 8 tokens each
-        )
+        mock_model.generate.return_value = torch.zeros((3, 8), dtype=torch.long)  # 3 requests, 8 tokens each
 
         with setup_client_mocks(client, mock_model, mock_tokenizer):
             # Submit 3 requests concurrently
@@ -304,79 +281,6 @@ class TestTransformersLLMClientBatching:
 
             # Verify generate was called once with batch
             mock_model.generate.assert_called_once()
-
-
-class TestTransformersLLMClientActivationHooks:
-    """Tests for activation capture functionality."""
-
-    @pytest.mark.asyncio
-    async def test_activation_callback_called(self):
-        """Test activation callback is called when enabled."""
-        captured_activations = []
-
-        def capture_callback(_activations):
-            captured_activations.append(_activations)
-
-        client = transformers_client.TransformersLLMClient(
-            model_name="test-model",
-            output_hidden_states=True,
-            output_attentions=True,
-            activation_callback=capture_callback,
-        )
-
-        mock_tokenizer = create_mock_tokenizer(batch_responses=["Response"])
-        mock_model = mock.MagicMock()
-        mock_model.generate.return_value = create_mock_model_output(
-            sequences=torch.tensor([[1, 2, 3, 4, 5]]),
-            hidden_states=(torch.randn(1, 5, 768),),  # (batch, seq, hidden)
-            attentions=(torch.randn(1, 12, 5, 5),),  # (batch, heads, seq, seq)
-        )
-
-        with setup_client_mocks(client, mock_model, mock_tokenizer):
-            req = request_lib.LLMRequest(
-                messages=[{"role": "user", "content": "test"}],
-            )
-
-            await client(req)
-
-            # Verify callback was called
-            assert len(captured_activations) == 1
-            acts = captured_activations[0]
-
-            assert "input_ids" in acts
-            assert "generated_ids" in acts
-            assert "hidden_states" in acts
-            assert "attentions" in acts
-
-    @pytest.mark.asyncio
-    async def test_no_callback_when_disabled(self):
-        """Test activation callback is not called when outputs disabled."""
-        callback_called = False
-
-        def capture_callback(_):
-            nonlocal callback_called
-            callback_called = True
-
-        client = transformers_client.TransformersLLMClient(
-            model_name="test-model",
-            output_hidden_states=False,  # Disabled
-            output_attentions=False,  # Disabled
-            activation_callback=capture_callback,
-        )
-
-        mock_tokenizer = create_mock_tokenizer(batch_responses=["Response"])
-        mock_model = mock.MagicMock()
-        mock_model.generate.return_value = create_mock_model_output(sequences=torch.tensor([[1, 2, 3, 4, 5]]))
-
-        with setup_client_mocks(client, mock_model, mock_tokenizer):
-            req = request_lib.LLMRequest(
-                messages=[{"role": "user", "content": "test"}],
-            )
-
-            await client(req)
-
-            # Callback should not be called
-            assert callback_called is False
 
 
 @pytest.mark.asyncio

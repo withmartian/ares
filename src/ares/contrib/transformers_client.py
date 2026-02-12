@@ -1,7 +1,4 @@
-"""LLM client using HuggingFace transformers with batching and activation hooks.
-
-This client supports automatic request batching and activation capture for mechanistic
-interpretability research (e.g., linear probes on hidden states).
+"""LLM client using HuggingFace transformers with automatic request batching.
 
 WARNING: This is not a core ARES component. The interface may change without notice.
 For production use, consider implementing your own LLM client following the LLMClient protocol.
@@ -15,38 +12,24 @@ Example usage:
     from ares.contrib import transformers_client
     from ares.llms import request
 
-    # Initialize with a HuggingFace model
     client = transformers_client.TransformersLLMClient(
         model_name="Qwen/Qwen2.5-0.5B-Instruct",
         batch_wait_ms=50,
         max_batch_size=8,
     )
 
-    # Use like any other LLM client (no context manager needed)
     req = request.LLMRequest(messages=[{"role": "user", "content": "Hello!"}])
     response = await client(req)
-
-    # With activation hooks for mech interp
-    activations = []
-    def capture_activations(acts):
-        activations.append(acts)
-
-    client = transformers_client.TransformersLLMClient(
-        model_name="Qwen/Qwen2.5-0.5B-Instruct",
-        activation_callback=capture_activations,
-        output_hidden_states=True,
-    )
 
 Note: The background batching task automatically exits when the client is garbage collected.
 """
 
 import asyncio
 import collections
-from collections.abc import Callable
 import dataclasses
 import functools
 import logging
-from typing import Any, Literal, cast
+from typing import Literal, cast
 import weakref
 
 import torch
@@ -112,11 +95,9 @@ def _get_torch_dtype(dtype_str: str, device: str) -> torch.dtype:
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
 class TransformersLLMClient(llm_clients.LLMClient):
-    """LLM client with automatic batching and activation hooks for mech interp.
+    """LLM client with automatic request batching.
 
-    Supports automatic request batching by collecting requests over a time window,
-    then running batch inference. Also supports capturing activations (hidden states,
-    attention weights) for mechanistic interpretability research.
+    Collects requests over a time window and processes them in batches for efficiency.
 
     Attributes:
         model_name: HuggingFace model ID (e.g., "Qwen/Qwen2.5-0.5B-Instruct")
@@ -126,14 +107,6 @@ class TransformersLLMClient(llm_clients.LLMClient):
         torch_dtype: Precision - "auto", "float32", "float16", "bfloat16" (default: "auto")
         max_new_tokens: Maximum tokens to generate per request (default: 512)
         temperature: Default temperature for generation (default: 1.0)
-        output_hidden_states: Capture hidden states from all layers (default: False)
-        output_attentions: Capture attention weights from all layers (default: False)
-        activation_callback: Optional callback receiving activations dict (default: None)
-            Called with dict containing:
-            - "hidden_states": tuple of tensors (layer_count, batch_size, seq_len, hidden_dim)
-            - "attentions": tuple of tensors (layer_count, batch_size, num_heads, seq_len, seq_len)
-            - "input_ids": tensor (batch_size, seq_len)
-            - "generated_ids": tensor (batch_size, generated_len)
     """
 
     model_name: str
@@ -143,9 +116,6 @@ class TransformersLLMClient(llm_clients.LLMClient):
     torch_dtype: Literal["auto", "float32", "float16", "bfloat16"] = "auto"
     max_new_tokens: int = 512
     temperature: float = 1.0
-    output_hidden_states: bool = False
-    output_attentions: bool = False
-    activation_callback: Callable[[dict[str, Any]], None] | None = None
 
     @functools.cached_property
     def _request_queue(self) -> asyncio.Queue[ValueAndFuture[request.LLMRequest, response.LLMResponse]]:
@@ -191,7 +161,6 @@ class TransformersLLMClient(llm_clients.LLMClient):
         model = model.to(self._device)  # type: ignore[arg-type]
         model.eval()  # Set to eval mode for inference
         assert hasattr(model, "generate")
-        assert isinstance(model.generate, Callable)
         return cast(_BaseModelWithGenerate, model)
 
     @functools.cached_property
@@ -216,16 +185,9 @@ class TransformersLLMClient(llm_clients.LLMClient):
         Returns:
             LLMResponse with the generated completion
         """
-        # Access _inference_task to trigger lazy initialization
-        _ = self._inference_task
-
-        # Create future for this request
+        _ = self._inference_task  # Trigger lazy initialization
         future: asyncio.Future[response.LLMResponse] = asyncio.Future()
-
-        # Queue request with its future
         await self._request_queue.put(ValueAndFuture(value=req, future=future))
-
-        # Wait for inference result
         return await future
 
     async def _inference_loop(self, weak_self: weakref.ReferenceType) -> None:
@@ -244,16 +206,14 @@ class TransformersLLMClient(llm_clients.LLMClient):
         """
         while weak_self() is not None:
             try:
-                # Wait for first request (with timeout to check GC periodically)
                 try:
                     first_item = await asyncio.wait_for(
                         self._request_queue.get(),
-                        timeout=60.0,
+                        timeout=60.0,  # Periodic timeout to check if client was GC'd
                     )
                 except TimeoutError:
                     continue
 
-                # Extract parameters from first item
                 kwargs = first_item.value.to_chat_completion_kwargs()
                 temp = kwargs.get("temperature")
                 max_tokens = kwargs.get("max_completion_tokens")
@@ -262,13 +222,11 @@ class TransformersLLMClient(llm_clients.LLMClient):
                     self.max_new_tokens if max_tokens is None else max_tokens,
                 )
 
-                # Group requests by (temperature, max_tokens)
                 groups: dict[tuple[float, int], list[ValueAndFuture[request.LLMRequest, response.LLMResponse]]] = (
                     collections.defaultdict(list)
                 )
                 groups[first_params].append(first_item)
 
-                # Collect more requests until timeout OR any group is full
                 deadline = asyncio.get_event_loop().time() + (self.batch_wait_ms / 1000.0)
 
                 while (
@@ -290,7 +248,6 @@ class TransformersLLMClient(llm_clients.LLMClient):
                     except TimeoutError:
                         break
 
-                # Process all groups
                 for params, group in groups.items():
                     if group:
                         _LOGGER.debug("Processing batch of %d request(s) for params %s", len(group), params)
@@ -313,27 +270,23 @@ class TransformersLLMClient(llm_clients.LLMClient):
         try:
             temperature, max_new_tokens = params
 
-            # Convert requests to chat format
             chat_conversations = []
             for item in batch:
                 kwargs = item.value.to_chat_completion_kwargs()
                 chat_conversations.append(kwargs["messages"])
 
-            # Run inference in thread pool (transformers is not async)
-            responses = await asyncio.to_thread(
+            responses = await asyncio.to_thread(  # transformers is not async
                 self._generate_batch,
                 chat_conversations,
                 temperature=temperature,
                 max_new_tokens=max_new_tokens,
             )
 
-            # Set futures with results
             for item, resp in zip(batch, responses, strict=True):
                 item.future.set_result(resp)
 
         except Exception as e:
             _LOGGER.exception("Error processing batch: %s", e)
-            # Set exception on all futures
             for item in batch:
                 if not item.future.done():
                     item.future.set_exception(e)
@@ -354,7 +307,6 @@ class TransformersLLMClient(llm_clients.LLMClient):
         Returns:
             List of LLMResponses
         """
-        # Apply chat template to all conversations
         input_texts: list[str] = []
         for conv in chat_conversations:
             text = self._tokenizer.apply_chat_template(
@@ -362,11 +314,9 @@ class TransformersLLMClient(llm_clients.LLMClient):
                 tokenize=False,
                 add_generation_prompt=True,
             )
-            # apply_chat_template with tokenize=False returns str
-            assert isinstance(text, str)
+            assert isinstance(text, str)  # apply_chat_template with tokenize=False returns str
             input_texts.append(text)
 
-        # Tokenize batch
         inputs: transformers.BatchEncoding = self._tokenizer(
             input_texts,
             return_tensors="pt",
@@ -376,7 +326,6 @@ class TransformersLLMClient(llm_clients.LLMClient):
 
         input_lengths = inputs["input_ids"].shape[1]  # type: ignore[union-attr]
 
-        # Generate with optional activation outputs
         with torch.no_grad():
             outputs = self._model.generate(
                 **inputs,  # type: ignore[arg-type]
@@ -384,35 +333,11 @@ class TransformersLLMClient(llm_clients.LLMClient):
                 temperature=temperature,
                 do_sample=temperature > 0,
                 pad_token_id=self._tokenizer.pad_token_id,
-                output_hidden_states=self.output_hidden_states,
-                output_attentions=self.output_attentions,
-                return_dict_in_generate=True,
             )
 
-        # Extract generated tokens (remove input prefix)
-        generated_ids = outputs.sequences[:, input_lengths:]  # type: ignore[union-attr]
-
-        # Decode responses
+        generated_ids = outputs[:, input_lengths:]
         decoded_responses = self._tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
 
-        # Call activation callback if provided
-        if self.activation_callback and (self.output_hidden_states or self.output_attentions):
-            activation_dict: dict[str, Any] = {
-                "input_ids": inputs["input_ids"].cpu(),  # type: ignore[union-attr]
-                "generated_ids": generated_ids.cpu(),
-            }
-
-            if self.output_hidden_states:
-                # hidden_states: tuple of tuples - (generation_step, (layer, batch, seq, hidden))
-                # For mech interp, we typically want the final hidden states per layer
-                activation_dict["hidden_states"] = outputs.hidden_states  # type: ignore[union-attr]
-
-            if self.output_attentions:
-                activation_dict["attentions"] = outputs.attentions  # type: ignore[union-attr]
-
-            self.activation_callback(activation_dict)
-
-        # Create LLMResponse objects
         responses = []
         for i, text in enumerate(decoded_responses):
             prompt_tokens = inputs["input_ids"][i].ne(self._tokenizer.pad_token_id).sum().item()  # type: ignore[union-attr]
@@ -421,7 +346,7 @@ class TransformersLLMClient(llm_clients.LLMClient):
             responses.append(
                 response.LLMResponse(
                     data=[response.TextData(content=text)],
-                    cost=0.0,  # Local inference, no cost
+                    cost=0.0,  # Local inference has no API cost
                     usage=response.Usage(
                         prompt_tokens=prompt_tokens,
                         generated_tokens=generated_tokens,
