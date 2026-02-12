@@ -341,7 +341,7 @@ class TransformersLLMClient(llm_clients.LLMClient):
         responses = []
         for i, text in enumerate(decoded_responses):
             prompt_tokens = inputs["input_ids"][i].ne(self._tokenizer.pad_token_id).sum().item()  # type: ignore[union-attr]
-            generated_tokens = len(generated_ids[i])
+            generated_tokens = generated_ids[i].ne(self._tokenizer.pad_token_id).sum().item()  # type: ignore[arg-type]
 
             responses.append(
                 response.LLMResponse(
