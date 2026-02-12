@@ -285,9 +285,10 @@ class TestTransformersLLMClientBatching:
 
 @pytest.mark.asyncio
 async def test_integration_with_minimal_model():
-    """Integration test with a minimal GPT2 model that requires no downloads.
+    """Integration test with a minimal GPT2 model.
 
     Creates a tiny GPT2 model from scratch for testing the full pipeline.
+    Note: Downloads GPT2 tokenizer vocab on first run (~500KB, cached after).
     """
     # Create minimal GPT2 config - vocab_size must match GPT2Tokenizer (50257)
     config = transformers.GPT2Config(
@@ -299,13 +300,12 @@ async def test_integration_with_minimal_model():
         n_head=4,
     )
 
-    # Create model from config (no downloads needed)
     minimal_model = transformers.GPT2LMHeadModel(config)
     minimal_model.eval()
 
-    # Create minimal tokenizer
+    # GPT2 tokenizer is lightweight and cached after first download
     minimal_tokenizer = transformers.GPT2Tokenizer.from_pretrained(
-        "gpt2",  # Uses cached tokenizer vocab
+        "gpt2",
         model_max_length=32,
     )
     minimal_tokenizer.pad_token = minimal_tokenizer.eos_token
