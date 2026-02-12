@@ -134,8 +134,10 @@ class HookedTransformerLLMClient:
         messages_list = list(request.messages)
         input_text = self.format_messages_fn(messages_list)
 
-        # Tokenize input
+        # Tokenize input and ensure tokens live on the model's device
+        # (to_tokens may not honour cfg.device in multi-threaded contexts).
         input_ids = self.model.to_tokens(input_text, prepend_bos=True)
+        input_ids = input_ids.to(self.model.cfg.device)
         num_input_tokens = input_ids.shape[-1]
 
         # TODO: Need to support various truncation methods

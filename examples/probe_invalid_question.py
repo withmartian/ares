@@ -18,21 +18,23 @@
 #   uv run -m examples.probe_invalid_question
 
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from dataclasses import field
 import gc
 import json
 import pathlib
+import queue
 
 import ares
 from ares.contrib.mech_interp import ActivationCapture
-from ares.contrib.mech_interp.hooked_transformer_client import HookedTransformerLLMClient
 from ares.contrib.mech_interp.hooked_transformer_client import create_hooked_transformer_client_with_chat_template
 import matplotlib.pyplot as plt
 import numpy as np
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import classification_report
 from sklearn.model_selection import StratifiedKFold
+import torch
 from tqdm import tqdm
 from transformer_lens import HookedTransformer
 from transformers import AutoTokenizer
@@ -46,17 +48,16 @@ np.random.seed(SEED)
 
 MODEL_NAME = "meta-llama/Llama-3.2-1B-Instruct"
 
-DEVICE = "mps"  # Apple Silicon GPU. Use "cpu" if you hit MPS issues.
-MAX_NEW_TOKENS = 256
+MAX_NEW_TOKENS = 64  # 20Q questions are short; 256 was needlessly slow.
 
 ENV_NAME = "20q"
-N_EPISODES = 25
+N_EPISODES = 50
 MAX_STEPS_PER_EPISODE = 25  # >20 so episodes can reach the natural limit.
 
 # Minimum samples at a given step to attempt a probe.
 MIN_SAMPLES_FOR_PROBE = 8
 
-OUTPUT_DIR = pathlib.Path("outputs/20q_invalid_question_probing")
+OUTPUT_DIR = pathlib.Path("outputs/20q_invalid_question_probing_50episodes")
 
 # ---------------------------------------------------------------------------
 # Data structures
@@ -132,37 +133,70 @@ def _is_invalid_answer(oracle_answer: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Data collection
+# Multi-GPU helpers
 # ---------------------------------------------------------------------------
 
 
-async def collect_episodes(
-    model: HookedTransformer,
-    client: HookedTransformerLLMClient,
-    n_episodes: int,
+def _get_devices() -> list[str]:
+    """Detect available CUDA GPUs, falling back to CPU."""
+    if torch.cuda.is_available() and torch.cuda.device_count() > 0:
+        return [f"cuda:{i}" for i in range(torch.cuda.device_count())]
+    return ["cpu"]
+
+
+# ---------------------------------------------------------------------------
+# Data collection (per-device worker)
+# ---------------------------------------------------------------------------
+
+
+async def _collect_episodes_for_device(
+    device: str,
+    work_queue: queue.Queue[int],
     max_steps_per_episode: int,
-    middle_layer: int,
-) -> tuple[list[StepSample], list[EpisodeRecord]]:
-    """Run episodes and collect per-step activations with oracle-invalidity labels."""
+) -> tuple[list[StepSample], list[EpisodeRecord], int, int, int]:
+    """Load model on *device* and pull episodes from *work_queue* until empty.
+
+    Returns (samples, records, n_layers, d_model, middle_layer).
+    """
+    print(f"[{device}] Loading {MODEL_NAME}...")
+    torch.cuda.set_device(device)
+    model = HookedTransformer.from_pretrained(MODEL_NAME, device=device)
+    model = model.to(device)
+    tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
+    client = create_hooked_transformer_client_with_chat_template(
+        model=model,
+        tokenizer=tokenizer,
+        max_new_tokens=MAX_NEW_TOKENS,
+        verbose=False,
+    )
+
+    n_layers = model.cfg.n_layers
+    d_model = model.cfg.d_model
+    middle_layer = n_layers // 2
+    print(f"[{device}] n_layers={n_layers}, d_model={d_model}, middle_layer={middle_layer}")
+
     all_samples: list[StepSample] = []
     episode_records: list[EpisodeRecord] = []
 
-    for ep in tqdm(range(n_episodes), desc="Episodes", unit="ep"):
+    while True:
+        try:
+            ep = work_queue.get_nowait()
+        except queue.Empty:
+            break
         async with ares.make(ENV_NAME) as env:
             ts = await env.reset()
 
             step_idx = 0
             n_invalid = 0
 
-            with ActivationCapture(model) as capture:
+            hook_name = f"blocks.{middle_layer}.hook_resid_post"
+            with ActivationCapture(model, hook_filter=lambda name: name == hook_name) as capture:
                 while (not ts.last()) and (step_idx < max_steps_per_episode):
                     capture.start_step()
                     assert ts.observation is not None
                     action = await client(ts.observation)
                     capture.end_step()
 
-                    # Capture the activation before stepping the environment
-                    hook_name = f"blocks.{middle_layer}.hook_resid_post"
                     resid_post = capture.get_trajectory().get_activation(step_idx, hook_name)
                     feature = _to_numpy_mean_over_tokens(resid_post)
 
@@ -192,6 +226,9 @@ async def collect_episodes(
                     )
 
                     step_idx += 1
+                    tqdm.write(
+                        f"    [{device}] ep={ep} step={step_idx}/{max_steps_per_episode}  oracle={oracle_answer[:40]}"
+                    )
 
             final_reward = _scalar_reward(ts.reward)
             label_success = int(final_reward == 0.0 and ts.last())
@@ -206,12 +243,29 @@ async def collect_episodes(
             )
 
             invalid_pct = (n_invalid / step_idx * 100) if step_idx > 0 else 0.0
-            print(
-                f"  episode={ep:03d}  steps={step_idx:2d}  invalid={n_invalid:2d} ({invalid_pct:.0f}%)  "
+            tqdm.write(
+                f"  [{device}] episode={ep:03d}  steps={step_idx:2d}  invalid={n_invalid:2d} ({invalid_pct:.0f}%)  "
                 f"reward={final_reward:+.1f}  success={label_success}"
             )
 
-    return all_samples, episode_records
+    del model, tokenizer, client
+    _free_gpu_memory()
+
+    return all_samples, episode_records, n_layers, d_model, middle_layer
+
+
+def _run_device_worker(
+    device: str,
+    work_queue: queue.Queue[int],
+    max_steps_per_episode: int,
+) -> tuple[list[StepSample], list[EpisodeRecord], int, int, int]:
+    """Run episode collection in a dedicated event loop (for thread-based parallelism)."""
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        return loop.run_until_complete(_collect_episodes_for_device(device, work_queue, max_steps_per_episode))
+    finally:
+        loop.close()
 
 
 # ---------------------------------------------------------------------------
@@ -390,58 +444,65 @@ def plot_results(all_results: list[ProbeResult], output_path: pathlib.Path) -> N
 
 def _free_gpu_memory() -> None:
     gc.collect()
-    try:
-        import torch
-
-        if torch.backends.mps.is_available():
-            torch.mps.empty_cache()
-        elif torch.cuda.is_available():
-            torch.cuda.empty_cache()
-    except Exception:
-        pass
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
 
 
 async def run() -> ProbeResult:
+    devices = _get_devices()
+    # Don't use more GPUs than episodes.
+    devices = devices[:N_EPISODES]
+    n_devices = len(devices)
+
     print(f"\n{'=' * 70}")
     print(f"MODEL: {MODEL_NAME}")
+    print(f"DEVICES: {devices}")
     print(f"{'=' * 70}")
 
-    print(f"Loading {MODEL_NAME} on {DEVICE}...")
-    model = HookedTransformer.from_pretrained(MODEL_NAME, device=DEVICE)
-    tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
-    client = create_hooked_transformer_client_with_chat_template(
-        model=model,
-        tokenizer=tokenizer,
-        max_new_tokens=MAX_NEW_TOKENS,
-        verbose=False,
-    )
+    work_queue: queue.Queue[int] = queue.Queue()
+    for ep_idx in range(N_EPISODES):
+        work_queue.put(ep_idx)
 
-    n_layers = model.cfg.n_layers
-    d_model = model.cfg.d_model
-    middle_layer = n_layers // 2
-    print(f"n_layers={n_layers}, d_model={d_model}, middle_layer={middle_layer}")
+    print(f"\nCollecting {N_EPISODES} episodes across {n_devices} device(s) (work-queue)...")
 
-    print(f"\nCollecting {N_EPISODES} episodes...")
-    samples, episode_records = await collect_episodes(
-        model=model,
-        client=client,
-        n_episodes=N_EPISODES,
-        max_steps_per_episode=MAX_STEPS_PER_EPISODE,
-        middle_layer=middle_layer,
-    )
-    print(f"\nCollected {len(samples)} step samples from {len(episode_records)} episodes")
+    # Each device gets its own thread with a private event loop, model, and
+    # activation capture state.  CUDA ops release the GIL, so the GPUs run
+    # truly in parallel.  Workers pull episodes from a shared queue so that
+    # fast-finishing GPUs pick up more work automatically.
+    loop = asyncio.get_running_loop()
+    with ThreadPoolExecutor(max_workers=n_devices) as executor:
+        futures = [
+            loop.run_in_executor(
+                executor,
+                _run_device_worker,
+                device,
+                work_queue,
+                MAX_STEPS_PER_EPISODE,
+            )
+            for device in devices
+        ]
+        worker_results = await asyncio.gather(*futures)
+
+    # Merge results from all workers.
+    all_samples: list[StepSample] = []
+    all_records: list[EpisodeRecord] = []
+    for samples, records, *_ in worker_results:
+        all_samples.extend(samples)
+        all_records.extend(records)
+
+    # Model config is identical across workers; take from the first.
+    _, _, n_layers, d_model, middle_layer = worker_results[0]
+
+    print(f"\nCollected {len(all_samples)} step samples from {len(all_records)} episodes across {n_devices} device(s)")
 
     result = train_probes(
-        samples=samples,
+        samples=all_samples,
         model_name=MODEL_NAME,
         n_layers=n_layers,
         d_model=d_model,
         middle_layer=middle_layer,
-        n_episodes=len(episode_records),
+        n_episodes=len(all_records),
     )
-
-    del model, tokenizer, client
-    _free_gpu_memory()
 
     return result
 
