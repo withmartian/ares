@@ -109,7 +109,7 @@ def _get_torch_dtype(dtype_str: str, device: str) -> torch.dtype:
     return selected_dtype
 
 
-@dataclasses.dataclass(kw_only=True)
+@dataclasses.dataclass(frozen=True, kw_only=True)
 class TransformersLLMClient(llm_clients.LLMClient):
     """LLM client with automatic batching and activation hooks for mech interp.
 
@@ -146,14 +146,21 @@ class TransformersLLMClient(llm_clients.LLMClient):
     output_attentions: bool = False
     activation_callback: Callable[[dict[str, Any]], None] | None = None
 
-    def __post_init__(self) -> None:
-        """Initialize mutable state for async batching.
+    @functools.cached_property
+    def _request_queue(self) -> asyncio.Queue[ValueAndFuture[request.LLMRequest, response.LLMResponse]]:
+        """Lazy-initialized queue for batching requests."""
+        return asyncio.Queue()
 
-        Note: The background inference task is started lazily on first request
-        and runs until the client object is garbage collected.
+    @functools.cached_property
+    def _inference_task(self) -> asyncio.Task[None]:
+        """Lazy-initialized background inference task.
+
+        The task automatically exits when the client is garbage collected via weakref.
         """
-        self._request_queue: asyncio.Queue[ValueAndFuture[request.LLMRequest, response.LLMResponse]] = asyncio.Queue()
-        self._inference_task: asyncio.Task[None] | None = None
+        weak_self = weakref.ref(self)
+        task = asyncio.create_task(self._inference_loop(weak_self))
+        _LOGGER.info("TransformersLLMClient started background inference task")
+        return task
 
     @functools.cached_property
     def _device(self) -> str:
@@ -197,14 +204,6 @@ class TransformersLLMClient(llm_clients.LLMClient):
             tokenizer.pad_token = tokenizer.eos_token
         return tokenizer
 
-    def _ensure_inference_task_started(self) -> None:
-        """Lazy-start the background inference task if not already running."""
-        if self._inference_task is None or self._inference_task.done():
-            # Create weakref to self so task can detect when client is GC'd
-            weak_self = weakref.ref(self)
-            self._inference_task = asyncio.create_task(self._inference_loop(weak_self))
-            _LOGGER.info("TransformersLLMClient started background inference task")
-
     async def __call__(self, req: request.LLMRequest) -> response.LLMResponse:
         """Queue request and wait for batched inference.
 
@@ -216,8 +215,8 @@ class TransformersLLMClient(llm_clients.LLMClient):
         Returns:
             LLMResponse with the generated completion
         """
-        # Lazy-start the background task if needed
-        self._ensure_inference_task_started()
+        # Access _inference_task to trigger lazy initialization
+        _ = self._inference_task
 
         # Create future for this request
         future: asyncio.Future[response.LLMResponse] = asyncio.Future()

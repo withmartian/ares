@@ -97,11 +97,12 @@ class TestTransformersLLMClientInitialization:
         assert client.temperature == 0.5
         assert client.output_hidden_states is True
 
-    def test_post_init_creates_queue(self):
-        """Test __post_init__ initializes internal state."""
+    def test_cached_properties(self):
+        """Test cached properties are initialized correctly."""
         client = transformers_client.TransformersLLMClient(model_name="test-model")
-        assert isinstance(client._request_queue, asyncio.Queue)
-        assert client._inference_task is None
+        # Properties should be cached but not accessed yet
+        assert "_request_queue" not in client.__dict__
+        assert "_inference_task" not in client.__dict__
 
 
 class TestTransformersLLMClientLifecycle:
@@ -109,11 +110,11 @@ class TestTransformersLLMClientLifecycle:
 
     @pytest.mark.asyncio
     async def test_lazy_task_start(self):
-        """Test background task starts lazily on first request."""
+        """Test background task starts lazily via cached_property."""
         client = transformers_client.TransformersLLMClient(model_name="test-model")
 
-        # Task should not be started yet
-        assert client._inference_task is None
+        # Task should not be cached yet
+        assert "_inference_task" not in client.__dict__
 
         # Mock the model and tokenizer
         mock_model = mock.MagicMock()
@@ -123,7 +124,7 @@ class TestTransformersLLMClientLifecycle:
 
         mock_batch = mock.MagicMock()
         mock_batch.__getitem__ = (
-            lambda _self, key: torch.tensor([[1, 2, 3]]) if key == "input_ids" else torch.tensor([[1, 1, 1]])
+            lambda _, key: torch.tensor([[1, 2, 3]]) if key == "input_ids" else torch.tensor([[1, 1, 1]])
         )
         mock_batch.to = mock.Mock(return_value=mock_batch)
         mock_tokenizer.return_value = mock_batch
@@ -139,11 +140,12 @@ class TestTransformersLLMClientLifecycle:
         ):
             req = request_lib.LLMRequest(messages=[{"role": "user", "content": "test"}])
 
-            # Make request - should start task
+            # Make request - should start task via cached_property
             response = await client(req)
 
-            # Task should now be started
-            assert client._inference_task is not None
+            # Task should now be cached
+            assert "_inference_task" in client.__dict__
+            assert isinstance(client._inference_task, asyncio.Task)
             assert isinstance(response, response_lib.LLMResponse)
 
 
@@ -169,7 +171,7 @@ class TestTransformersLLMClientBatching:
         # Mock the tokenizer call to return BatchEncoding-like dict
         mock_batch = mock.MagicMock()
         mock_batch.__getitem__ = (
-            lambda _self, key: torch.tensor([[1, 2, 3]]) if key == "input_ids" else torch.tensor([[1, 1, 1]])
+            lambda _, key: torch.tensor([[1, 2, 3]]) if key == "input_ids" else torch.tensor([[1, 1, 1]])
         )
         mock_batch.to = mock.Mock(return_value=mock_batch)
         mock_tokenizer.return_value = mock_batch
@@ -225,10 +227,10 @@ class TestTransformersLLMClientBatching:
         mock_tokenizer.pad_token_id = 0
 
         # Mock tokenizer to return batch of 3
-        def tokenizer_side_effect(*args, **_kwargs):
+        def tokenizer_side_effect(*args, **_):
             batch_size = len(args[0]) if args else 1
             mock_batch = mock.MagicMock()
-            mock_batch.__getitem__ = lambda _self, key: (
+            mock_batch.__getitem__ = lambda _, key: (
                 torch.zeros((batch_size, 5), dtype=torch.long)
                 if key == "input_ids"
                 else torch.ones((batch_size, 5), dtype=torch.long)
@@ -299,7 +301,7 @@ class TestTransformersLLMClientActivationHooks:
 
         mock_batch = mock.MagicMock()
         mock_batch.__getitem__ = (
-            lambda _self, key: torch.tensor([[1, 2, 3]]) if key == "input_ids" else torch.tensor([[1, 1, 1]])
+            lambda _, key: torch.tensor([[1, 2, 3]]) if key == "input_ids" else torch.tensor([[1, 1, 1]])
         )
         mock_batch.to = mock.Mock(return_value=mock_batch)
         mock_tokenizer.return_value = mock_batch
@@ -346,7 +348,7 @@ class TestTransformersLLMClientActivationHooks:
         """Test activation callback is not called when outputs disabled."""
         callback_called = False
 
-        def capture_callback(_activations):
+        def capture_callback(_):
             nonlocal callback_called
             callback_called = True
 
@@ -365,7 +367,7 @@ class TestTransformersLLMClientActivationHooks:
 
         mock_batch = mock.MagicMock()
         mock_batch.__getitem__ = (
-            lambda _self, key: torch.tensor([[1, 2, 3]]) if key == "input_ids" else torch.tensor([[1, 1, 1]])
+            lambda _, key: torch.tensor([[1, 2, 3]]) if key == "input_ids" else torch.tensor([[1, 1, 1]])
         )
         mock_batch.to = mock.Mock(return_value=mock_batch)
         mock_tokenizer.return_value = mock_batch
