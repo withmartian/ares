@@ -37,8 +37,7 @@ Example usage:
         output_hidden_states=True,
     )
 
-Note: The background batching task runs until the client is garbage collected.
-For explicit cleanup, call client.close() or use try/finally.
+Note: The background batching task automatically exits when the client is garbage collected.
 """
 
 import asyncio
