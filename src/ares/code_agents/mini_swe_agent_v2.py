@@ -511,9 +511,3 @@ class MiniSWECodeAgentV2(code_agent_base.CodeAgent):
             final_output = "".join(lines[1:])
             _LOGGER.info("[%d] Agent submitted final output.", id(self))
             raise _SubmittedError(final_output)
-
-    # TODO: Implement compact logic
-    # The compact feature allows the agent to output a special token/command to signal
-    # that it wants to receive condensed observations (e.g., omitting verbose output).
-    # This is a placeholder for future implementation when ARES supports this feature.
-    # For now, all observations are rendered in full according to _V2_OBSERVATION_TEMPLATE.
