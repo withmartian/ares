@@ -67,18 +67,15 @@ This workflows should be done step-by-step so that you can iterate on your chang
 3. Edit the source code to resolve the issue
 4. Verify your fix works by running your script again
 5. Test edge cases to ensure your fix is robust
-6. Submit your changes and finish your work by issuing the following command:
-   `echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT`.
-   Do not combine it with any other command.
-   <important>After this command, you cannot continue working on this task.</important>
+6. Submit your changes and finish your work by issuing the following command: `echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT`.
+   Do not combine it with any other command. <important>After this command, you cannot continue working on this task.</important>
 
 ## Important Rules
 
 1. Every response must contain exactly one action
 2. The action must be enclosed in triple backticks
 3. Directory or environment variable changes are not persistent. Every action is executed in a new subshell.
-   However, you can prefix any action with `MY_ENV_VAR=MY_VALUE cd /path/to/working/dir && ...`
-   or write/load environment variables from files
+   However, you can prefix any action with `MY_ENV_VAR=MY_VALUE cd /path/to/working/dir && ...` or write/load environment variables from files
 
 <system_information>
 {{system}} {{release}} {{version}} {{machine}}
@@ -89,8 +86,7 @@ This workflows should be done step-by-step so that you can iterate on your chang
 Here is an example of a correct response:
 
 <example_response>
-THOUGHT: I need to understand the structure of the repository first.
-Let me check what files are in the current directory to get a better understanding of the codebase.
+THOUGHT: I need to understand the structure of the repository first. Let me check what files are in the current directory to get a better understanding of the codebase.
 
 ```mswea_bash_command
 ls -la
@@ -204,16 +200,6 @@ submit your solution (you will not be able to continue working on this task afte
 """.strip()
 
 
-_V2_TIMEOUT_TEMPLATE = """
-The last command <command>{action}</command> timed out and has been killed.
-The output of the command was:
-<output>
-{output}
-</output>
-Please try another command and make sure to avoid those requiring interactive input.
-""".strip()
-
-
 # Default environment variables for text-based mode
 _V2_DEFAULT_ENV_VARS = {
     "PAGER": "cat",
@@ -230,10 +216,6 @@ class _NonTerminatingError(Exception):
 
 class _FormatError(_NonTerminatingError):
     """Raised when the LM's output is not in the expected format."""
-
-
-class _ExecutionTimeoutError(_NonTerminatingError):
-    """Raised when the action execution timed out."""
 
 
 class _TerminatingError(Exception):
@@ -286,11 +268,6 @@ def _render_format_error_template(error: str, actions: list[str]) -> str:
         error=error,
         actions=actions,
     )
-
-
-def _render_timeout_template(action: str, output: str) -> str:
-    """Render the v2 timeout template."""
-    return _V2_TIMEOUT_TEMPLATE.format(action=action, output=output)
 
 
 @dataclasses.dataclass(kw_only=True)
@@ -440,16 +417,13 @@ class MiniSWECodeAgentV2(code_agent_base.CodeAgent):
                     output=exec_result.output,
                     exception_info=None,
                 )
-            except TimeoutError as e:
-                # NOTE: Unlike the official implementation, we cannot retrieve partial output on timeout
-                # because asyncio.wait_for cancels the task without preserving partial execution state.
-                raise _ExecutionTimeoutError(_render_timeout_template(action, "")) from e
             except Exception as e:
-                # Catch other execution errors
+                # Catch execution errors including timeouts
+                # Note: asyncio.wait_for cancels the task on timeout, so we cannot retrieve partial output
                 output = _AgentOutput(
                     returncode=-1,
                     output="",
-                    exception_info=str(e),
+                    exception_info=f"An error occurred while executing the command: {e}",
                 )
 
         _LOGGER.debug("[%d] Action executed with returncode %d.", id(self), output.returncode)
