@@ -12,6 +12,7 @@ import tenacity
 from ares import config
 from ares.llms import accounting
 from ares.llms import llm_clients
+from ares.llms import openai_chat_converter
 from ares.llms import request
 from ares.llms import response
 
@@ -34,9 +35,9 @@ def _get_llm_client(base_url: str, api_key: str) -> openai.AsyncClient:
     before_sleep=tenacity.before_sleep_log(_LOGGER, logging.INFO),
 )
 async def _query_llm_with_retry(
-    llm_client: openai.AsyncClient, model: str, request: request.LLMRequest
+    llm_client: openai.AsyncClient, model: str, req: request.LLMRequest
 ) -> openai.types.chat.chat_completion.ChatCompletion:
-    response = await llm_client.chat.completions.create(model=model, **request.to_chat_completion_kwargs())
+    response = await llm_client.chat.completions.create(model=model, **openai_chat_converter.to_external(req))
     return response
 
 
