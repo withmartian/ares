@@ -39,7 +39,10 @@ def print_step(
     action_preview = str(action_content)[:200]
     if len(action_content) > 200:
         action_preview += "..."
-    print(f"Action (from LLM): {action_preview}")
+    if "```bash" in action_content:
+        # Add any commands to the preview
+        action_preview += f"\n  COMMAND: {action_content.split('```bash')[1].split('```')[0].strip()}"
+    print(f"\nAction (from LLM): {action_preview}")
 
 
 async def gather_with_scores(
