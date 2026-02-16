@@ -1,0 +1,47 @@
+{
+  "id": "chatcmpl-789",
+  "object": "chat.completion",
+  "created": 1677652288,
+  "model": "gpt-5",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": null,
+        "tool_calls": [
+          {
+            "id": "call_def456",
+            "type": "function",
+            "function": {
+              "name": "bash",
+              "arguments": "{\"command\": \"pwd\"}"
+            }
+          },
+          {
+            "id": "call_ghi789",
+            "type": "function",
+            "function": {
+              "name": "bash",
+              "arguments": "{\"command\": \"whoami\"}"
+            }
+          },
+          {
+            "id": "call_jkl012",
+            "type": "function",
+            "function": {
+              "name": "bash",
+              "arguments": "{\"command\": \"date\"}"
+            }
+          }
+        ]
+      },
+      "finish_reason": "tool_calls"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 50,
+    "completion_tokens": 30,
+    "total_tokens": 80
+  }
+}

@@ -1,13 +1,44 @@
 """Unit tests for OpenAI Chat Completions converter."""
 
+import decimal
+import json
+from pathlib import Path
+
+import frozendict
 import openai.types.chat
 import openai.types.chat.chat_completion_content_part_image_param
 import openai.types.chat.completion_create_params
 import openai.types.shared_params
 import pytest
 
+from ares.llms import accounting
 from ares.llms import openai_chat_converter
 from ares.llms import request as request_lib
+
+# Mock cost mapping for tests
+_MOCK_COST_MAPPING = frozendict.frozendict(
+    {
+        "gpt-5": accounting.ModelCost(
+            id="gpt-5",
+            pricing=accounting.ModelPricing(
+                prompt=decimal.Decimal("0.00003"),
+                completion=decimal.Decimal("0.00006"),
+                image=None,
+                request=None,
+                web_search=None,
+                internal_reasoning=None,
+            ),
+        )
+    }
+)
+
+
+def _load_test_completion(filename: str) -> openai.types.chat.ChatCompletion:
+    """Load a test JSON file and convert to OpenAI ChatCompletion."""
+    test_data_dir = Path(__file__).parent / "test_data"
+    with open(test_data_dir / filename) as f:
+        data = json.load(f)
+    return openai.types.chat.ChatCompletion(**data)
 
 
 class TestStructuredContentHandling:
@@ -16,7 +47,7 @@ class TestStructuredContentHandling:
     def test_from_chat_completion_with_structured_content_strict(self):
         """Test that structured content in chat messages raises error in strict mode."""
         kwargs = openai.types.chat.completion_create_params.CompletionCreateParamsNonStreaming(
-            model="gpt-4",
+            model="gpt-5",
             messages=[
                 openai.types.chat.ChatCompletionUserMessageParam(
                     role="user",
@@ -34,7 +65,7 @@ class TestStructuredContentHandling:
         )
 
         with pytest.raises(ValueError, match=r"list of blocks.*structured content"):
-            openai_chat_converter.from_external(kwargs, strict=True)
+            openai_chat_converter.ares_request_from_external(kwargs, strict=True)
 
 
 class TestLLMRequestChatCompletionConversion:
@@ -45,7 +76,7 @@ class TestLLMRequestChatCompletionConversion:
         request = request_lib.LLMRequest(
             messages=[{"role": "user", "content": "Hello"}],
         )
-        kwargs = openai_chat_converter.to_external(request)
+        kwargs = openai_chat_converter.ares_request_to_external(request)
 
         assert kwargs["messages"] == [{"role": "user", "content": "Hello"}]
         assert "temperature" not in kwargs
@@ -71,7 +102,7 @@ class TestLLMRequestChatCompletionConversion:
             service_tier="default",
             stop_sequences=["STOP", "END"],
         )
-        kwargs = openai_chat_converter.to_external(request)
+        kwargs = openai_chat_converter.ares_request_to_external(request)
 
         assert kwargs["max_completion_tokens"] == 100
         assert kwargs["temperature"] == 0.7
@@ -99,7 +130,7 @@ class TestLLMRequestChatCompletionConversion:
             messages=[{"role": "user", "content": "Hello"}],
             system_prompt="You are a helpful assistant.",
         )
-        kwargs = openai_chat_converter.to_external(request)
+        kwargs = openai_chat_converter.ares_request_to_external(request)
 
         assert len(kwargs["messages"]) == 2
         assert kwargs["messages"][0] == {"role": "system", "content": "You are a helpful assistant."}
@@ -111,7 +142,7 @@ class TestLLMRequestChatCompletionConversion:
             messages=[{"role": "user", "content": "Hello"}],
             stop_sequences=["A", "B", "C", "D", "E", "F"],
         )
-        kwargs = openai_chat_converter.to_external(request, strict=False)
+        kwargs = openai_chat_converter.ares_request_to_external(request, strict=False)
 
         assert kwargs["stop"] == ["A", "B", "C", "D"]
 
@@ -121,7 +152,7 @@ class TestLLMRequestChatCompletionConversion:
             messages=[{"role": "user", "content": "Hello"}],
             top_k=40,
         )
-        kwargs = openai_chat_converter.to_external(request, strict=False)
+        kwargs = openai_chat_converter.ares_request_to_external(request, strict=False)
 
         assert "top_k" not in kwargs
 
@@ -131,7 +162,7 @@ class TestLLMRequestChatCompletionConversion:
             messages=[{"role": "user", "content": "Hello"}],
             service_tier="standard_only",
         )
-        kwargs = openai_chat_converter.to_external(request, strict=False)
+        kwargs = openai_chat_converter.ares_request_to_external(request, strict=False)
 
         assert "service_tier" not in kwargs
 
@@ -141,7 +172,7 @@ class TestLLMRequestChatCompletionConversion:
             "model": "gpt-4o",
             "messages": [{"role": "user", "content": "Hello"}],
         }
-        request = openai_chat_converter.from_external(kwargs)
+        request = openai_chat_converter.ares_request_from_external(kwargs)
 
         assert list(request.messages) == [{"role": "user", "content": "Hello"}]
         assert request.max_output_tokens is None
@@ -171,7 +202,7 @@ class TestLLMRequestChatCompletionConversion:
             "service_tier": "default",
             "stop": ["STOP", "END"],
         }
-        request = openai_chat_converter.from_external(kwargs)
+        request = openai_chat_converter.ares_request_from_external(kwargs)
 
         assert request.max_output_tokens == 100
         assert request.temperature == 0.7
@@ -199,7 +230,7 @@ class TestLLMRequestChatCompletionConversion:
                 {"role": "user", "content": "Hello"},
             ],
         }
-        request = openai_chat_converter.from_external(kwargs)
+        request = openai_chat_converter.ares_request_from_external(kwargs)
 
         assert request.system_prompt == "You are helpful."
         assert list(request.messages) == [{"role": "user", "content": "Hello"}]
@@ -211,7 +242,7 @@ class TestLLMRequestChatCompletionConversion:
             "messages": [{"role": "user", "content": "Hello"}],
             "max_tokens": 100,
         }
-        request = openai_chat_converter.from_external(kwargs)
+        request = openai_chat_converter.ares_request_from_external(kwargs)
 
         assert request.max_output_tokens == 100
 
@@ -224,7 +255,7 @@ class TestLLMRequestChatCompletionConversion:
                 request_lib.ToolCallMessage(call_id="call_123", name="get_weather", arguments='{"location":"LA"}'),
             ],
         )
-        kwargs = openai_chat_converter.to_external(request)
+        kwargs = openai_chat_converter.ares_request_to_external(request)
 
         # Should have 2 messages (user + assistant with tool_calls)
         assert len(kwargs["messages"]) == 2
@@ -257,7 +288,7 @@ class TestLLMRequestChatCompletionConversion:
                 },
             ],
         }
-        request = openai_chat_converter.from_external(kwargs)
+        request = openai_chat_converter.ares_request_from_external(kwargs)
 
         # Should have 3 messages: user, assistant, tool_call
         assert len(request.messages) == 3
@@ -292,8 +323,8 @@ class TestLLMRequestChatCompletionConversion:
             "tool_choice": "auto",
             "metadata": {"user_id": "123"},
         }
-        request = openai_chat_converter.from_external(original)
-        converted = openai_chat_converter.to_external(request)
+        request = openai_chat_converter.ares_request_from_external(original)
+        converted = openai_chat_converter.ares_request_to_external(request)
 
         assert converted["messages"] == original["messages"]
         assert converted["max_completion_tokens"] == original["max_completion_tokens"]
@@ -303,3 +334,122 @@ class TestLLMRequestChatCompletionConversion:
         assert converted["tools"] == original["tools"]
         assert converted["tool_choice"] == original["tool_choice"]
         assert converted["metadata"] == original["metadata"]
+
+
+class TestLLMResponseConversion:
+    """Test converting OpenAI responses to/from ARES format."""
+
+    def test_response_text_only_roundtrip(self):
+        """Round-trip: OpenAI text response → ARES → OpenAI."""
+        completion = _load_test_completion("openai_text_only.json")
+
+        # Convert to ARES format
+        ares_response = openai_chat_converter.ares_response_from_external(
+            completion,
+            model="gpt-5",
+            cost_mapping=_MOCK_COST_MAPPING,
+        )
+
+        # Verify ARES format
+        assert len(ares_response.data) == 1
+        assert isinstance(ares_response.data[0], openai_chat_converter.llm_response.TextData)
+        assert ares_response.data[0].content == "Hello! How can I help you today?"
+        assert ares_response.usage.prompt_tokens == 10
+        assert ares_response.usage.generated_tokens == 9
+
+        # Convert back to OpenAI format
+        message = openai_chat_converter.ares_response_to_external(ares_response)
+
+        # Verify round-trip
+        assert message["role"] == "assistant"
+        assert message["content"] == "Hello! How can I help you today?"
+        assert "tool_calls" not in message
+
+    def test_response_tool_call_single_roundtrip(self):
+        """Round-trip: OpenAI single tool call → ARES → OpenAI."""
+        completion = _load_test_completion("openai_tool_call_single.json")
+
+        # Convert to ARES format
+        ares_response = openai_chat_converter.ares_response_from_external(
+            completion,
+            model="gpt-5",
+            cost_mapping=_MOCK_COST_MAPPING,
+        )
+
+        # Verify ARES format
+        assert len(ares_response.data) == 1
+        assert isinstance(ares_response.data[0], openai_chat_converter.llm_response.ToolUseData)
+        assert ares_response.data[0].id == "call_abc123"
+        assert ares_response.data[0].name == "bash"
+        assert ares_response.data[0].input == {"command": "ls -la"}
+
+        # Convert back to OpenAI format
+        message = openai_chat_converter.ares_response_to_external(ares_response)
+
+        # Verify round-trip
+        assert message["role"] == "assistant"
+        assert message["content"] is None
+        assert len(message["tool_calls"]) == 1
+        assert message["tool_calls"][0]["id"] == "call_abc123"
+        assert message["tool_calls"][0]["type"] == "function"
+        assert message["tool_calls"][0]["function"]["name"] == "bash"
+        assert message["tool_calls"][0]["function"]["arguments"] == '{"command": "ls -la"}'
+
+    def test_response_tool_call_parallel_roundtrip(self):
+        """Round-trip: OpenAI parallel tool calls → ARES → OpenAI."""
+        completion = _load_test_completion("openai_tool_call_parallel.json")
+
+        # Convert to ARES format
+        ares_response = openai_chat_converter.ares_response_from_external(
+            completion,
+            model="gpt-5",
+            cost_mapping=_MOCK_COST_MAPPING,
+        )
+
+        # Verify ARES format
+        assert len(ares_response.data) == 3
+        assert all(isinstance(d, openai_chat_converter.llm_response.ToolUseData) for d in ares_response.data)
+        assert ares_response.data[0].id == "call_def456"
+        assert ares_response.data[0].input == {"command": "pwd"}
+        assert ares_response.data[1].id == "call_ghi789"
+        assert ares_response.data[1].input == {"command": "whoami"}
+        assert ares_response.data[2].id == "call_jkl012"
+        assert ares_response.data[2].input == {"command": "date"}
+
+        # Convert back to OpenAI format
+        message = openai_chat_converter.ares_response_to_external(ares_response)
+
+        # Verify round-trip
+        assert message["role"] == "assistant"
+        assert message["content"] is None
+        assert len(message["tool_calls"]) == 3
+        assert message["tool_calls"][0]["id"] == "call_def456"
+        assert message["tool_calls"][1]["id"] == "call_ghi789"
+        assert message["tool_calls"][2]["id"] == "call_jkl012"
+
+    def test_response_mixed_content_roundtrip(self):
+        """Round-trip: OpenAI mixed text + tool call → ARES → OpenAI."""
+        completion = _load_test_completion("openai_tool_call_mixed.json")
+
+        # Convert to ARES format
+        ares_response = openai_chat_converter.ares_response_from_external(
+            completion,
+            model="gpt-5",
+            cost_mapping=_MOCK_COST_MAPPING,
+        )
+
+        # Verify ARES format
+        assert len(ares_response.data) == 2  # 1 text + 1 tool call
+        assert isinstance(ares_response.data[0], openai_chat_converter.llm_response.TextData)
+        assert ares_response.data[0].content == "Let me check the current directory for you."
+        assert isinstance(ares_response.data[1], openai_chat_converter.llm_response.ToolUseData)
+        assert ares_response.data[1].id == "call_mixed123"
+
+        # Convert back to OpenAI format
+        message = openai_chat_converter.ares_response_to_external(ares_response)
+
+        # Verify round-trip
+        assert message["role"] == "assistant"
+        assert message["content"] == "Let me check the current directory for you."
+        assert len(message["tool_calls"]) == 1
+        assert message["tool_calls"][0]["id"] == "call_mixed123"

@@ -1,6 +1,7 @@
 """LLM response model."""
 
 import dataclasses
+from typing import Any
 
 
 @dataclasses.dataclass(frozen=True)
@@ -24,15 +25,24 @@ class TextData:
 
 
 @dataclasses.dataclass(frozen=True)
+class ToolUseData:
+    """Tool use (function call) from an LLM response."""
+
+    id: str
+    name: str
+    input: dict[str, Any]
+
+
+@dataclasses.dataclass(frozen=True)
 class LLMResponse:
     """Response from an LLM call.
 
     Attributes:
-        data: List of content blocks (currently only TextData, but extensible to ImageData, etc.)
+        data: List of content blocks (TextData for text, ToolUseData for tool calls)
         cost: Cost of the LLM call in USD.
         usage: Token usage information.
     """
 
-    data: list[TextData]
+    data: list[TextData | ToolUseData]
     cost: float
     usage: Usage
