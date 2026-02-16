@@ -296,10 +296,12 @@ class MiniSWECodeAgentV2(code_agent_base.CodeAgent):
 
     # Action parsing and submission
     submission_sentinel: str = "COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT"
-    action_patterns: list[str] = dataclasses.field(default_factory=lambda: [
-        r"```mswea_bash_command\s*\n(.*?)\n```",
-        r"```bash\s*\n(.*?)\n```",
-    ])
+    action_patterns: list[str] = dataclasses.field(
+        default_factory=lambda: [
+            r"```mswea_bash_command\s*\n(.*?)\n```",
+            r"```bash\s*\n(.*?)\n```",
+        ]
+    )
 
     def __post_init__(self):
         """Initialize the agent with configuration."""
@@ -308,9 +310,7 @@ class MiniSWECodeAgentV2(code_agent_base.CodeAgent):
         self._total_cost = 0.0
 
         # Render system prompt once using configurable template
-        self._system_prompt = jinja2.Template(
-            self.system_template, undefined=jinja2.StrictUndefined
-        ).render()
+        self._system_prompt = jinja2.Template(self.system_template, undefined=jinja2.StrictUndefined).render()
         self._messages: list[request.Message] = []
 
         _LOGGER.debug("[%d] Initialized MiniSWECodeAgentV2.", id(self))
@@ -342,9 +342,7 @@ class MiniSWECodeAgentV2(code_agent_base.CodeAgent):
             _LOGGER.debug("[%d] System information: %s %s %s %s", id(self), system, release, version, machine)
 
             # Add initial task message
-            instance_message = jinja2.Template(
-                self.instance_template, undefined=jinja2.StrictUndefined
-            ).render(
+            instance_message = jinja2.Template(self.instance_template, undefined=jinja2.StrictUndefined).render(
                 task=task,
                 system=system,
                 release=release,
@@ -444,9 +442,7 @@ class MiniSWECodeAgentV2(code_agent_base.CodeAgent):
         self._raise_if_finished(exec_result)
 
         # Render observation and add to messages
-        observation = jinja2.Template(
-            self.observation_template, undefined=jinja2.StrictUndefined
-        ).render(output=output)
+        observation = jinja2.Template(self.observation_template, undefined=jinja2.StrictUndefined).render(output=output)
         self._add_message("user", observation)
 
     def parse_action(self, response_text: str) -> str:
@@ -473,9 +469,9 @@ class MiniSWECodeAgentV2(code_agent_base.CodeAgent):
 
         # Format error - wrong number of code blocks
         error_msg = f"Expected exactly 1 code block, found {len(all_actions)}"
-        format_error_str = jinja2.Template(
-            self.format_error_template, undefined=jinja2.StrictUndefined
-        ).render(error=error_msg, actions=all_actions)
+        format_error_str = jinja2.Template(self.format_error_template, undefined=jinja2.StrictUndefined).render(
+            error=error_msg, actions=all_actions
+        )
         raise _FormatError(format_error_str)
 
     def _raise_if_finished(self, output: containers.ExecResult) -> None:

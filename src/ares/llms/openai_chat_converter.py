@@ -12,9 +12,9 @@ Conversion Notes:
     - ToolCallMessage flattened into AssistantMessage.tool_calls
 """
 
+from collections.abc import Mapping
 import json
 import logging
-from collections.abc import Mapping
 from typing import Any, cast
 
 import openai.types.chat

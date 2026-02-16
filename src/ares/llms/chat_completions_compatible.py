@@ -37,7 +37,9 @@ def _get_llm_client(base_url: str, api_key: str) -> openai.AsyncClient:
 async def _query_llm_with_retry(
     llm_client: openai.AsyncClient, model: str, req: request.LLMRequest
 ) -> openai.types.chat.chat_completion.ChatCompletion:
-    response = await llm_client.chat.completions.create(model=model, **openai_chat_converter.to_external(req))
+    response = await llm_client.chat.completions.create(
+        model=model, **openai_chat_converter.ares_request_to_external(req)
+    )
     return response
 
 
