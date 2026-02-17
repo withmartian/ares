@@ -23,12 +23,12 @@ class TestLLMRequestCrossAPIConversion:
             "max_completion_tokens": 100,
             "temperature": 0.7,
         }
-        request = openai_chat_converter.from_external(original_chat)
+        request = openai_chat_converter.ares_request_from_external(original_chat)
         responses_kwargs = openai_responses_converter.to_external(request)
         request2 = openai_responses_converter.from_external(
             cast(openai.types.responses.response_create_params.ResponseCreateParamsBase, responses_kwargs)
         )
-        final_chat = openai_chat_converter.to_external(request2)
+        final_chat = openai_chat_converter.ares_request_to_external(request2)
 
         # Note: model will be dropped in the conversion.
         assert "model" not in final_chat
@@ -42,7 +42,7 @@ class TestLLMRequestCrossAPIConversion:
             "messages": [{"role": "user", "content": "Hello"}],
             "temperature": 1.0,
         }
-        request = openai_chat_converter.from_external(chat_params)
+        request = openai_chat_converter.ares_request_from_external(chat_params)
         claude_kwargs = anthropic_converter.to_external(request)
 
         assert claude_kwargs["temperature"] == 0.5  # 1.0 / 2
@@ -56,7 +56,7 @@ class TestLLMRequestCrossAPIConversion:
             "temperature": 0.5,
         }
         request = anthropic_converter.from_external(messages_params)
-        chat_kwargs = openai_chat_converter.to_external(request)
+        chat_kwargs = openai_chat_converter.ares_request_to_external(request)
 
         assert chat_kwargs["temperature"] == 1.0  # 0.5 * 2
 
@@ -73,7 +73,7 @@ class TestLLMRequestCrossAPIConversion:
         )
 
         # Convert to all formats
-        chat_kwargs = openai_chat_converter.to_external(original)
+        chat_kwargs = openai_chat_converter.ares_request_to_external(original)
         responses_kwargs = openai_responses_converter.to_external(original)
         messages_kwargs = anthropic_converter.to_external(original)
 
@@ -129,7 +129,7 @@ class TestLLMRequestCrossAPIConversion:
             ],
             tool_choice={"type": "tool", "name": "search"},
         )
-        kwargs = openai_chat_converter.to_external(request)
+        kwargs = openai_chat_converter.ares_request_to_external(request)
 
         # Chat Completions API uses nested format: {"type": "function", "function": {"name": "search"}}
         assert kwargs["tool_choice"] == {"type": "function", "function": {"name": "search"}}

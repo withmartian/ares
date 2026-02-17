@@ -1,11 +1,18 @@
 """Unit tests for Anthropic Messages API converter."""
 
+import decimal
+import json
+import pathlib
+
 import anthropic.types
 import anthropic.types.message_create_params
+import frozendict
 import pytest
 
+from ares.llms import accounting
 from ares.llms import anthropic_converter
 from ares.llms import request as request_lib
+from ares.llms import response
 
 
 class TestStructuredContentHandling:
@@ -277,3 +284,55 @@ class TestLLMRequestMessagesConversion:
         assert kwargs["messages"][0] == {"role": "user", "content": "Hello"}
         assert kwargs["messages"][1] == {"role": "assistant", "content": "I'm fine"}
         assert kwargs["messages"][2] == {"role": "user", "content": "Great"}
+
+
+_MOCK_COST_MAPPING = frozendict.frozendict(
+    {
+        "claude-sonnet-4-5-20250929": accounting.ModelCost(
+            id="claude-sonnet-4-5-20250929",
+            pricing=accounting.ModelPricing(
+                prompt=decimal.Decimal("0.000003"),
+                completion=decimal.Decimal("0.000015"),
+                image=None,
+                request=None,
+                web_search=None,
+                internal_reasoning=None,
+            ),
+        )
+    }
+)
+
+
+def _load_test_message(filename: str) -> anthropic.types.Message:
+    """Load a test JSON file and convert to Anthropic Message."""
+    test_data_dir = pathlib.Path(__file__).parent / "test_data"
+    with open(test_data_dir / filename) as f:
+        data = json.load(f)
+    return anthropic.types.Message(**data)
+
+
+class TestMessageResponseConversion:
+    """Tests for Anthropic Messages API response conversion."""
+
+    @pytest.mark.parametrize(
+        "filename",
+        [
+            "anthropic_messages_text_only.json",
+            "anthropic_messages_tool_use_single.json",
+            "anthropic_messages_tool_use_parallel.json",
+            "anthropic_messages_mixed_content.json",
+        ],
+    )
+    def test_message_roundtrip(self, filename: str):
+        """Test that API → ARES → API preserves message data."""
+        # Load original
+        original_message = _load_test_message(filename)
+
+        # Convert to ARES and back
+        ares_response = anthropic_converter.ares_response_from_external(
+            original_message, model="claude-sonnet-4-5-20250929", cost_mapping=_MOCK_COST_MAPPING
+        )
+        converted_message = anthropic_converter.ares_response_to_external(ares_response)
+
+        # Verify round-trip
+        assert original_message == converted_message

@@ -211,6 +211,12 @@ Prefer concrete implementations over abstractions. For example, `CodeEnvironment
 ### Type Annotations
 Full type annotations throughout. Generic types used extensively (e.g., `CodeBaseEnv[TaskType]`).
 
+**Avoid `# type: ignore` comments.** When pyright reports an error, follow this approach:
+1. Understand the types - why is pyright complaining?
+2. Improve type hints - can the function signature be more precise?
+3. Narrow types - use `isinstance()` checks, `hasattr()`, or type guards
+4. Only when the type system is failing but you have strong guarantees, use `assert`, `cast()`, or `# type: ignore`
+
 ### Logging
 Extensive use of `logging.getLogger(__name__)` with object IDs for tracking across async operations. Example:
 ```python

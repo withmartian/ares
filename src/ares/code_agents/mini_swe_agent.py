@@ -207,7 +207,7 @@ class MiniSWECodeAgent(code_agent_base.CodeAgent):
         _LOGGER.debug("[%d] Querying LLM.", id(self))
 
         with self.tracker.timeit("mswea/llm_request"):
-            response = await self.llm_client(
+            llm_response = await self.llm_client(
                 request.LLMRequest(
                     messages=self._messages,
                     system_prompt=self._system_prompt,
@@ -217,20 +217,18 @@ class MiniSWECodeAgent(code_agent_base.CodeAgent):
         _LOGGER.debug("[%d] LLM response received.", id(self))
 
         self._n_calls += 1
-        self._total_cost += response.cost
+        self._total_cost += llm_response.cost
 
-        message_content = response.data[0].content
-        assert message_content is not None
+        message_content = response.extract_text_content(llm_response)
 
         self._add_message("assistant", message_content)
 
-        return response
+        return llm_response
 
-    async def execute_action(self, response: response.LLMResponse) -> None:
+    async def execute_action(self, llm_response: response.LLMResponse) -> None:
         """Execute the action and return the observation."""
         _LOGGER.debug("[%d] Executing action.", id(self))
-        response_text = response.data[0].content
-        assert response_text is not None
+        response_text = response.extract_text_content(llm_response)
 
         action = self.parse_action(response_text)
 

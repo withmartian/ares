@@ -12,13 +12,19 @@ Conversion Notes:
     - ToolCallMessage flattened into AssistantMessage.tool_calls
 """
 
+from collections.abc import Mapping
+import json
 import logging
 from typing import Any, cast
 
 import openai.types.chat
+import openai.types.chat.chat_completion
 import openai.types.chat.completion_create_params
+import openai.types.shared_params
 
+from ares.llms import accounting
 from ares.llms import request as llm_request
+from ares.llms import response as llm_response
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -131,7 +137,7 @@ def _tool_choice_from_openai(
     return None
 
 
-def to_external(request: llm_request.LLMRequest, *, strict: bool = True) -> dict[str, Any]:
+def ares_request_to_external(request: llm_request.LLMRequest, *, strict: bool = True) -> dict[str, Any]:
     """Convert ARES LLMRequest to OpenAI Chat Completions format.
 
     Args:
@@ -247,7 +253,7 @@ def to_external(request: llm_request.LLMRequest, *, strict: bool = True) -> dict
     return kwargs
 
 
-def from_external(
+def ares_request_from_external(
     kwargs: openai.types.chat.completion_create_params.CompletionCreateParams,
     *,
     strict: bool = True,
@@ -393,3 +399,125 @@ def from_external(
         stop_sequences=stop_sequences,
         system_prompt=final_system_prompt,
     )
+
+
+def ares_response_from_external(
+    completion: openai.types.chat.chat_completion.ChatCompletion,
+    *,
+    model: str,
+    cost_mapping: Mapping[str, accounting.ModelCost],
+    strict: bool = True,
+) -> llm_response.LLMResponse:
+    """Convert OpenAI ChatCompletion to ARES LLMResponse.
+
+    Args:
+        completion: OpenAI ChatCompletion object
+        model: Model name used for cost calculation
+        cost_mapping: Cost mapping for calculating cost (e.g., accounting.martian_cost_list())
+        strict: If True, raise ValueError for unsupported tool types. If False, log warnings and skip.
+
+    Returns:
+        LLMResponse with TextData and/or ToolUseData
+
+    Raises:
+        ValueError: If strict=True and unsupported tool call type is encountered
+    """
+    message = completion.choices[0].message
+    data: list[llm_response.TextData | llm_response.ToolUseData] = []
+
+    # Add text content if present
+    if message.content:
+        data.append(llm_response.TextData(content=message.content))
+
+    # Add tool calls if present
+    if message.tool_calls:
+        for tool_call in message.tool_calls:
+            # Type narrow to function tool calls only
+            tool_type = tool_call.type
+            if tool_type != "function":
+                msg = f"Unsupported tool call type: {tool_type}. Only 'function' tool calls are supported."
+                if strict:
+                    raise ValueError(msg)
+                _LOGGER.warning(msg)
+                continue
+
+            assert isinstance(tool_call, openai.types.chat.ChatCompletionMessageFunctionToolCall)
+            function = tool_call.function
+
+            # Parse arguments JSON
+            try:
+                input_dict = json.loads(function.arguments)
+            except json.JSONDecodeError:
+                # Fall back to storing raw string with error marker
+                input_dict = {
+                    "_raw_arguments": function.arguments,
+                    "_parse_error": "Invalid JSON",
+                }
+
+            data.append(
+                llm_response.ToolUseData(
+                    id=tool_call.id,
+                    name=function.name,
+                    input=input_dict,
+                )
+            )
+
+    # Ensure we always have at least one data block
+    if not data:
+        data.append(llm_response.TextData(content=""))
+
+    # Calculate cost
+    cost = accounting.get_llm_cost(model, completion, cost_mapping=cost_mapping)
+    cost_float = float(cost)
+
+    # Extract usage
+    usage = llm_response.Usage(
+        prompt_tokens=completion.usage.prompt_tokens if completion.usage else 0,
+        generated_tokens=completion.usage.completion_tokens if completion.usage else 0,
+    )
+
+    return llm_response.LLMResponse(
+        data=data,
+        cost=cost_float,
+        usage=usage,
+        id=completion.id,
+        model=completion.model,
+    )
+
+
+def ares_response_to_external(
+    response: llm_response.LLMResponse,
+) -> dict[str, Any]:
+    """Convert ARES LLMResponse to OpenAI assistant message format.
+
+    Args:
+        response: ARES LLMResponse with TextData and/or ToolUseData
+
+    Returns:
+        Dictionary representing an OpenAI assistant message
+    """
+    message: dict[str, Any] = {"role": "assistant"}
+
+    # Extract text content (first TextData block)
+    text_blocks = [block for block in response.data if isinstance(block, llm_response.TextData)]
+    if text_blocks:
+        message["content"] = text_blocks[0].content
+    else:
+        message["content"] = None
+
+    # Extract tool calls
+    tool_calls_blocks = [block for block in response.data if isinstance(block, llm_response.ToolUseData)]
+    if tool_calls_blocks:
+        message["tool_calls"] = [
+            {
+                "id": block.id,
+                "type": "function",
+                "function": {
+                    "name": block.name,
+                    "arguments": json.dumps(block.input),
+                },
+            }
+            for block in tool_calls_blocks
+        ]
+
+    return message
