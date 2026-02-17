@@ -4,13 +4,14 @@
 #
 # Modifications Copyright (c) 2026 Martian
 
-"""MiniSWECodeAgentV2 - Text-based interaction model with v2 style submission.
+"""MiniSWECodeAgentV2 - Tool-call based interaction model matching mini-swe-agent v2.
 
 This is a v2 implementation that:
-- Uses text-based interaction (parsing markdown code blocks)
+- Uses OpenAI-style tool calls (BASH_TOOL) instead of regex parsing
+- Supports parallel tool calls for executing multiple commands per turn
+- Uses role="tool" with tool_call_id for observations
 - Fully configurable templates, limits, and behavior
-- Based on mini_textbased.yaml configuration from mini-swe-agent
-- Inherits from code_agent_base.CodeAgent protocol
+- Based on swebench.yaml configuration from mini-swe-agent
 
 All parameters can be customized via constructor. For convenience, use preset
 configurations from mini_swe_agent_v2_configs module:
@@ -18,8 +19,8 @@ configurations from mini_swe_agent_v2_configs module:
 Example usage:
     from ares.code_agents import mini_swe_agent_v2_configs
 
-    # Generic text-based agent (default)
-    config = mini_swe_agent_v2_configs.MiniSWEAgentV2Config.text_based()
+    # Tool-call based agent (default, matches reference implementation)
+    config = mini_swe_agent_v2_configs.MiniSWEAgentV2Config.tool_call_based()
     agent = MiniSWECodeAgentV2(
         container=container,
         llm_client=client,
@@ -34,13 +35,12 @@ Example usage:
         **dataclasses.asdict(config)
     )
 
-Last checked: Feb 11, 2026
+Last checked: Feb 17, 2026
 GH link: https://github.com/SWE-agent/mini-swe-agent
 """
 
 import dataclasses
 import logging
-import re
 from typing import Literal, assert_never
 
 import jinja2
@@ -55,112 +55,138 @@ from ares.llms import response
 _LOGGER = logging.getLogger(__name__)
 
 
-# V2 text-based templates (from mini_textbased.yaml)
+# Tool definition matching mini-swe-agent v2
+# https://github.com/SWE-agent/mini-swe-agent/blob/main/src/minisweagent/models/utils/actions_toolcall.py
+BASH_TOOL: request.Tool = {
+    "name": "bash",
+    "description": "Execute a bash command",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "command": {
+                "type": "string",
+                "description": "The bash command to execute",
+            }
+        },
+        "required": ["command"],
+    },
+}
+
+
+# V2 tool-call based templates (from swebench.yaml)
 _V2_SYSTEM_TEMPLATE = """
-You are a helpful assistant that can interact with a computer.
-
-Your response must contain exactly ONE bash code block with ONE command (or commands connected with && or ||).
-Include a THOUGHT section before your command where you explain your reasoning process.
-Format your response as shown in <format_example>.
-
-<format_example>
-Your reasoning and analysis here. Explain why you want to perform the action.
-
-```mswea_bash_command
-your_command_here
-```
-</format_example>
-
-Failure to follow these rules will cause your response to be rejected.
+You are a helpful assistant that can interact with a computer shell to solve programming tasks.
 """.strip()
 
 
 _V2_INSTANCE_TEMPLATE = """
-Please solve this issue: {{task}}
+<pr_description>
+Consider the following PR description:
+{{task}}
+</pr_description>
 
-You can execute bash commands and edit files to implement the necessary changes.
+<instructions>
+# Task Instructions
+
+## Overview
+
+You're a software engineer interacting continuously with a computer by submitting commands.
+You'll be helping implement necessary changes to meet requirements in the PR description.
+Your task is specifically to make changes to non-test files in the current directory in order to fix the issue described in the PR description in a way that is general and consistent with the codebase.
+<IMPORTANT>This is an interactive process where you will think and issue AT LEAST ONE command, see the result, then think and issue your next command(s).</important>
+
+For each response:
+
+1. Include a THOUGHT section explaining your reasoning and what you're trying to accomplish
+2. Provide one or more bash tool calls to execute
+
+## Important Boundaries
+
+- MODIFY: Regular source code files in {{working_directory}} (this is the working directory for all your subsequent commands)
+- DO NOT MODIFY: Tests, configuration files (pyproject.toml, setup.cfg, etc.)
 
 ## Recommended Workflow
-
-This workflows should be done step-by-step so that you can iterate on your changes and any possible problems.
 
 1. Analyze the codebase by finding and reading relevant files
 2. Create a script to reproduce the issue
 3. Edit the source code to resolve the issue
 4. Verify your fix works by running your script again
 5. Test edge cases to ensure your fix is robust
-6. Submit your changes and finish your work by issuing the following command: `echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT`.
-   Do not combine it with any other command. <important>After this command, you cannot continue working on this task.</important>
 
-## Important Rules
+## Command Execution Rules
 
-1. Every response must contain exactly one action
-2. The action must be enclosed in triple backticks
-3. Directory or environment variable changes are not persistent. Every action is executed in a new subshell.
-   However, you can prefix any action with `MY_ENV_VAR=MY_VALUE cd /path/to/working/dir && ...` or write/load environment variables from files
+You are operating in an environment where
 
-<system_information>
-{{system}} {{release}} {{version}} {{machine}}
-</system_information>
+1. You issue at least one command
+2. The system executes the command(s) in a subshell
+3. You see the result(s)
+4. You write your next command(s)
 
-## Formatting your response
+Each response should include:
 
-Here is an example of a correct response:
+1. **Reasoning text** where you explain your analysis and plan
+2. At least one tool call with your command
 
+**CRITICAL REQUIREMENTS:**
+
+- Your response SHOULD include reasoning text explaining what you're doing
+- Your response MUST include AT LEAST ONE bash tool call. You can make MULTIPLE tool calls in a single response when the commands are independent (e.g., searching multiple files, reading different parts of the codebase).
+- Directory or environment variable changes are not persistent. Every action is executed in a new subshell.
+- However, you can prefix any action with `MY_ENV_VAR=MY_VALUE cd /path/to/working/dir && ...` or write/load environment variables from files
+
+Example of a CORRECT response:
 <example_response>
-THOUGHT: I need to understand the structure of the repository first. Let me check what files are in the current directory to get a better understanding of the codebase.
+I need to understand the Builder-related code. Let me find relevant files and check the project structure.
 
-```mswea_bash_command
-ls -la
-```
+[Makes multiple bash tool calls: {"command": "ls -la"}, {"command": "find src -name '*.java' | grep -i builder"}, {"command": "cat README.md | head -50"}]
 </example_response>
 
-## Useful command examples
+## Environment Details
 
-### Create a new file:
+- You have a full Linux shell environment
+- Always use non-interactive flags (-y, -f) for commands
+- Avoid interactive tools like vi, nano, or any that require user input
+- You can use bash commands or invoke any tool that is available in the environment
+- You can also create new tools or scripts to help you with the task
+- If a tool isn't available, you can also install it
 
-```mswea_bash_command
-cat <<'EOF' > newfile.py
-import numpy as np
-hello = "world"
-print(hello)
-EOF
+## Submission
+
+When you've completed your work, you MUST submit your changes as a git patch.
+Follow these steps IN ORDER, with SEPARATE commands:
+
+Step 1: Create the patch file
+Run `git diff -- path/to/file1 path/to/file2 > patch.txt` listing only the source files you modified.
+Do NOT commit your changes.
+
+<IMPORTANT>
+The patch must only contain changes to the specific source files you modified to fix the issue.
+Do not submit file creations or changes to any of the following files:
+
+- test and reproduction files
+- helper scripts, tests, or tools that you created
+- installation, build, packaging, configuration, or setup scripts unless they are directly part of the issue you were fixing (you can assume that the environment is already set up for your client)
+- binary or compiled files
+</IMPORTANT>
+
+Step 2: Verify your patch
+Inspect patch.txt to confirm it only contains your intended changes and headers show `--- a/` and `+++ b/` paths.
+
+Step 3: Submit (EXACT command required)
+You MUST use this EXACT command to submit:
+
+```bash
+echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT && cat patch.txt
 ```
 
-### Edit files with sed:
+If the command fails (nonzero exit status), it will not submit.
 
-{%- if system == "Darwin" -%}
-<important>
-You are on MacOS. For all the below examples, you need to use `sed -i ''` instead of `sed -i`.
-</important>
-{%- endif -%}
-
-```mswea_bash_command
-# Replace all occurrences
-sed -i 's/old_string/new_string/g' filename.py
-
-# Replace only first occurrence
-sed -i 's/old_string/new_string/' filename.py
-
-# Replace first occurrence on line 1
-sed -i '1s/old_string/new_string/' filename.py
-
-# Replace all occurrences in lines 1-10
-sed -i '1,10s/old_string/new_string/g' filename.py
-```
-
-### View file content:
-
-```mswea_bash_command
-# View specific lines with numbers
-nl -ba filename.py | sed -n '10,20p'
-```
-
-### Any other command you want to run
-
-```mswea_bash_command
-anything
-```
+<CRITICAL>
+- Creating/viewing the patch and submitting it MUST be separate commands (not combined with &&).
+- If you modify patch.txt after verifying, you SHOULD verify again before submitting.
+- You CANNOT continue working (reading, editing, testing) in any way on this task after submitting.
+</CRITICAL>
+</instructions>
 """.strip()  # noqa: E501
 
 
@@ -197,32 +223,26 @@ and then search in that file.
 
 
 _V2_FORMAT_ERROR_TEMPLATE = """
-Format error:
+Tool call error:
 
 <error>
 {{error}}
 </error>
 
-Here is general guidance on how to format your response:
+Here is general guidance on how to submit correct toolcalls:
 
-Please always provide EXACTLY ONE action in triple backticks, found {{actions|length}} actions.
+Every response needs to use the 'bash' tool at least once to execute commands.
 
-Please format your action in triple backticks as shown in <response_example>.
-
-<response_example>
-Here are some thoughts about why you want to perform the action.
-
-```mswea_bash_command
-<action>
-```
-</response_example>
+Call the bash tool with your command as the argument:
+- Tool: bash
+- Arguments: {"command": "your_command_here"}
 
 If you have completed your assignment, please consult the first message about how to
 submit your solution (you will not be able to continue working on this task after that).
 """.strip()
 
 
-# Default environment variables for text-based mode
+# Default environment variables
 _V2_DEFAULT_ENV_VARS = {
     "PAGER": "cat",
     "MANPAGER": "cat",
@@ -232,23 +252,23 @@ _V2_DEFAULT_ENV_VARS = {
 }
 
 
-class _NonTerminatingError(Exception):
-    """Raised for conditions that can be handled by the agent."""
+class _InterruptAgentFlowError(Exception):
+    """Base exception for interrupting the agent flow with messages to add."""
+
+    def __init__(self, messages: list[request.Message]):
+        self.messages = messages
+        super().__init__()
 
 
-class _FormatError(_NonTerminatingError):
+class _FormatError(_InterruptAgentFlowError):
     """Raised when the LM's output is not in the expected format."""
 
 
-class _TerminatingError(Exception):
-    """Raised for conditions that terminate the agent."""
-
-
-class _SubmittedError(_TerminatingError):
+class _SubmittedError(_InterruptAgentFlowError):
     """Raised when the LM declares that the agent has finished its task."""
 
 
-class _LimitsExceededError(_TerminatingError):
+class _LimitsExceededError(_InterruptAgentFlowError):
     """Raised when the agent has reached its cost or step limit."""
 
 
@@ -261,14 +281,23 @@ class _AgentOutput:
     exception_info: str | None = None
 
 
+@dataclasses.dataclass(frozen=True)
+class _Action:
+    """Parsed action from a tool call."""
+
+    command: str
+    tool_call_id: str
+
+
 @dataclasses.dataclass(kw_only=True)
 class MiniSWECodeAgentV2(code_agent_base.CodeAgent):
-    """V2 text-based mini-swe-agent implementation.
+    """V2 tool-call based mini-swe-agent implementation.
 
-    This agent uses the text-based interaction model where:
-    - Commands are parsed from markdown code blocks (```mswea_bash_command or ```bash)
+    This agent uses OpenAI-style tool calls where:
+    - Commands are specified via the bash tool (BASH_TOOL)
+    - Multiple commands can be executed in parallel per turn
+    - Observations use role="tool" with tool_call_id
     - The agent submits by echoing a submission sentinel
-    - ARES does not yet support structured tool calls in LLMResponse
 
     All templates and behavior can be customized via constructor parameters.
     """
@@ -283,6 +312,7 @@ class MiniSWECodeAgentV2(code_agent_base.CodeAgent):
     cost_limit: float = 3.0  # Default $3 limit
     timeout_s: int | None = None  # Command execution timeout
     temperature: float = 0.0  # LLM temperature
+    parallel_tool_calls: bool = True  # Enable parallel tool calls
 
     # Templates (configurable for different benchmarks)
     system_template: str = _V2_SYSTEM_TEMPLATE
@@ -296,14 +326,8 @@ class MiniSWECodeAgentV2(code_agent_base.CodeAgent):
 
     # Action parsing and submission
     submission_sentinel: str = "COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT"
-    action_patterns: list[str] = dataclasses.field(
-        default_factory=lambda: [
-            r"```mswea_bash_command\s*\n(.*?)\n```",
-            r"```bash\s*\n(.*?)\n```",
-        ]
-    )
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Initialize the agent with configuration."""
         # Initialize step and cost tracking
         self._n_calls = 0
@@ -315,14 +339,50 @@ class MiniSWECodeAgentV2(code_agent_base.CodeAgent):
 
         _LOGGER.debug("[%d] Initialized MiniSWECodeAgentV2.", id(self))
 
-    def _add_message(self, role: Literal["user", "assistant"], content: str) -> None:
+    def _add_message(
+        self, role: Literal["user", "assistant", "tool"], content: str, *, tool_call_id: str | None = None
+    ) -> None:
         """Add a message to the conversation history."""
         if role == "user":
             self._messages.append(request.UserMessage(role="user", content=content))
         elif role == "assistant":
             self._messages.append(request.AssistantMessage(role="assistant", content=content))
+        elif role == "tool":
+            if tool_call_id is None:
+                raise ValueError("tool_call_id is required for tool messages")
+            self._messages.append(
+                request.ToolCallResponseMessage(role="tool", content=content, tool_call_id=tool_call_id)
+            )
         else:
             assert_never(role)
+
+    def _add_assistant_message_with_tool_calls(
+        self, content: str | None, tool_calls: list[response.ToolUseData]
+    ) -> None:
+        """Add an assistant message with tool calls to the conversation history.
+
+        In the Chat Completions format, tool calls are embedded in the assistant message.
+        """
+        # Create the assistant message
+        assistant_msg: request.AssistantMessage = {"role": "assistant"}
+        if content:
+            assistant_msg["content"] = content
+
+        # Add tool_calls if present
+        if tool_calls:
+            assistant_msg["tool_calls"] = [
+                {
+                    "id": tc.id,
+                    "type": "function",
+                    "function": {
+                        "name": tc.name,
+                        "arguments": _dict_to_json(tc.input),
+                    },
+                }
+                for tc in tool_calls
+            ]
+
+        self._messages.append(assistant_msg)
 
     async def run(self, task: str) -> None:
         """Run the agent loop until completion or termination.
@@ -330,24 +390,16 @@ class MiniSWECodeAgentV2(code_agent_base.CodeAgent):
         Args:
             task: The task description/problem statement to solve.
         """
-        # Get system information from the container
         with self.tracker.timeit("mswea_v2/setup"):
             _LOGGER.debug("[%d] Starting MiniSWECodeAgentV2 run.", id(self))
 
-            system = (await self.container.exec_run("uname -a", env=self.env_vars)).output.strip()
-            release = (await self.container.exec_run("uname -r", env=self.env_vars)).output.strip()
-            version = (await self.container.exec_run("uname -v", env=self.env_vars)).output.strip()
-            machine = (await self.container.exec_run("uname -m", env=self.env_vars)).output.strip()
-
-            _LOGGER.debug("[%d] System information: %s %s %s %s", id(self), system, release, version, machine)
+            # Determine working directory
+            workdir = self.working_directory or "/"
 
             # Add initial task message
             instance_message = jinja2.Template(self.instance_template, undefined=jinja2.StrictUndefined).render(
                 task=task,
-                system=system,
-                release=release,
-                version=version,
-                machine=machine,
+                working_directory=workdir,
             )
             self._add_message("user", instance_message)
 
@@ -356,27 +408,42 @@ class MiniSWECodeAgentV2(code_agent_base.CodeAgent):
             try:
                 with self.tracker.timeit("mswea_v2/step"):
                     await self.step()
-            except _NonTerminatingError as e:
-                _LOGGER.debug("[%d] Non-terminating error: %s", id(self), e)
-                self._add_message("user", str(e))
-            except _TerminatingError as e:
-                _LOGGER.debug("[%d] Terminating error: %s", id(self), e)
-                return
+            except _InterruptAgentFlowError as e:
+                _LOGGER.debug("[%d] Agent flow interrupted: %s", id(self), type(e).__name__)
+                # Add the interrupt messages to the conversation
+                self._messages.extend(e.messages)
+                # Check if we should terminate
+                if isinstance(e, (_SubmittedError, _LimitsExceededError)):
+                    return
 
     async def step(self) -> None:
-        """Execute one step of the agent loop: query LLM and execute action."""
+        """Execute one step of the agent loop: query LLM and execute actions."""
         llm_response = await self.query()
-        await self.execute_action(llm_response)
+        await self.execute_actions(llm_response)
 
     async def query(self) -> response.LLMResponse:
         """Query the LLM and return the response."""
         # Check step limit before making LLM call
         if 0 < self.step_limit <= self._n_calls:
-            raise _LimitsExceededError(f"Step limit of {self.step_limit} exceeded")
+            raise _LimitsExceededError(
+                [
+                    {
+                        "role": "user",
+                        "content": f"Step limit of {self.step_limit} exceeded",
+                    }
+                ]
+            )
 
         # Check cost limit before making LLM call
         if 0 < self.cost_limit <= self._total_cost:
-            raise _LimitsExceededError(f"Cost limit of ${self.cost_limit:.2f} exceeded")
+            raise _LimitsExceededError(
+                [
+                    {
+                        "role": "user",
+                        "content": f"Cost limit of ${self.cost_limit:.2f} exceeded",
+                    }
+                ]
+            )
 
         _LOGGER.debug("[%d] Querying LLM (call #%d).", id(self), self._n_calls + 1)
 
@@ -386,6 +453,8 @@ class MiniSWECodeAgentV2(code_agent_base.CodeAgent):
                     messages=self._messages,
                     system_prompt=self._system_prompt,
                     temperature=self.temperature,
+                    tools=[BASH_TOOL],
+                    tool_choice="any",  # Must use at least one tool
                 )
             )
 
@@ -395,97 +464,151 @@ class MiniSWECodeAgentV2(code_agent_base.CodeAgent):
         self._n_calls += 1
         self._total_cost += llm_response.cost
 
-        # Extract and add assistant message
-        message_content = response.extract_text_content(llm_response)
-
-        self._add_message("assistant", message_content)
-
         return llm_response
 
-    async def execute_action(self, llm_response: response.LLMResponse) -> None:
-        """Parse and execute the action from the LLM response."""
-        _LOGGER.debug("[%d] Executing action.", id(self))
+    async def execute_actions(self, llm_response: response.LLMResponse) -> None:
+        """Parse and execute actions from the LLM response.
 
-        response_text = response.extract_text_content(llm_response)
+        This method:
+        1. Extracts tool calls from the response
+        2. Validates and parses them into actions
+        3. Executes each action in the container
+        4. Formats observation messages with tool_call_id
+        """
+        _LOGGER.debug("[%d] Executing actions.", id(self))
 
-        # Parse the bash command from the response
-        action = self.parse_action(response_text)
+        # Parse actions from tool calls
+        actions = self._parse_actions(llm_response)
 
-        # Execute the command in the container
-        with self.tracker.timeit("mswea_v2/exec_run"):
-            try:
-                exec_result = await self.container.exec_run(
-                    action,
-                    workdir=self.working_directory,
-                    timeout_s=self.timeout_s,
-                    env=self.env_vars,
-                )
-                output = _AgentOutput(
-                    returncode=exec_result.exit_code,
-                    output=exec_result.output,
-                    exception_info=None,
-                )
-            except Exception as e:
-                # Catch execution errors including timeouts
-                # Note: asyncio.wait_for cancels the task on timeout, so we cannot retrieve partial output
-                output = _AgentOutput(
-                    returncode=-1,
-                    output="",
-                    exception_info=f"An error occurred while executing the command: {e}",
-                )
+        # Extract text content for the assistant message
+        text_content = self._extract_text_content(llm_response)
 
-        _LOGGER.debug("[%d] Action executed with returncode %d.", id(self), output.returncode)
+        # Extract tool use data for the assistant message
+        tool_calls = [block for block in llm_response.data if isinstance(block, response.ToolUseData)]
 
-        # Check if the agent has submitted its final output
-        self._raise_if_finished(exec_result)
+        # Add the assistant message with tool calls
+        self._add_assistant_message_with_tool_calls(text_content, tool_calls)
 
-        # Render observation and add to messages
-        observation = jinja2.Template(self.observation_template, undefined=jinja2.StrictUndefined).render(output=output)
-        self._add_message("user", observation)
+        # Execute each action and collect outputs
+        # Note: _check_submission raises _SubmittedError on submission, stopping execution
+        outputs: list[tuple[_Action, _AgentOutput]] = []
+        for action in actions:
+            with self.tracker.timeit("mswea_v2/exec_run"):
+                output = await self._execute_single_action(action)
+            outputs.append((action, output))
 
-    def parse_action(self, response_text: str) -> str:
-        """Parse bash command from markdown code blocks.
+            # Check for submission - raises _SubmittedError if detected
+            self._check_submission(output)
 
-        Uses configurable action patterns to extract commands.
+        # Format and add observation messages for all actions
+        for action, output in outputs:
+            observation = self._format_observation(output)
+            self._add_message("tool", observation, tool_call_id=action.tool_call_id)
+
+    def _parse_actions(self, llm_response: response.LLMResponse) -> list[_Action]:
+        """Parse actions from tool calls in the LLM response.
 
         Args:
-            response_text: The LLM's response text.
+            llm_response: The LLM response containing tool calls.
 
         Returns:
-            The parsed bash command.
+            List of parsed actions.
 
         Raises:
-            _FormatError: If the response doesn't contain exactly one code block.
+            _FormatError: If no valid tool calls are found or tool calls are invalid.
         """
-        all_actions = []
-        for pattern in self.action_patterns:
-            actions = re.findall(pattern, response_text, re.DOTALL)
-            all_actions.extend(actions)
+        tool_calls = [block for block in llm_response.data if isinstance(block, response.ToolUseData)]
 
-        if len(all_actions) == 1:
-            return all_actions[0].strip()
+        if not tool_calls:
+            error_msg = "No tool calls found in the response. Every response MUST include at least one tool call."
+            format_error_str = jinja2.Template(self.format_error_template, undefined=jinja2.StrictUndefined).render(
+                error=error_msg
+            )
+            raise _FormatError([{"role": "user", "content": format_error_str}])
 
-        # Format error - wrong number of code blocks
-        error_msg = f"Expected exactly 1 code block, found {len(all_actions)}"
-        format_error_str = jinja2.Template(self.format_error_template, undefined=jinja2.StrictUndefined).render(
-            error=error_msg, actions=all_actions
-        )
-        raise _FormatError(format_error_str)
+        actions: list[_Action] = []
+        for tool_call in tool_calls:
+            # Validate tool name
+            if tool_call.name != "bash":
+                error_msg = f"Unknown tool '{tool_call.name}'. Only 'bash' tool is supported."
+                format_error_str = jinja2.Template(self.format_error_template, undefined=jinja2.StrictUndefined).render(
+                    error=error_msg
+                )
+                raise _FormatError([{"role": "user", "content": format_error_str}])
 
-    def _raise_if_finished(self, output: containers.ExecResult) -> None:
-        """Check if the agent has submitted and raise _SubmittedError if so.
+            # Validate command argument
+            command = tool_call.input.get("command")
+            if not command:
+                error_msg = "Missing 'command' argument in bash tool call."
+                format_error_str = jinja2.Template(self.format_error_template, undefined=jinja2.StrictUndefined).render(
+                    error=error_msg
+                )
+                raise _FormatError([{"role": "user", "content": format_error_str}])
 
-        Uses the configurable submission_sentinel to detect completion.
+            actions.append(_Action(command=str(command), tool_call_id=tool_call.id))
+
+        return actions
+
+    def _extract_text_content(self, llm_response: response.LLMResponse) -> str | None:
+        """Extract text content from the LLM response."""
+        for block in llm_response.data:
+            if isinstance(block, response.TextData):
+                return block.content
+        return None
+
+    async def _execute_single_action(self, action: _Action) -> _AgentOutput:
+        """Execute a single action in the container."""
+        try:
+            exec_result = await self.container.exec_run(
+                action.command,
+                workdir=self.working_directory,
+                timeout_s=self.timeout_s,
+                env=self.env_vars,
+            )
+            return _AgentOutput(
+                returncode=exec_result.exit_code,
+                output=exec_result.output,
+                exception_info=None,
+            )
+        except Exception as e:
+            # Catch execution errors including timeouts
+            return _AgentOutput(
+                returncode=-1,
+                output="",
+                exception_info=f"An error occurred while executing the command: {e}",
+            )
+
+    def _format_observation(self, output: _AgentOutput) -> str:
+        """Format the observation message from execution output."""
+        return jinja2.Template(self.observation_template, undefined=jinja2.StrictUndefined).render(output=output)
+
+    def _check_submission(self, output: _AgentOutput) -> None:
+        """Check if the output indicates submission and raise _SubmittedError if so.
 
         Args:
-            output: The execution result from the container.
+            output: The execution output to check.
 
         Raises:
-            _SubmittedError: If the output contains the submission sentinel.
+            _SubmittedError: If the output contains the submission sentinel with exit code 0.
         """
         lines = output.output.lstrip().splitlines(keepends=True)
-        if lines and lines[0].strip() == self.submission_sentinel:
-            # Everything after the first line is the final output
-            final_output = "".join(lines[1:])
+        if lines and lines[0].strip() == self.submission_sentinel and output.returncode == 0:
+            # Everything after the first line is the final output (the patch)
+            submission = "".join(lines[1:])
             _LOGGER.info("[%d] Agent submitted final output.", id(self))
-            raise _SubmittedError(final_output)
+            # Raise with an exit message
+            raise _SubmittedError(
+                [
+                    {
+                        "role": "user",
+                        "content": submission,
+                    }
+                ]
+            )
+
+
+def _dict_to_json(d: dict) -> str:
+    """Convert a dictionary to a JSON string."""
+    import json
+
+    return json.dumps(d)
