@@ -409,12 +409,21 @@ class TestLLMResponseConversion:
         # Verify ARES format
         assert len(ares_response.data) == 3
         assert all(isinstance(d, openai_chat_converter.llm_response.ToolUseData) for d in ares_response.data)
-        assert ares_response.data[0].id == "call_def456"
-        assert ares_response.data[0].input == {"command": "pwd"}
-        assert ares_response.data[1].id == "call_ghi789"
-        assert ares_response.data[1].input == {"command": "whoami"}
-        assert ares_response.data[2].id == "call_jkl012"
-        assert ares_response.data[2].input == {"command": "date"}
+
+        tool_call_0 = ares_response.data[0]
+        assert isinstance(tool_call_0, openai_chat_converter.llm_response.ToolUseData)
+        assert tool_call_0.id == "call_def456"
+        assert tool_call_0.input == {"command": "pwd"}
+
+        tool_call_1 = ares_response.data[1]
+        assert isinstance(tool_call_1, openai_chat_converter.llm_response.ToolUseData)
+        assert tool_call_1.id == "call_ghi789"
+        assert tool_call_1.input == {"command": "whoami"}
+
+        tool_call_2 = ares_response.data[2]
+        assert isinstance(tool_call_2, openai_chat_converter.llm_response.ToolUseData)
+        assert tool_call_2.id == "call_jkl012"
+        assert tool_call_2.input == {"command": "date"}
 
         # Convert back to OpenAI format
         message = openai_chat_converter.ares_response_to_external(ares_response)

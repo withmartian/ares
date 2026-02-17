@@ -20,6 +20,7 @@ from typing import Any, cast
 import openai.types.chat
 import openai.types.chat.chat_completion
 import openai.types.chat.completion_create_params
+import openai.types.shared_params
 
 from ares.llms import accounting
 from ares.llms import request as llm_request
@@ -405,6 +406,7 @@ def ares_response_from_external(
     *,
     model: str,
     cost_mapping: Mapping[str, accounting.ModelCost],
+    strict: bool = True,
 ) -> llm_response.LLMResponse:
     """Convert OpenAI ChatCompletion to ARES LLMResponse.
 
@@ -412,9 +414,13 @@ def ares_response_from_external(
         completion: OpenAI ChatCompletion object
         model: Model name used for cost calculation
         cost_mapping: Cost mapping for calculating cost (e.g., accounting.martian_cost_list())
+        strict: If True, raise ValueError for unsupported tool types. If False, log warnings and skip.
 
     Returns:
         LLMResponse with TextData and/or ToolUseData
+
+    Raises:
+        ValueError: If strict=True and unsupported tool call type is encountered
     """
     message = completion.choices[0].message
     data: list[llm_response.TextData | llm_response.ToolUseData] = []
@@ -426,20 +432,32 @@ def ares_response_from_external(
     # Add tool calls if present
     if message.tool_calls:
         for tool_call in message.tool_calls:
+            # Type narrow to function tool calls only
+            tool_type = tool_call.type
+            if tool_type != "function":
+                msg = f"Unsupported tool call type: {tool_type}. Only 'function' tool calls are supported."
+                if strict:
+                    raise ValueError(msg)
+                _LOGGER.warning(msg)
+                continue
+
+            assert isinstance(tool_call, openai.types.chat.ChatCompletionMessageFunctionToolCall)
+            function = tool_call.function
+
             # Parse arguments JSON
             try:
-                input_dict = json.loads(tool_call.function.arguments)
+                input_dict = json.loads(function.arguments)
             except json.JSONDecodeError:
                 # Fall back to storing raw string with error marker
                 input_dict = {
-                    "_raw_arguments": tool_call.function.arguments,
+                    "_raw_arguments": function.arguments,
                     "_parse_error": "Invalid JSON",
                 }
 
             data.append(
                 llm_response.ToolUseData(
                     id=tool_call.id,
-                    name=tool_call.function.name,
+                    name=function.name,
                     input=input_dict,
                 )
             )

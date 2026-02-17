@@ -1,5 +1,6 @@
 """Library for tracking LLM costs."""
 
+from collections.abc import Mapping
 import decimal
 import functools
 
@@ -71,7 +72,7 @@ def get_llm_cost(
     model_id: str,
     completion: chat_completion_types.ChatCompletion,
     *,
-    cost_mapping: frozendict.frozendict[str, ModelCost],
+    cost_mapping: Mapping[str, ModelCost],
 ) -> decimal.Decimal:
     """Get the cost of an LLM call."""
     if model_id not in cost_mapping:

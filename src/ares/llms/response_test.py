@@ -7,6 +7,7 @@ It uses hand-crafted JSON fixtures representing realistic API responses.
 import json
 from pathlib import Path
 
+import openai.types.chat
 import openai.types.chat.chat_completion
 import pytest
 
@@ -70,8 +71,11 @@ class TestToolCallResponses:
         # Once we implement ToolUseData, we'll test actual parsing
         assert message.tool_calls is not None
         assert len(message.tool_calls) == 1
-        assert message.tool_calls[0].function.name == "bash"
-        assert message.tool_calls[0].id == "call_abc123"
+
+        tool_call = message.tool_calls[0]
+        assert isinstance(tool_call, openai.types.chat.ChatCompletionMessageFunctionToolCall)
+        assert tool_call.function.name == "bash"
+        assert tool_call.id == "call_abc123"
 
     def test_parse_parallel_tool_calls(self):
         """Parse response with multiple tool calls."""
@@ -112,6 +116,7 @@ class TestToolCallResponses:
         # The arguments string itself is malformed JSON
         # We should handle this gracefully when parsing
         tool_call = message.tool_calls[0]
+        assert isinstance(tool_call, openai.types.chat.ChatCompletionMessageFunctionToolCall)
         assert tool_call.function.arguments == '{"command": "ls -la", invalid_json_here'
 
         # Test that we can handle malformed JSON
@@ -162,6 +167,7 @@ class TestToolUseDataParsing:
         # Parse tool calls into ToolUseData
         if message.tool_calls:
             for tool_call in message.tool_calls:
+                assert isinstance(tool_call, openai.types.chat.ChatCompletionMessageFunctionToolCall)
                 data.append(
                     response.ToolUseData(
                         id=tool_call.id,
@@ -185,6 +191,7 @@ class TestToolUseDataParsing:
 
         if message.tool_calls:
             for tool_call in message.tool_calls:
+                assert isinstance(tool_call, openai.types.chat.ChatCompletionMessageFunctionToolCall)
                 data.append(
                     response.ToolUseData(
                         id=tool_call.id,
@@ -223,6 +230,7 @@ class TestToolUseDataParsing:
         # Add tool calls if present
         if message.tool_calls:
             for tool_call in message.tool_calls:
+                assert isinstance(tool_call, openai.types.chat.ChatCompletionMessageFunctionToolCall)
                 data.append(
                     response.ToolUseData(
                         id=tool_call.id,
@@ -249,6 +257,7 @@ class TestToolUseDataParsing:
 
         if message.tool_calls:
             for tool_call in message.tool_calls:
+                assert isinstance(tool_call, openai.types.chat.ChatCompletionMessageFunctionToolCall)
                 try:
                     input_dict = json.loads(tool_call.function.arguments)
                 except json.JSONDecodeError:

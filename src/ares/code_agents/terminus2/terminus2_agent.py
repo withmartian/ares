@@ -527,10 +527,8 @@ class Terminus2Agent(code_agent_base.CodeAgent):
             try:
                 # Query the LLM
                 try:
-                    response = await self._query_llm()
-                    assert len(response.data) == 1
-                    assistant_message = response.data[0].content
-                    assert assistant_message is not None
+                    llm_resp = await self._query_llm()
+                    assistant_message = response.extract_text_content(llm_resp)
 
                     self._add_message("assistant", assistant_message)
 
@@ -882,9 +880,7 @@ class Terminus2Agent(code_agent_base.CodeAgent):
         Returns:
             The content string from the response.
         """
-        assert len(llm_response.data) == 1
-        content = llm_response.data[0].content
-        assert content is not None
+        content = response.extract_text_content(llm_response)
 
         # Track subagent metrics
         usage = llm_response.usage

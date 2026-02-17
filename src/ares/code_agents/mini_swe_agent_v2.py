@@ -161,7 +161,7 @@ nl -ba filename.py | sed -n '10,20p'
 ```mswea_bash_command
 anything
 ```
-""".strip()
+""".strip()  # noqa: E501
 
 
 _V2_OBSERVATION_TEMPLATE = """
@@ -396,8 +396,7 @@ class MiniSWECodeAgentV2(code_agent_base.CodeAgent):
         self._total_cost += llm_response.cost
 
         # Extract and add assistant message
-        message_content = llm_response.data[0].content
-        assert message_content is not None
+        message_content = response.extract_text_content(llm_response)
 
         self._add_message("assistant", message_content)
 
@@ -407,8 +406,7 @@ class MiniSWECodeAgentV2(code_agent_base.CodeAgent):
         """Parse and execute the action from the LLM response."""
         _LOGGER.debug("[%d] Executing action.", id(self))
 
-        response_text = llm_response.data[0].content
-        assert response_text is not None
+        response_text = response.extract_text_content(llm_response)
 
         # Parse the bash command from the response
         action = self.parse_action(response_text)
