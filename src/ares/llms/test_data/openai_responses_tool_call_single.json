@@ -1,0 +1,31 @@
+{
+  "id": "resp_def456",
+  "object": "response",
+  "created_at": 1677652288,
+  "model": "gpt-5",
+  "status": "completed",
+  "parallel_tool_calls": true,
+  "tool_choice": "auto",
+  "tools": [],
+  "output": [
+    {
+      "id": "call_xyz789",
+      "type": "function_call",
+      "call_id": "call_xyz789",
+      "name": "bash",
+      "arguments": "{\"command\": \"ls -la\"}",
+      "status": "completed"
+    }
+  ],
+  "usage": {
+    "input_tokens": 50,
+    "input_tokens_details": {
+      "cached_tokens": 0
+    },
+    "output_tokens": 15,
+    "output_tokens_details": {
+      "reasoning_tokens": 0
+    },
+    "total_tokens": 65
+  }
+}

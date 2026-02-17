@@ -1,0 +1,26 @@
+{
+  "id": "msg_jkl012",
+  "type": "message",
+  "role": "assistant",
+  "model": "claude-sonnet-4-5-20250929",
+  "content": [
+    {
+      "type": "text",
+      "text": "I'll check the current directory for you."
+    },
+    {
+      "type": "tool_use",
+      "id": "toolu_mixed123",
+      "name": "bash",
+      "input": {
+        "command": "pwd"
+      }
+    }
+  ],
+  "stop_reason": "tool_use",
+  "stop_sequence": null,
+  "usage": {
+    "input_tokens": 40,
+    "output_tokens": 25
+  }
+}

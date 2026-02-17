@@ -468,7 +468,7 @@ def ares_response_from_external(
 
     # Calculate cost
     cost = accounting.get_llm_cost(model, completion, cost_mapping=cost_mapping)
-    cost = float(cost)
+    cost_float = float(cost)
 
     # Extract usage
     usage = llm_response.Usage(
@@ -476,7 +476,13 @@ def ares_response_from_external(
         generated_tokens=completion.usage.completion_tokens if completion.usage else 0,
     )
 
-    return llm_response.LLMResponse(data=data, cost=cost, usage=usage)
+    return llm_response.LLMResponse(
+        data=data,
+        cost=cost_float,
+        usage=usage,
+        id=completion.id,
+        model=completion.model,
+    )
 
 
 def ares_response_to_external(

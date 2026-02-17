@@ -1,7 +1,10 @@
 """LLM response model."""
 
 import dataclasses
-from typing import Any
+from typing import Any, Literal
+
+import anthropic.types
+import openai.types.responses
 
 
 @dataclasses.dataclass(frozen=True)
@@ -33,19 +36,53 @@ class ToolUseData:
     input: dict[str, Any]
 
 
-@dataclasses.dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True, kw_only=True)
 class LLMResponse:
     """Response from an LLM call.
 
-    Attributes:
+    Common params:
         data: List of content blocks (TextData for text, ToolUseData for tool calls)
         cost: Cost of the LLM call in USD.
         usage: Token usage information.
+        id: Response ID from the API.
+        model: Model name that generated this response.
+
+    Anthropic-only params:
+        stop_reason: Reason the response stopped (e.g., "end_turn", "max_tokens").
+        stop_sequence: Stop sequence that triggered completion.
+
+    Responses-only params:
+        created_at: Unix timestamp when response was created.
+        status: Response status (e.g., "completed", "failed").
+        parallel_tool_calls: Whether parallel tool calls are enabled.
+        response_tool_choice: Tool choice setting used for this response.
+        response_tools: List of tools that were available for this response.
     """
 
     data: list[TextData | ToolUseData]
     cost: float
     usage: Usage
+    id: str
+    model: str
+
+    # Anthropic-only properties
+    stop_reason: anthropic.types.StopReason | None = None
+    stop_sequence: str | None = None
+
+    # Responses-only properties
+    created_at: float | None = None
+    status: openai.types.responses.ResponseStatus | None = None
+    parallel_tool_calls: bool | None = None
+    response_tool_choice: (
+        Literal["none", "auto", "required"]
+        | openai.types.responses.ToolChoiceAllowed
+        | openai.types.responses.ToolChoiceTypes
+        | openai.types.responses.ToolChoiceFunction
+        | openai.types.responses.ToolChoiceMcp
+        | openai.types.responses.ToolChoiceCustom
+        | None
+    ) = None
+    response_tools: list[openai.types.responses.Tool] | None = None
 
 
 def extract_text_content(response: LLMResponse) -> str:

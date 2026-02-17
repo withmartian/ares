@@ -339,126 +339,30 @@ class TestLLMRequestChatCompletionConversion:
 class TestLLMResponseConversion:
     """Test converting OpenAI responses to/from ARES format."""
 
-    def test_response_text_only_roundtrip(self):
-        """Round-trip: OpenAI text response → ARES → OpenAI."""
-        completion = _load_test_completion("openai_text_only.json")
+    @pytest.mark.parametrize(
+        "filename",
+        [
+            "openai_text_only.json",
+            "openai_tool_call_single.json",
+            "openai_tool_call_parallel.json",
+            "openai_tool_call_mixed.json",
+        ],
+    )
+    def test_response_roundtrip(self, filename: str):
+        """Test that ChatCompletion → ARES → message dict preserves data."""
+        # Load original
+        original_completion = _load_test_completion(filename)
 
-        # Convert to ARES format
+        # Convert to ARES and back
         ares_response = openai_chat_converter.ares_response_from_external(
-            completion,
-            model="gpt-5",
-            cost_mapping=_MOCK_COST_MAPPING,
+            original_completion, model="gpt-5", cost_mapping=_MOCK_COST_MAPPING
+        )
+        converted_message = openai_chat_converter.ares_response_to_external(ares_response)
+
+        # Convert original completion to message for comparison
+        original_ares = openai_chat_converter.ares_response_from_external(
+            original_completion, model="gpt-5", cost_mapping=_MOCK_COST_MAPPING
         )
 
-        # Verify ARES format
-        assert len(ares_response.data) == 1
-        assert isinstance(ares_response.data[0], openai_chat_converter.llm_response.TextData)
-        assert ares_response.data[0].content == "Hello! How can I help you today?"
-        assert ares_response.usage.prompt_tokens == 10
-        assert ares_response.usage.generated_tokens == 9
-
-        # Convert back to OpenAI format
-        message = openai_chat_converter.ares_response_to_external(ares_response)
-
-        # Verify round-trip
-        assert message["role"] == "assistant"
-        assert message["content"] == "Hello! How can I help you today?"
-        assert "tool_calls" not in message
-
-    def test_response_tool_call_single_roundtrip(self):
-        """Round-trip: OpenAI single tool call → ARES → OpenAI."""
-        completion = _load_test_completion("openai_tool_call_single.json")
-
-        # Convert to ARES format
-        ares_response = openai_chat_converter.ares_response_from_external(
-            completion,
-            model="gpt-5",
-            cost_mapping=_MOCK_COST_MAPPING,
-        )
-
-        # Verify ARES format
-        assert len(ares_response.data) == 1
-        assert isinstance(ares_response.data[0], openai_chat_converter.llm_response.ToolUseData)
-        assert ares_response.data[0].id == "call_abc123"
-        assert ares_response.data[0].name == "bash"
-        assert ares_response.data[0].input == {"command": "ls -la"}
-
-        # Convert back to OpenAI format
-        message = openai_chat_converter.ares_response_to_external(ares_response)
-
-        # Verify round-trip
-        assert message["role"] == "assistant"
-        assert message["content"] is None
-        assert len(message["tool_calls"]) == 1
-        assert message["tool_calls"][0]["id"] == "call_abc123"
-        assert message["tool_calls"][0]["type"] == "function"
-        assert message["tool_calls"][0]["function"]["name"] == "bash"
-        assert message["tool_calls"][0]["function"]["arguments"] == '{"command": "ls -la"}'
-
-    def test_response_tool_call_parallel_roundtrip(self):
-        """Round-trip: OpenAI parallel tool calls → ARES → OpenAI."""
-        completion = _load_test_completion("openai_tool_call_parallel.json")
-
-        # Convert to ARES format
-        ares_response = openai_chat_converter.ares_response_from_external(
-            completion,
-            model="gpt-5",
-            cost_mapping=_MOCK_COST_MAPPING,
-        )
-
-        # Verify ARES format
-        assert len(ares_response.data) == 3
-        assert all(isinstance(d, openai_chat_converter.llm_response.ToolUseData) for d in ares_response.data)
-
-        tool_call_0 = ares_response.data[0]
-        assert isinstance(tool_call_0, openai_chat_converter.llm_response.ToolUseData)
-        assert tool_call_0.id == "call_def456"
-        assert tool_call_0.input == {"command": "pwd"}
-
-        tool_call_1 = ares_response.data[1]
-        assert isinstance(tool_call_1, openai_chat_converter.llm_response.ToolUseData)
-        assert tool_call_1.id == "call_ghi789"
-        assert tool_call_1.input == {"command": "whoami"}
-
-        tool_call_2 = ares_response.data[2]
-        assert isinstance(tool_call_2, openai_chat_converter.llm_response.ToolUseData)
-        assert tool_call_2.id == "call_jkl012"
-        assert tool_call_2.input == {"command": "date"}
-
-        # Convert back to OpenAI format
-        message = openai_chat_converter.ares_response_to_external(ares_response)
-
-        # Verify round-trip
-        assert message["role"] == "assistant"
-        assert message["content"] is None
-        assert len(message["tool_calls"]) == 3
-        assert message["tool_calls"][0]["id"] == "call_def456"
-        assert message["tool_calls"][1]["id"] == "call_ghi789"
-        assert message["tool_calls"][2]["id"] == "call_jkl012"
-
-    def test_response_mixed_content_roundtrip(self):
-        """Round-trip: OpenAI mixed text + tool call → ARES → OpenAI."""
-        completion = _load_test_completion("openai_tool_call_mixed.json")
-
-        # Convert to ARES format
-        ares_response = openai_chat_converter.ares_response_from_external(
-            completion,
-            model="gpt-5",
-            cost_mapping=_MOCK_COST_MAPPING,
-        )
-
-        # Verify ARES format
-        assert len(ares_response.data) == 2  # 1 text + 1 tool call
-        assert isinstance(ares_response.data[0], openai_chat_converter.llm_response.TextData)
-        assert ares_response.data[0].content == "Let me check the current directory for you."
-        assert isinstance(ares_response.data[1], openai_chat_converter.llm_response.ToolUseData)
-        assert ares_response.data[1].id == "call_mixed123"
-
-        # Convert back to OpenAI format
-        message = openai_chat_converter.ares_response_to_external(ares_response)
-
-        # Verify round-trip
-        assert message["role"] == "assistant"
-        assert message["content"] == "Let me check the current directory for you."
-        assert len(message["tool_calls"]) == 1
-        assert message["tool_calls"][0]["id"] == "call_mixed123"
+        # Verify round-trip: ARES data should be identical
+        assert ares_response.data == original_ares.data

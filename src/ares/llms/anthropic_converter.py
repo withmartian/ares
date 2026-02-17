@@ -12,12 +12,15 @@ Conversion Notes:
     - top_k is Claude-specific (supported)
 """
 
+from collections.abc import Mapping
 import logging
 from typing import Any, cast
 
 import anthropic.types
 
+from ares.llms import accounting
 from ares.llms import request as llm_request
+from ares.llms import response as response_lib
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -380,4 +383,127 @@ def from_external(
         service_tier=kwargs.get("service_tier"),
         stop_sequences=cast(list[str] | None, kwargs.get("stop_sequences")),
         system_prompt=system_prompt,
+    )
+
+
+def ares_response_from_external(
+    message: anthropic.types.Message,
+    *,
+    model: str,
+    cost_mapping: Mapping[str, accounting.ModelCost],
+    strict: bool = True,
+) -> response_lib.LLMResponse:
+    """Convert Anthropic Message to ARES LLMResponse.
+
+    Args:
+        message: Anthropic Message object
+        model: Model name used for cost calculation
+        cost_mapping: Cost mapping for calculating cost (e.g., accounting.martian_cost_list())
+        strict: If True, raise ValueError for unsupported content types. If False, log warnings and skip.
+
+    Returns:
+        LLMResponse with TextData and/or ToolUseData
+
+    Raises:
+        ValueError: If strict=True and unsupported content block type is encountered
+    """
+    data: list[response_lib.TextData | response_lib.ToolUseData] = []
+
+    # Process content blocks
+    for block in message.content:
+        # Handle text blocks
+        if isinstance(block, anthropic.types.TextBlock):
+            if block.text:
+                data.append(response_lib.TextData(content=block.text))
+
+        # Handle tool use blocks
+        elif isinstance(block, anthropic.types.ToolUseBlock):
+            data.append(
+                response_lib.ToolUseData(
+                    id=block.id,
+                    name=block.name,
+                    input=block.input,
+                )
+            )
+
+        else:
+            msg = f"Unsupported content block type: {type(block).__name__}. Only TextBlock and ToolUseBlock are supported."
+            if strict:
+                raise ValueError(msg)
+            _LOGGER.warning(msg)
+
+    # Ensure we always have at least one data block
+    if not data:
+        data.append(response_lib.TextData(content=""))
+
+    # Calculate cost
+    cost = accounting.get_llm_cost(model, message, cost_mapping=cost_mapping)
+    cost_float = float(cost)
+
+    # Extract usage
+    usage = response_lib.Usage(
+        prompt_tokens=message.usage.input_tokens,
+        generated_tokens=message.usage.output_tokens,
+    )
+
+    return response_lib.LLMResponse(
+        data=data,
+        cost=cost_float,
+        usage=usage,
+        id=message.id,
+        model=message.model,
+        stop_reason=message.stop_reason,
+        stop_sequence=message.stop_sequence,
+    )
+
+
+def ares_response_to_external(
+    response: response_lib.LLMResponse,
+) -> anthropic.types.Message:
+    """Convert ARES LLMResponse to Anthropic Message format.
+
+    Args:
+        response: ARES LLMResponse with TextData and/or ToolUseData
+
+    Returns:
+        Anthropic Message object
+    """
+    content: list[anthropic.types.ContentBlock] = []
+
+    # Process data blocks
+    for block in response.data:
+        if isinstance(block, response_lib.TextData):
+            content.append(
+                anthropic.types.TextBlock(
+                    type="text",
+                    text=block.content,
+                )
+            )
+        elif isinstance(block, response_lib.ToolUseData):
+            content.append(
+                anthropic.types.ToolUseBlock(
+                    type="tool_use",
+                    id=block.id,
+                    name=block.name,
+                    input=block.input,
+                )
+            )
+
+    # Validate Anthropic-specific fields are present
+    if response.stop_reason is None:
+        raise ValueError("Cannot convert to Anthropic Messages format: stop_reason is required")
+
+    # Construct Message object using stored metadata
+    return anthropic.types.Message(
+        id=response.id,
+        type="message",
+        role="assistant",
+        content=content,
+        model=response.model,
+        stop_reason=response.stop_reason,
+        stop_sequence=response.stop_sequence,
+        usage=anthropic.types.Usage(
+            input_tokens=response.usage.prompt_tokens,
+            output_tokens=response.usage.generated_tokens,
+        ),
     )
