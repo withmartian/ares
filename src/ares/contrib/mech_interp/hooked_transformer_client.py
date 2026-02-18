@@ -130,8 +130,12 @@ class HookedTransformerLLMClient:
         Returns:
             LLM response with chat completion and cost information.
         """
-        # Format messages into text
-        messages_list = list(request.messages)
+        # Format messages into text, prepending system_prompt as a system message
+        # so the tokenizer's chat template handles it correctly.
+        messages_list: list[dict[str, str]] = []
+        if request.system_prompt:
+            messages_list.append({"role": "system", "content": request.system_prompt})
+        messages_list.extend(request.messages)
         input_text = self.format_messages_fn(messages_list)
 
         # Tokenize input and ensure tokens live on the model's device

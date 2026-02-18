@@ -32,10 +32,13 @@ import gc
 import json
 import pathlib
 import queue
+import random
 import threading
 
 import ares
+from ares import presets
 from ares.contrib.mech_interp.hooked_transformer_client import create_hooked_transformer_client_with_chat_template
+from ares.environments import twenty_questions
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
@@ -49,16 +52,28 @@ from transformers import AutoTokenizer
 
 MODEL_NAME = "meta-llama/Llama-3.2-1B-Instruct"
 MAX_NEW_TOKENS = 64
-ENV_NAME = "20q"
+ENV_NAME = "20q-steered"
 N_EPISODES = 20  # Episodes per (pooling, alpha) condition
 MAX_STEPS_PER_EPISODE = 25
 ALPHAS = [0.5, 1.0, 2.0, 4.0]
 
+AGENT_SYSTEM_PROMPT = "Try to keep your response under 30 words."
+
+# Register a custom 20q preset with the system prompt for the agent.
+ares.registry.register_preset(
+    ENV_NAME,
+    presets.TwentyQuestionsSpec(system_prompt=AGENT_SYSTEM_PROMPT),
+)
+
 # Token-position pooling strategies for computing the steering vector.
-# "last-k" averages the last k token positions; "mean" averages all positions.
-# Note: saved activations are [1, 1, d_model] (last generated token only),
-# so only "last-1" is meaningful with current data.
-POOLING_STRATEGIES = ["last-1"]
+# Activations are now [1, prompt_len + n_generated, d_model] with prompt_len saved.
+# "last-prompt": last prompt token (decision point before generation)
+# "mean-prompt": mean over all prompt tokens
+# "first-generated": first generated token (start of model's response)
+POOLING_STRATEGIES = ["last-prompt"]
+
+# Inspect mode: print model completions side-by-side with oracle responses at t*.
+INSPECT_MODE = False
 
 SEED = 42
 TRAIN_RATIO = 0.8
@@ -73,30 +88,56 @@ MIN_CLASS_SAMPLES = 5
 # Serialize model loading across threads.
 _MODEL_LOAD_LOCK = threading.Lock()
 
+
+def _precompute_secret_words(n_episodes: int) -> dict[int, str]:
+    """Pre-compute a deterministic secret word for each episode index.
+
+    Uses a local Random instance so this is safe to call from any thread
+    without affecting global random state.
+    """
+    rng = random.Random(SEED)
+    objects = twenty_questions.DEFAULT_OBJECT_LIST
+    return {ep_idx: rng.choice(objects) for ep_idx in range(n_episodes)}
+
 # ---------------------------------------------------------------------------
 # Helpers (shared with Phase 1)
 # ---------------------------------------------------------------------------
 
 
-def _pool_activation(activation: torch.Tensor, method: str) -> np.ndarray:
+def _pool_activation(activation: torch.Tensor, method: str, prompt_len: int = 0) -> np.ndarray:
     """Convert a [1, seq_len, d_model] tensor to a [d_model] numpy vector.
 
     Supported methods:
-      - "mean":   mean over all token positions
-      - "last-k": mean over the last k token positions (e.g. "last-1", "last-4")
+      - "last-prompt":      last prompt token (decision point before generation)
+      - "mean-prompt":      mean over all prompt tokens
+      - "first-generated":  first generated token (start of model's response)
+      - "mean":             mean over all token positions
+      - "last-k":           mean over the last k token positions (e.g. "last-1")
     """
     arr = activation.numpy()
     if arr.ndim != 3:
         raise ValueError(f"Expected rank-3 activation, got shape={arr.shape}")
+    if method == "last-prompt":
+        if prompt_len <= 0:
+            raise ValueError("prompt_len required for 'last-prompt' pooling")
+        return arr[0, prompt_len - 1, :]
+    if method == "mean-prompt":
+        if prompt_len <= 0:
+            raise ValueError("prompt_len required for 'mean-prompt' pooling")
+        return arr[0, :prompt_len, :].mean(axis=0)
+    if method == "first-generated":
+        if prompt_len <= 0:
+            raise ValueError("prompt_len required for 'first-generated' pooling")
+        if prompt_len >= arr.shape[1]:
+            return arr[0, -1, :]  # Fallback if no generated tokens.
+        return arr[0, prompt_len, :]
     if method == "mean":
         return arr[0].mean(axis=0)
     if method.startswith("last-"):
         k = int(method.split("-", 1)[1])
         seq_len = arr.shape[1]
-        k = min(k, seq_len)  # Don't exceed available tokens.
+        k = min(k, seq_len)
         return arr[0, -k:, :].mean(axis=0)
-    if method == "last":
-        return arr[0, -1, :]
     raise ValueError(f"Unknown pooling method: {method}")
 
 
@@ -134,14 +175,59 @@ def train_test_split_by_episode(
 # ---------------------------------------------------------------------------
 
 
-def _select_target_step(probe_results: dict) -> int:
-    """Auto-select target step t*: highest probe accuracy step."""
+def _select_target_step(
+    probe_results: dict,
+    episodes: list[dict],
+    train_eps: set[int],
+    min_class_samples: int = MIN_CLASS_SAMPLES,
+) -> int:
+    """Auto-select target step t*: high probe accuracy AND high invalid rate.
+
+    Picks the step that maximizes (probe_accuracy * invalid_rate) among steps
+    with probe accuracy >= 0.85 and at least *min_class_samples* of each class
+    in the training set, ensuring we can compute a reliable steering vector.
+    """
     step_accuracies = probe_results["step_accuracies"]
     if not step_accuracies:
         raise ValueError("No step accuracies in probe results.")
-    # Find step with highest accuracy (break ties by lowest step index).
-    best_step = max(step_accuracies, key=lambda s: (step_accuracies[s], -int(s)))
-    return int(best_step)
+
+    # Compute per-step invalid rates from training episodes.
+    step_counts: dict[int, int] = {}
+    step_invalid: dict[int, int] = {}
+    for ep in episodes:
+        if ep["episode_idx"] not in train_eps:
+            continue
+        for step in ep["steps"]:
+            s = step["step_idx"]
+            step_counts[s] = step_counts.get(s, 0) + 1
+            step_invalid[s] = step_invalid.get(s, 0) + step["is_invalid"]
+
+    print("\n  Step selection (train set):")
+    print(
+        f"  {'step':>4s}  {'n_total':>7s}  {'n_inv':>5s}  {'n_val':>5s}  {'inv_rate':>8s}  {'probe_acc':>9s}  {'score':>6s}"
+    )
+    candidates: list[tuple[float, int]] = []
+    for s_str, acc in sorted(step_accuracies.items(), key=lambda x: int(x[0])):
+        s = int(s_str)
+        n = step_counts.get(s, 0)
+        n_inv = step_invalid.get(s, 0)
+        n_val = n - n_inv
+        inv_rate = n_inv / n if n > 0 else 0.0
+        score = acc * inv_rate
+        marker = ""
+        if acc >= 0.85 and inv_rate >= 0.3 and n_val >= min_class_samples and n_inv >= min_class_samples:
+            candidates.append((score, s))
+            marker = " <--"
+        print(f"  {s:4d}  {n:7d}  {n_inv:5d}  {n_val:5d}  {inv_rate:8.3f}  {acc:9.3f}  {score:6.3f}{marker}")
+
+    if not candidates:
+        # Fallback: pick highest accuracy step.
+        best_step = max(step_accuracies, key=lambda s: (step_accuracies[s], -int(s)))
+        return int(best_step)
+
+    # Pick highest score, break ties by lowest step index.
+    candidates.sort(key=lambda x: (-x[0], x[1]))
+    return candidates[0][1]
 
 
 def compute_steering_vector(
@@ -167,7 +253,8 @@ def compute_steering_vector(
             activation = step.get("activation")
             if activation is None:
                 continue
-            feature = _pool_activation(activation, pooling)
+            prompt_len = step.get("prompt_len", 0)
+            feature = _pool_activation(activation, pooling, prompt_len=prompt_len)
             if step["is_invalid"]:
                 invalid_features.append(feature)
             else:
@@ -190,6 +277,57 @@ def compute_steering_vector(
     norm = np.linalg.norm(steering_vector)
     print(f"  [{pooling:6s}] steering vector norm: {norm:.4f}")
     return steering_vector
+
+
+def compute_per_step_steering_vectors(
+    episodes: list[dict],
+    train_eps: set[int],
+    pooling: str,
+    min_class_samples: int,
+) -> dict[int, np.ndarray]:
+    """Compute a steering vector for every step that has enough samples of both classes.
+
+    Returns dict mapping step_idx -> steering vector (v_valid - v_invalid).
+    """
+    # Gather features per step.
+    step_valid: dict[int, list[np.ndarray]] = {}
+    step_invalid: dict[int, list[np.ndarray]] = {}
+
+    for ep in episodes:
+        if ep["episode_idx"] not in train_eps:
+            continue
+        for step in ep["steps"]:
+            activation = step.get("activation")
+            if activation is None:
+                continue
+            s = step["step_idx"]
+            prompt_len = step.get("prompt_len", 0)
+            feature = _pool_activation(activation, pooling, prompt_len=prompt_len)
+            if step["is_invalid"]:
+                step_invalid.setdefault(s, []).append(feature)
+            else:
+                step_valid.setdefault(s, []).append(feature)
+
+    # Compute steering vector for each step with enough samples.
+    all_steps = sorted(set(step_valid.keys()) | set(step_invalid.keys()))
+    vectors: dict[int, np.ndarray] = {}
+
+    print(f"\n  Per-step steering vectors ({pooling}):")
+    print(f"  {'step':>4s}  {'n_valid':>7s}  {'n_inv':>5s}  {'norm':>8s}  {'status'}")
+    for s in all_steps:
+        n_valid = len(step_valid.get(s, []))
+        n_invalid = len(step_invalid.get(s, []))
+        if n_valid >= min_class_samples and n_invalid >= min_class_samples:
+            v_valid = np.stack(step_valid[s]).mean(axis=0)
+            v_invalid = np.stack(step_invalid[s]).mean(axis=0)
+            sv = v_valid - v_invalid
+            vectors[s] = sv
+            print(f"  {s:4d}  {n_valid:7d}  {n_invalid:5d}  {np.linalg.norm(sv):8.4f}  OK")
+        else:
+            print(f"  {s:4d}  {n_valid:7d}  {n_invalid:5d}  {'---':>8s}  skipped (insufficient samples)")
+
+    print(f"  Computed steering vectors for {len(vectors)}/{len(all_steps)} steps")
+    return vectors
 
 
 # ---------------------------------------------------------------------------
@@ -215,10 +353,24 @@ def _free_gpu_memory() -> None:
 
 
 def make_steer_hook(sv: torch.Tensor, alpha: float):
-    """Create a TransformerLens hook that adds alpha * steering_vector to all positions."""
+    """Create a hook that steers only the last prompt token on the first forward pass.
+
+    During model.generate() with KV caching:
+      - First forward pass processes the full prompt: activation shape [1, prompt_len, d_model]
+      - Subsequent passes process one new token each: activation shape [1, 1, d_model]
+
+    We add the steering vector only to the last prompt token (position -1 on
+    the first forward pass), which is the "decision point" right before
+    generation begins.  Subsequent forward passes are left untouched.
+    """
+    fired = False
 
     def hook(activation, hook):  # noqa: ARG001
-        activation[:, :, :] += alpha * sv
+        nonlocal fired
+        if not fired:
+            # First forward pass: steer only the last prompt token.
+            activation[:, -1, :] += alpha * sv
+            fired = True
         return activation
 
     return hook
@@ -227,15 +379,17 @@ def make_steer_hook(sv: torch.Tensor, alpha: float):
 async def _run_steered_episodes_for_device(
     device: str,
     work_queue: "queue.Queue[tuple[str, float | None, int]]",
-    target_step: int,
     middle_layer: int,
-    steering_vectors: dict[str, np.ndarray],
+    per_step_vectors: dict[int, np.ndarray],
     max_steps_per_episode: int,
+    secret_words: dict[int, str],
 ) -> list[dict]:
     """Load model on *device*, run steered episodes from *work_queue*.
 
     Each work item is (pooling, alpha, episode_idx). alpha=None means baseline.
-    Returns list of per-episode result dicts.
+    Steers at every step that has a vector in *per_step_vectors*.
+    *secret_words* maps ep_idx -> word, ensuring the same word across conditions.
+    Returns list of per-episode result dicts with full step data.
     """
     print(f"[{device}] Loading {MODEL_NAME}...")
     torch.cuda.set_device(device)
@@ -255,9 +409,9 @@ async def _run_steered_episodes_for_device(
     hook_name = f"blocks.{middle_layer}.hook_resid_post"
     hook_point = model.hook_dict[hook_name]
 
-    # Pre-convert all steering vectors to device tensors.
-    sv_tensors: dict[str, torch.Tensor] = {
-        pooling: torch.tensor(sv, dtype=torch.bfloat16, device=device) for pooling, sv in steering_vectors.items()
+    # Pre-convert per-step steering vectors to device tensors.
+    sv_tensors: dict[int, torch.Tensor] = {
+        step: torch.tensor(sv, dtype=torch.bfloat16, device=device) for step, sv in per_step_vectors.items()
     }
 
     results: list[dict] = []
@@ -271,19 +425,25 @@ async def _run_steered_episodes_for_device(
 
             condition = f"{pooling}/alpha={alpha}" if alpha is not None else f"{pooling}/baseline"
 
-            # Track whether the question at step t* was invalid.
-            target_step_invalid: int | None = None
-            target_step_oracle: str = ""
+            # Deterministic torch seed per (episode, device) — each device has
+            # its own generator so no cross-thread interference.
+            episode_seed = SEED + ep_idx
+            torch.cuda.manual_seed(episode_seed)
+
+            step_log: list[tuple[int, str, str, bool, bool]] = []
 
             async with ares.make(ENV_NAME) as env:
                 ts = await env.reset()
+                # Override the secret word with our pre-computed one so that
+                # baseline and steered runs for the same ep_idx use the same word.
+                env._hidden_object = secret_words[ep_idx]
                 step_idx = 0
 
                 while (not ts.last()) and (step_idx < max_steps_per_episode):
-                    # Install steering hook only at target step.
+                    # Install steering hook if we have a vector for this step.
                     steer_active = False
-                    if step_idx == target_step and alpha is not None:
-                        hook_fn = make_steer_hook(sv_tensors[pooling], alpha)
+                    if alpha is not None and step_idx in sv_tensors:
+                        hook_fn = make_steer_hook(sv_tensors[step_idx], alpha)
                         hook_point.add_hook(hook_fn)
                         steer_active = True
 
@@ -304,10 +464,11 @@ async def _run_steered_episodes_for_device(
                         if last_entry.startswith("A:"):
                             oracle_answer = last_entry
 
-                    # Record result at target step.
-                    if step_idx == target_step:
-                        target_step_invalid = int(_is_invalid_answer(oracle_answer))
-                        target_step_oracle = oracle_answer
+                    # Extract model's generated question.
+                    model_question = action.data[0].content.strip() if action.data else ""
+
+                    is_invalid = _is_invalid_answer(oracle_answer)
+                    step_log.append((step_idx, model_question, oracle_answer, steer_active, is_invalid))
 
                     steered = "*" if steer_active else " "
                     tqdm.write(
@@ -315,6 +476,7 @@ async def _run_steered_episodes_for_device(
                         f"step={step_idx:2d}/{max_steps_per_episode}{steered} "
                         f"oracle={oracle_answer[:60]}"
                     )
+
                     step_idx += 1
 
             result = {
@@ -322,16 +484,24 @@ async def _run_steered_episodes_for_device(
                 "condition": condition,
                 "alpha": alpha,
                 "episode_idx": ep_idx,
-                "target_step": target_step,
-                "target_step_invalid": target_step_invalid,
-                "target_step_oracle": target_step_oracle,
                 "n_steps": step_idx,
+                "steps": [
+                    {
+                        "step_idx": s_idx,
+                        "model_question": question,
+                        "oracle_answer": oracle,
+                        "steered": steered,
+                        "is_invalid": is_invalid,
+                    }
+                    for s_idx, question, oracle, steered, is_invalid in step_log
+                ],
             }
             results.append(result)
 
+            n_invalid = sum(1 for _, _, _, _, inv in step_log if inv)
             tqdm.write(
                 f"  [{device}] {condition:22s} ep={ep_idx:03d} DONE  "
-                f"invalid@t*={target_step_invalid}  oracle={target_step_oracle[:60]}"
+                f"invalid={n_invalid}/{len(step_log)} steps"
             )
 
     finally:
@@ -346,10 +516,10 @@ async def _run_steered_episodes_for_device(
 def _run_device_worker(
     device: str,
     work_queue: "queue.Queue[tuple[str, float | None, int]]",
-    target_step: int,
     middle_layer: int,
-    steering_vectors: dict[str, np.ndarray],
+    per_step_vectors: dict[int, np.ndarray],
     max_steps_per_episode: int,
+    secret_words: dict[int, str],
 ) -> list[dict]:
     """Run steered episodes in a dedicated event loop (for thread-based parallelism)."""
     loop = asyncio.new_event_loop()
@@ -357,11 +527,169 @@ def _run_device_worker(
     try:
         return loop.run_until_complete(
             _run_steered_episodes_for_device(
-                device, work_queue, target_step, middle_layer, steering_vectors, max_steps_per_episode
+                device, work_queue, middle_layer, per_step_vectors, max_steps_per_episode, secret_words
             )
         )
     finally:
         loop.close()
+
+
+# ---------------------------------------------------------------------------
+# Inspect mode: sequential, single-GPU, readable output
+# ---------------------------------------------------------------------------
+
+
+async def _run_inspect_mode(
+    middle_layer: int,
+    per_step_vectors: dict[int, np.ndarray],
+    max_steps_per_episode: int,
+    n_episodes: int,
+    alphas: list[float],
+    secret_words: dict[int, str],
+) -> list[dict]:
+    """Run episodes sequentially on a single GPU with grouped, readable output.
+
+    Steers at *every* step that has a steering vector (not just one target step).
+    For each episode, runs a baseline (no steering) and then one run per alpha,
+    printing model completions and oracle responses at every step side-by-side.
+    Output is printed to stdout and saved to a log file.
+    """
+    device = _get_devices()[0]
+
+    inspect_dir = OUTPUT_DIR / f"inspect_{n_episodes}ep"
+    inspect_dir.mkdir(parents=True, exist_ok=True)
+    log_path = inspect_dir / "inspect_log.txt"
+
+    def _log(msg: str = "") -> None:
+        print(msg)
+        log_lines.append(msg)
+
+    log_lines: list[str] = []
+
+    _log(f"[inspect] Loading {MODEL_NAME} on {device}...")
+
+    model = HookedTransformer.from_pretrained(MODEL_NAME, device="cpu", dtype=torch.bfloat16)
+    model = model.to(device)
+    tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
+    client = create_hooked_transformer_client_with_chat_template(
+        model=model,
+        tokenizer=tokenizer,
+        max_new_tokens=MAX_NEW_TOKENS,
+        verbose=False,
+    )
+
+    hook_name = f"blocks.{middle_layer}.hook_resid_post"
+    hook_point = model.hook_dict[hook_name]
+
+    pooling = POOLING_STRATEGIES[0]
+
+    # Pre-convert per-step steering vectors to device tensors.
+    sv_tensors: dict[int, torch.Tensor] = {
+        step: torch.tensor(sv, dtype=torch.bfloat16, device=device) for step, sv in per_step_vectors.items()
+    }
+    steered_steps = sorted(sv_tensors.keys())
+    _log(f"[inspect] Steering at {len(steered_steps)} steps: {steered_steps}")
+
+    all_results: list[dict] = []
+
+    try:
+        for ep_idx in range(n_episodes):
+            _log(f"\n{'=' * 70}")
+            _log(f"  Episode {ep_idx}")
+            _log(f"{'=' * 70}")
+
+            # Conditions to run: baseline (alpha=None) + each alpha.
+            conditions: list[tuple[str, float | None]] = [("baseline", None)]
+            for a in alphas:
+                conditions.append((f"alpha={a}", a))
+
+            # Store per-condition step logs for grouped printing.
+            condition_logs: list[tuple[str, list[tuple[int, str, str, bool]]]] = []
+
+            for label, alpha in conditions:
+                step_log: list[tuple[int, str, str, bool]] = []  # (step_idx, question, oracle, steered)
+
+                # Deterministic torch seed per episode.
+                episode_seed = SEED + ep_idx
+                torch.cuda.manual_seed(episode_seed)
+
+                async with ares.make(ENV_NAME) as env:
+                    ts = await env.reset()
+                    # Override the secret word so all conditions for the same
+                    # ep_idx use the same word.
+                    env._hidden_object = secret_words[ep_idx]
+                    step_idx = 0
+
+                    while (not ts.last()) and (step_idx < max_steps_per_episode):
+                        # Install steering hook if we have a vector for this step.
+                        steer_active = False
+                        if alpha is not None and step_idx in sv_tensors:
+                            hook_fn = make_steer_hook(sv_tensors[step_idx], alpha)
+                            hook_point.add_hook(hook_fn)
+                            steer_active = True
+
+                        assert ts.observation is not None
+                        action = await client(ts.observation)
+
+                        if steer_active:
+                            hook_point.remove_hooks("fwd")
+
+                        prev_history_len = len(env._conversation_history)
+                        ts = await env.step(action)
+
+                        # Extract oracle answer.
+                        oracle_answer = ""
+                        if len(env._conversation_history) > prev_history_len:
+                            last_entry = env._conversation_history[-1]
+                            if last_entry.startswith("A:"):
+                                oracle_answer = last_entry
+
+                        model_question = action.data[0].content.strip() if action.data else ""
+
+                        step_log.append((step_idx, model_question, oracle_answer, steer_active))
+                        step_idx += 1
+
+                condition_logs.append((label, step_log))
+
+                result = {
+                    "pooling": pooling,
+                    "condition": f"{pooling}/{label}",
+                    "alpha": alpha,
+                    "episode_idx": ep_idx,
+                    "n_steps": step_idx,
+                    "steps": [
+                        {
+                            "step_idx": s_idx,
+                            "model_question": question,
+                            "oracle_answer": oracle,
+                            "steered": steered,
+                            "is_invalid": _is_invalid_answer(oracle),
+                        }
+                        for s_idx, question, oracle, steered in step_log
+                    ],
+                }
+                all_results.append(result)
+
+            # Print grouped summary for this episode.
+            for label, step_log in condition_logs:
+                steered_at = " (steered at all steps)" if label != "baseline" else " (no steering)"
+                _log(f"\n  --- {label}{steered_at} ---")
+                for s_idx, question, oracle, steered in step_log:
+                    marker = " <<< STEERED" if steered else ""
+                    _log(f"    step {s_idx:2d}: MODEL: {question}")
+                    _log(f"              ORACLE: {oracle}{marker}")
+
+    finally:
+        hook_point.remove_hooks("fwd")
+
+    del model, tokenizer, client
+    _free_gpu_memory()
+
+    # Write log file.
+    log_path.write_text("\n".join(log_lines) + "\n")
+    print(f"\nInspect log saved to {log_path}")
+
+    return all_results
 
 
 # ---------------------------------------------------------------------------
@@ -454,117 +782,135 @@ async def run() -> None:
     train_eps, _test_eps = train_test_split_by_episode(all_ep_indices, TRAIN_RATIO)
 
     # Select target step.
-    target_step = _select_target_step(probe_results)
+    target_step = _select_target_step(probe_results, episodes, train_eps)
     step_acc = probe_results["step_accuracies"][str(target_step)]
     print(f"Auto-selected target step t* = {target_step} (probe accuracy: {step_acc:.3f})")
 
-    # Compute a steering vector for each pooling strategy.
-    print(f"\nComputing steering vectors for {len(POOLING_STRATEGIES)} pooling strategies...")
-    steering_vectors: dict[str, np.ndarray] = {}
-    for pooling in POOLING_STRATEGIES:
-        steering_vectors[pooling] = compute_steering_vector(
-            episodes, train_eps, target_step, pooling, MIN_CLASS_SAMPLES
-        )
+    # Compute steering vectors.
+    pooling = POOLING_STRATEGIES[0]
+
+    # Compute a separate steering vector for every step with enough samples.
+    per_step_vectors = compute_per_step_steering_vectors(episodes, train_eps, pooling, MIN_CLASS_SAMPLES)
 
     # --- Online stage ---
-    devices = _get_devices()
+    alphas = [1.0, 2.0, 4.0] if INSPECT_MODE else ALPHAS
+    n_episodes = 20 if INSPECT_MODE else N_EPISODES
 
-    # Build work queue: (pooling, alpha, episode_idx) for all combinations.
-    # Baseline episodes are shared across pooling strategies (no steering applied),
-    # so we only need one set of baseline episodes.
-    work_queue: queue.Queue[tuple[str, float | None, int]] = queue.Queue()
-    baseline_pooling = POOLING_STRATEGIES[0]  # Baseline doesn't use steering, pick any.
-    for ep_idx in range(N_EPISODES):
-        work_queue.put((baseline_pooling, None, ep_idx))
-    for pooling in POOLING_STRATEGIES:
-        for alpha in ALPHAS:
-            for ep_idx in range(N_EPISODES):
+    # Pre-compute secret words so every condition for the same ep_idx
+    # gets the same word (thread-safe, no global random state).
+    secret_words = _precompute_secret_words(n_episodes)
+    print(f"\nSecret words: { {i: secret_words[i] for i in range(min(5, n_episodes))} } ...")
+
+    if INSPECT_MODE:
+        # Sequential, single-GPU path with per-step steering.
+        print("\nINSPECT MODE: per-step steering, sequential on single GPU")
+        print(f"POOLING: {pooling}")
+        print(f"ALPHAS: {alphas}")
+        print(f"EPISODES: {n_episodes}")
+        print(f"STEERED STEPS: {sorted(per_step_vectors.keys())}")
+        print(f"{'=' * 70}\n")
+
+        all_results = await _run_inspect_mode(
+            middle_layer=middle_layer,
+            per_step_vectors=per_step_vectors,
+            max_steps_per_episode=MAX_STEPS_PER_EPISODE,
+            n_episodes=n_episodes,
+            alphas=alphas,
+            secret_words=secret_words,
+        )
+        failed_devices: list[str] = []
+    else:
+        # Multi-GPU, queue/thread pool path with per-step steering.
+        devices = _get_devices()
+
+        # Build work queue: (pooling, alpha, episode_idx) for all combinations.
+        work_queue: queue.Queue[tuple[str, float | None, int]] = queue.Queue()
+        for ep_idx in range(n_episodes):
+            work_queue.put((pooling, None, ep_idx))
+        for alpha in alphas:
+            for ep_idx in range(n_episodes):
                 work_queue.put((pooling, alpha, ep_idx))
 
-    total_episodes = work_queue.qsize()
-    n_devices = min(len(devices), total_episodes)
-    devices = devices[:n_devices]
+        total_episodes = work_queue.qsize()
+        n_devices = min(len(devices), total_episodes)
+        devices = devices[:n_devices]
 
-    n_steered = len(POOLING_STRATEGIES) * len(ALPHAS) * N_EPISODES
-    print(f"\nDEVICES: {devices}")
-    print(f"POOLING STRATEGIES: {POOLING_STRATEGIES}")
-    print(f"ALPHAS: {ALPHAS}")
-    print(f"EPISODES PER CONDITION: {N_EPISODES}")
-    print(f"TOTAL EPISODES: {total_episodes} ({N_EPISODES} baseline + {n_steered} steered)")
-    print(f"TARGET STEP: {target_step}")
-    for pooling, sv in steering_vectors.items():
-        print(f"  {pooling:6s} steering vector norm: {np.linalg.norm(sv):.4f}")
-    print(f"{'=' * 70}\n")
+        n_steered = len(alphas) * n_episodes
+        print(f"\nDEVICES: {devices}")
+        print(f"POOLING: {pooling}")
+        print(f"ALPHAS: {alphas}")
+        print(f"EPISODES PER CONDITION: {n_episodes}")
+        print(f"TOTAL EPISODES: {total_episodes} ({n_episodes} baseline + {n_steered} steered)")
+        print(f"STEERED STEPS: {sorted(per_step_vectors.keys())}")
+        for s, sv in sorted(per_step_vectors.items()):
+            print(f"  step {s:2d} steering vector norm: {np.linalg.norm(sv):.4f}")
+        print(f"{'=' * 70}\n")
 
-    loop = asyncio.get_running_loop()
-    with ThreadPoolExecutor(max_workers=n_devices) as executor:
-        futures = [
-            loop.run_in_executor(
-                executor,
-                _run_device_worker,
-                device,
-                work_queue,
-                target_step,
-                middle_layer,
-                steering_vectors,
-                MAX_STEPS_PER_EPISODE,
-            )
-            for device in devices
-        ]
-        worker_results = await asyncio.gather(*futures, return_exceptions=True)
+        loop = asyncio.get_running_loop()
+        with ThreadPoolExecutor(max_workers=n_devices) as executor:
+            futures = [
+                loop.run_in_executor(
+                    executor,
+                    _run_device_worker,
+                    device,
+                    work_queue,
+                    middle_layer,
+                    per_step_vectors,
+                    MAX_STEPS_PER_EPISODE,
+                    secret_words,
+                )
+                for device in devices
+            ]
+            worker_results = await asyncio.gather(*futures, return_exceptions=True)
 
-    # Collect results.
-    all_results: list[dict] = []
-    failed_devices: list[str] = []
-    for device, result in zip(devices, worker_results, strict=True):
-        if isinstance(result, BaseException):
-            print(f"\n[{device}] FAILED: {result}")
-            failed_devices.append(device)
-            continue
-        all_results.extend(result)
+        # Collect results.
+        all_results: list[dict] = []
+        failed_devices = []
+        for device, result in zip(devices, worker_results, strict=True):
+            if isinstance(result, BaseException):
+                print(f"\n[{device}] FAILED: {result}")
+                failed_devices.append(device)
+                continue
+            all_results.extend(result)
 
-    # Extract baseline results (shared across all pooling strategies).
-    baseline_episodes = [r for r in all_results if r["alpha"] is None]
-    baseline_with_target = [r for r in baseline_episodes if r["target_step_invalid"] is not None]
-    baseline_n_invalid = sum(r["target_step_invalid"] for r in baseline_with_target)
-    baseline_n_total = len(baseline_with_target)
-    baseline_stats = {
-        "n_episodes": baseline_n_total,
-        "n_invalid": baseline_n_invalid,
-        "invalid_rate": baseline_n_invalid / baseline_n_total if baseline_n_total > 0 else 0.0,
-    }
+    # Aggregate invalid rates across all steps per condition.
+    def _condition_stats(results: list[dict]) -> dict:
+        all_steps = [s for r in results for s in r.get("steps", [])]
+        n_total = len(all_steps)
+        n_invalid = sum(1 for s in all_steps if s["is_invalid"])
+        return {
+            "n_episodes": len(results),
+            "n_steps": n_total,
+            "n_invalid": n_invalid,
+            "invalid_rate": n_invalid / n_total if n_total > 0 else 0.0,
+        }
 
-    # Aggregate by (pooling, condition).
+    baseline_eps = [r for r in all_results if r["alpha"] is None]
+    baseline_stats = _condition_stats(baseline_eps)
+
     all_condition_results: dict[str, dict[str, dict]] = {}
-    for pooling in POOLING_STRATEGIES:
+    for p in POOLING_STRATEGIES:
         cond_results: dict[str, dict] = {"baseline": baseline_stats}
-        for alpha in ALPHAS:
+        for alpha in alphas:
             label = f"alpha={alpha}"
-            ep_results = [r for r in all_results if r["pooling"] == pooling and r["alpha"] == alpha]
-            n_with_target = [r for r in ep_results if r["target_step_invalid"] is not None]
-            n_invalid = sum(r["target_step_invalid"] for r in n_with_target)
-            n_total = len(n_with_target)
-            cond_results[label] = {
-                "n_episodes": n_total,
-                "n_invalid": n_invalid,
-                "invalid_rate": n_invalid / n_total if n_total > 0 else 0.0,
-            }
-        all_condition_results[pooling] = cond_results
+            ep_results = [r for r in all_results if r["pooling"] == p and r["alpha"] == alpha]
+            cond_results[label] = _condition_stats(ep_results)
+        all_condition_results[p] = cond_results
 
     # Print summary.
     print(f"\n{'=' * 70}")
-    print("STEERING RESULTS")
+    print("STEERING RESULTS (invalid rate across all steps)")
     print(f"{'=' * 70}")
     print(
-        f"  {'baseline':22s}:  invalid={baseline_stats['n_invalid']:2d}/{baseline_stats['n_episodes']:2d}  "
+        f"  {'baseline':22s}:  invalid={baseline_stats['n_invalid']:3d}/{baseline_stats['n_steps']:3d}  "
         f"rate={baseline_stats['invalid_rate']:.1%}"
     )
-    for pooling in POOLING_STRATEGIES:
-        for alpha in ALPHAS:
+    for p in POOLING_STRATEGIES:
+        for alpha in alphas:
             label = f"alpha={alpha}"
-            stats = all_condition_results[pooling][label]
+            stats = all_condition_results[p][label]
             print(
-                f"  {pooling + '/' + label:22s}:  invalid={stats['n_invalid']:2d}/{stats['n_episodes']:2d}  "
+                f"  {p + '/' + label:22s}:  invalid={stats['n_invalid']:3d}/{stats['n_steps']:3d}  "
                 f"rate={stats['invalid_rate']:.1%}"
             )
 
@@ -576,24 +922,28 @@ async def run() -> None:
         "middle_layer": middle_layer,
         "target_step": target_step,
         "pooling_strategies": POOLING_STRATEGIES,
-        "steering_vector_norms": {p: float(np.linalg.norm(sv)) for p, sv in steering_vectors.items()},
-        "alphas": ALPHAS,
-        "n_episodes_per_condition": N_EPISODES,
+        "per_step_vector_norms": {s: float(np.linalg.norm(sv)) for s, sv in per_step_vectors.items()},
+        "alphas": alphas,
+        "n_episodes_per_condition": n_episodes,
         "conditions": all_condition_results,
+        "secret_words": secret_words,
         "episodes": all_results,
         "failed_devices": failed_devices,
     }
-    results_path = OUTPUT_DIR / "results.json"
+    subdir = f"inspect_{n_episodes}ep" if INSPECT_MODE else f"results_{n_episodes}ep"
+    results_path = OUTPUT_DIR / subdir / "results.json"
+    results_path.parent.mkdir(parents=True, exist_ok=True)
     results_path.write_text(json.dumps(results_data, indent=2))
     print(f"\nResults saved to {results_path}")
 
     # Plot.
+    plot_output = results_path.parent / "steering_effectiveness.png"
     plot_steering_effectiveness(
         all_condition_results,
         target_step=target_step,
         middle_layer=middle_layer,
         model_name=model_name,
-        output_path=OUTPUT_DIR / "steering_effectiveness.png",
+        output_path=plot_output,
     )
 
     if failed_devices:

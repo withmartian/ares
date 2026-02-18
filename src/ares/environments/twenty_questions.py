@@ -177,6 +177,7 @@ class TwentyQuestionsEnvironment(base.Environment[response.LLMResponse, request.
         objects: tuple[str, ...] | list[str] | None = None,
         oracle_model: str = "openai/gpt-4o-mini",  # Cheap model for oracle
         step_limit: int = 20,
+        system_prompt: str | None = None,
         prefix: str = "twenty_questions",
         tracker: stat_tracker.StatTracker | None = None,
     ):
@@ -186,6 +187,7 @@ class TwentyQuestionsEnvironment(base.Environment[response.LLMResponse, request.
             objects: Tuple or list of possible objects to guess. If None, uses DEFAULT_OBJECT_LIST.
             oracle_model: Model to use for the oracle (default: gpt-4o-mini, very cheap).
             step_limit: Maximum number of questions allowed (default: 20).
+            system_prompt: Optional system prompt included in every observation sent to the agent.
             prefix: Prefix for stat tracking.
             tracker: Optional stat tracker for metrics.
         """
@@ -193,6 +195,7 @@ class TwentyQuestionsEnvironment(base.Environment[response.LLMResponse, request.
         self._objects = tuple(objects) if objects is not None else DEFAULT_OBJECT_LIST
         self._oracle_model = oracle_model
         self._step_limit = step_limit
+        self._system_prompt = system_prompt
         self._prefix = prefix
         self._tracker = tracker if tracker is not None else stat_tracker.NullStatTracker()
 
@@ -232,7 +235,8 @@ class TwentyQuestionsEnvironment(base.Environment[response.LLMResponse, request.
         observation = request.LLMRequest(
             messages=[
                 request.UserMessage(role="user", content=initial_prompt),
-            ]
+            ],
+            system_prompt=self._system_prompt,
         )
 
         reset_end_time = time.time()
@@ -276,7 +280,8 @@ class TwentyQuestionsEnvironment(base.Environment[response.LLMResponse, request.
             observation = request.LLMRequest(
                 messages=[
                     request.UserMessage(role="user", content=observation_content),
-                ]
+                ],
+                system_prompt=self._system_prompt,
             )
 
             step_end_time = time.time()
@@ -308,7 +313,8 @@ class TwentyQuestionsEnvironment(base.Environment[response.LLMResponse, request.
             observation = request.LLMRequest(
                 messages=[
                     request.UserMessage(role="user", content=observation_content),
-                ]
+                ],
+                system_prompt=self._system_prompt,
             )
 
             step_end_time = time.time()
@@ -322,7 +328,8 @@ class TwentyQuestionsEnvironment(base.Environment[response.LLMResponse, request.
         observation = request.LLMRequest(
             messages=[
                 request.UserMessage(role="user", content=observation_content),
-            ]
+            ],
+            system_prompt=self._system_prompt,
         )
 
         step_end_time = time.time()

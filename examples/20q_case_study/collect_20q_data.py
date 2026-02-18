@@ -103,13 +103,16 @@ async def _collect_episodes_for_device(
 
     episode_summaries: list[dict] = []
 
-    # Simple dict-based activation capture: a hook writes to this dict, we
-    # read from it after each forward pass.  Avoids the overhead of
-    # ActivationCapture (redundant GPU->CPU copies, O(n^2) trajectory copies).
-    captured: dict[str, torch.Tensor] = {}
+    # Capture activations from ALL forward passes during model.generate().
+    # With KV caching, the first forward pass processes the full prompt
+    # [1, prompt_len, d_model] and subsequent passes process one token each
+    # [1, 1, d_model].  We concatenate them along the seq dimension to get
+    # the full [1, prompt_len + n_generated, d_model] activation tensor,
+    # so downstream probing/steering can use any token position.
+    captured_parts: list[torch.Tensor] = []
 
     def _capture_hook(activation: torch.Tensor, hook) -> torch.Tensor:  # noqa: ARG001
-        captured["resid_post"] = activation.detach().cpu().float()
+        captured_parts.append(activation.detach().cpu().float())
         return activation
 
     # Register the hook once for the whole worker lifetime.
@@ -130,12 +133,16 @@ async def _collect_episodes_for_device(
                 n_invalid = 0
 
                 while (not ts.last()) and (step_idx < max_steps_per_episode):
-                    captured.clear()
+                    captured_parts.clear()
 
                     assert ts.observation is not None
                     action = await client(ts.observation)
 
-                    activation = captured.get("resid_post")
+                    # Concatenate all forward-pass activations along seq dimension.
+                    # The first part has shape [1, prompt_len, d_model] (prompt processing),
+                    # remaining parts are [1, 1, d_model] each (autoregressive tokens).
+                    activation = torch.cat(captured_parts, dim=1) if captured_parts else None
+                    prompt_len = captured_parts[0].shape[1] if captured_parts else 0
 
                     # Record conversation history length before stepping.
                     prev_history_len = len(env._conversation_history)
@@ -158,7 +165,8 @@ async def _collect_episodes_for_device(
                         "oracle_response": oracle_answer,
                     }
                     if activation is not None:
-                        step_record["activation"] = activation  # [1, seq_len, d_model]
+                        step_record["activation"] = activation  # [1, prompt_len + n_generated, d_model]
+                        step_record["prompt_len"] = prompt_len
 
                     steps.append(step_record)
                     step_idx += 1

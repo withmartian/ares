@@ -89,6 +89,7 @@ class TwentyQuestionsSpec:
     objects: tuple[str, ...] = twenty_questions.DEFAULT_OBJECT_LIST
     oracle_model: str = "openai/gpt-4o-mini"
     step_limit: int = 20
+    system_prompt: str | None = None
 
     def get_info(self) -> registry.EnvironmentInfo:
         """Return metadata about Twenty Questions."""
@@ -113,6 +114,7 @@ class TwentyQuestionsSpec:
             objects=tuple(selected_objects),
             oracle_model=self.oracle_model,
             step_limit=self.step_limit,
+            system_prompt=self.system_prompt,
             tracker=tracker,
         )
 
