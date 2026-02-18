@@ -6,7 +6,7 @@ import pathlib
 import re
 import sys
 
-_DEFAULT_RESULTS_PATH = pathlib.Path("outputs/20q_steering_results/results.json")
+_DEFAULT_RESULTS_PATH = pathlib.Path("outputs/deterministic_20q_steering_results/results_20ep/results.json")
 
 
 def _clean(text: str, max_len: int = 120) -> str:
@@ -38,7 +38,11 @@ def main() -> None:
         cond = ep["condition"].split("/")[-1]
         cond_eps.setdefault(cond, []).append(ep)
 
-    cond_order = ["baseline", "alpha=1.0", "alpha=2.0", "alpha=4.0"]
+    # Build condition order dynamically from the data.
+    alphas = sorted(set(ep.get("alpha") for ep in data["episodes"] if ep.get("alpha") is not None))
+    cond_order = ["baseline"] + [f"alpha={a}" for a in alphas]
+    # Filter to conditions actually present in the data.
+    cond_order = [c for c in cond_order if c in cond_eps]
 
     # ===================================================================
     # TABLE 1: Overall invalid question rate
@@ -148,24 +152,47 @@ def main() -> None:
     out("QUALITATIVE EXAMPLES")
     out("=" * 72)
 
-    # Example 1: Steering rescues a degenerate baseline
+    # Example 1: Find an episode where baseline is mostly invalid but steering helps.
+    # Pick the best steered condition (lowest invalid rate that isn't baseline).
+    best_steered_cond = min(
+        (c for c in cond_order if c != "baseline"),
+        key=lambda c: sum(1 for ep in cond_eps[c] for s in ep["steps"] if s["is_invalid"]) / max(1, sum(len(ep["steps"]) for ep in cond_eps[c])),
+    )
+    # Find an episode where baseline has high invalid rate and steered has lower.
+    best_rescue_ep = None
+    best_rescue_delta = 0.0
+    for ep_idx in {ep["episode_idx"] for ep in cond_eps["baseline"]}:
+        b_ep = [e for e in cond_eps["baseline"] if e["episode_idx"] == ep_idx]
+        s_ep = [e for e in cond_eps[best_steered_cond] if e["episode_idx"] == ep_idx]
+        if not b_ep or not s_ep:
+            continue
+        b_steps = b_ep[0]["steps"]
+        s_steps = s_ep[0]["steps"]
+        b_rate = sum(1 for s in b_steps if s["is_invalid"]) / max(1, len(b_steps))
+        s_rate = sum(1 for s in s_steps if s["is_invalid"]) / max(1, len(s_steps))
+        delta = b_rate - s_rate
+        if delta > best_rescue_delta:
+            best_rescue_delta = delta
+            best_rescue_ep = ep_idx
+
     out()
     out("-" * 72)
     out("Example 1: Steering rescues a degenerate episode")
-    out("  Episode 3 — Baseline produces zero valid questions;")
-    out("  α=1.0 steering produces coherent game-play.")
+    if best_rescue_ep is not None:
+        out(f"  Episode {best_rescue_ep} — Baseline vs {best_steered_cond} steering.")
     out("-" * 72)
 
-    for cond in ["baseline", "alpha=1.0"]:
-        ep = [e for e in cond_eps[cond] if e["episode_idx"] == 3][0]
-        label = "Baseline (no steering)" if cond == "baseline" else "Steered (α=1.0)"
-        out(f"\n  [{label}]")
-        for s in ep["steps"]:
-            if s["step_idx"] > 5:
-                break
-            tag = "INVALID" if s["is_invalid"] else "valid "
-            q = _clean(s["model_question"], 90)
-            out(f"    t={s['step_idx']}  [{tag}]  {q}")
+    if best_rescue_ep is not None:
+        for cond in ["baseline", best_steered_cond]:
+            ep = [e for e in cond_eps[cond] if e["episode_idx"] == best_rescue_ep][0]
+            label = "Baseline (no steering)" if cond == "baseline" else f"Steered ({cond.replace('alpha=', 'α=')})"
+            out(f"\n  [{label}]")
+            for s in ep["steps"]:
+                if s["step_idx"] > 5:
+                    break
+                tag = "INVALID" if s["is_invalid"] else "valid "
+                q = _clean(s["model_question"], 90)
+                out(f"    t={s['step_idx']}  [{tag}]  {q}")
 
     # Example 2: Structural shift — questions vs statements
     out()
@@ -182,14 +209,14 @@ def main() -> None:
         for s in ep["steps"]:
             if s["is_invalid"] and s["step_idx"] <= 9:
                 baseline_invalids.append((ep["episode_idx"], s["step_idx"], s["model_question"]))
-    for ep in cond_eps["alpha=1.0"]:
+    for ep in cond_eps[best_steered_cond]:
         for s in ep["steps"]:
             if not s["is_invalid"] and s["step_idx"] <= 9 and s["steered"]:
                 steered_valids.append((ep["episode_idx"], s["step_idx"], s["model_question"]))
 
     out("  Baseline (invalid — model makes statements instead of asking):")
     shown = 0
-    seen_eps = set()
+    seen_eps: set[int] = set()
     for ep_idx, step_idx, q in baseline_invalids:
         if ep_idx in seen_eps:
             continue
@@ -200,7 +227,8 @@ def main() -> None:
             break
 
     out()
-    out("  α=1.0 steered (valid — model asks yes/no questions):")
+    short_cond = best_steered_cond.replace("alpha=", "α=")
+    out(f"  {short_cond} steered (valid — model asks yes/no questions):")
     shown = 0
     seen_eps = set()
     for ep_idx, step_idx, q in steered_valids:
@@ -233,14 +261,19 @@ def main() -> None:
             out(f"    {short:>10s}  [{tag}]  {q}")
         out()
 
-    # Example 4: Over-steering with alpha=4.0
+    # Example 4: Over-steering with the highest alpha
+    highest_alpha_cond = cond_order[-1]
+    highest_alpha_short = highest_alpha_cond.replace("alpha=", "α=")
     out("-" * 72)
-    out("Example 4: Over-steering degrades output quality (α=4.0)")
+    out(f"Example 4: Over-steering degrades output quality ({highest_alpha_short})")
     out("-" * 72)
     out()
-    for ep_idx in [3, 4]:
-        ep = [e for e in cond_eps["alpha=4.0"] if e["episode_idx"] == ep_idx][0]
-        out(f"  Episode {ep_idx} (α=4.0):")
+    # Pick two representative episodes from the highest alpha condition.
+    highest_eps = cond_eps[highest_alpha_cond]
+    sample_ep_indices = sorted({ep["episode_idx"] for ep in highest_eps})[:2]
+    for ep_idx in sample_ep_indices:
+        ep = [e for e in highest_eps if e["episode_idx"] == ep_idx][0]
+        out(f"  Episode {ep_idx} ({highest_alpha_short}):")
         for s in ep["steps"]:
             if s["step_idx"] > 6:
                 break
@@ -256,27 +289,52 @@ def main() -> None:
     out("SUMMARY OF FINDINGS")
     out("=" * 72)
     out()
-    out("1. Per-step CAA steering with α=1.0 reduces the overall invalid question")
-    out("   rate from 76% (baseline) to 52% — a 24 percentage point reduction.")
+
+    # Compute summary statistics from the data.
+    def _overall_rate(cond: str) -> float:
+        steps = [s for ep in cond_eps[cond] for s in ep["steps"]]
+        return sum(1 for s in steps if s["is_invalid"]) / max(1, len(steps))
+
+    def _phase_rate(cond: str, lo: int, hi: int) -> float:
+        steps = [s for ep in cond_eps[cond] for s in ep["steps"] if lo <= s["step_idx"] <= hi]
+        return sum(1 for s in steps if s["is_invalid"]) / max(1, len(steps))
+
+    b_rate = _overall_rate("baseline")
+    best_rate = _overall_rate(best_steered_cond)
+    best_short = best_steered_cond.replace("alpha=", "α=")
+    delta_pp = (b_rate - best_rate) * 100
+
+    out(f"1. Per-step CAA steering with {best_short} reduces the overall invalid question")
+    out(f"   rate from {b_rate:.0%} (baseline) to {best_rate:.0%} — a {delta_pp:.0f} percentage point reduction.")
     out()
-    out("2. The effect is strongest in early game steps (0-4): baseline invalid")
-    out("   rate of 40% drops to 8% with α=1.0, and the model consistently")
+
+    b_early = _phase_rate("baseline", 0, 4)
+    s_early = _phase_rate(best_steered_cond, 0, 4)
+    out(f"2. The effect is strongest in early game steps (0-4): baseline invalid")
+    out(f"   rate of {b_early:.0%} drops to {s_early:.0%} with {best_short}, and the model consistently")
     out("   produces well-formed yes/no questions.")
     out()
+
     out("3. Steering induces a qualitative shift in completion type. Baseline")
     out("   failures are predominantly declarative statements ('The answer is")
     out("   a pencil'), while steered completions maintain interrogative form.")
     out()
+
+    dose_parts = []
+    for c in cond_order:
+        if c == "baseline":
+            continue
+        r = _overall_rate(c)
+        dose_parts.append(f"{c.replace('alpha=', 'α=')} ({r:.0%} invalid)")
     out("4. The steering effect exhibits a dose-response relationship:")
-    out("   α=1.0 (52% invalid) > α=2.0 (55%) > α=4.0 (60%), with excessive")
-    out("   steering (α=4.0) degrading output coherence through residual stream")
-    out("   corruption.")
+    out(f"   {', '.join(dose_parts)}.")
     out()
-    out("5. Steering is most effective when the model's baseline behaviour is")
-    out("   recoverable. Episode 3 demonstrates that steering can rescue an")
-    out("   episode from complete degeneration (0% valid → 100% valid at steps")
-    out("   0-5), confirming that the learned direction is causally related to")
-    out("   the valid/invalid question distinction.")
+
+    if best_rescue_ep is not None:
+        out(f"5. Steering is most effective when the model's baseline behaviour is")
+        out(f"   recoverable. Episode {best_rescue_ep} demonstrates that steering can rescue an")
+        out("   episode from degeneration, confirming that the learned direction is")
+        out("   causally related to the valid/invalid question distinction.")
 
     # Write to file.
     output_path = results_path.parent / "paper_analysis.txt"

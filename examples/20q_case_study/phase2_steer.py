@@ -80,7 +80,7 @@ TRAIN_RATIO = 0.8
 
 DATA_DIR = pathlib.Path("outputs/20q_data")
 PROBE_RESULTS_PATH = pathlib.Path("outputs/20q_probing_results/results.json")
-OUTPUT_DIR = pathlib.Path("outputs/20q_steering_results")
+OUTPUT_DIR = pathlib.Path("outputs/deterministic_20q_steering_results")
 
 # Minimum samples per class at target step in training set.
 MIN_CLASS_SAMPLES = 5
