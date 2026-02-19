@@ -27,6 +27,7 @@ from ares.code_agents import mini_swe_agent
 from ares.containers import containers
 from ares.containers import daytona as ares_daytona
 from ares.environments import base
+from ares.environments import trajectory as trajectory_mod
 from ares.experiment_tracking import stat_tracker
 from ares.llms import queue_mediated_client
 from ares.llms import request
@@ -67,6 +68,7 @@ class CodeEnvironment(base.Environment[response.LLMResponse, request.LLMRequest 
         step_limit: int = 250,  # Same as mini-swe-agent default.
         prefix: str = "harbor_env",
         tracker: stat_tracker.StatTracker | None = None,
+        trajectory_collector: trajectory_mod.TrajectoryCollector | None = None,
     ):
         self._tasks = tasks
         self._container_factory = container_factory
@@ -74,6 +76,7 @@ class CodeEnvironment(base.Environment[response.LLMResponse, request.LLMRequest 
         self._step_limit = step_limit
         self._prefix = prefix
         self._tracker = tracker if tracker is not None else stat_tracker.NullStatTracker()
+        self._trajectory_collector = trajectory_collector
 
         # We set the LLM client to a queue mediated client so that
         # we can return LLM requests in the reset and step methods.
@@ -122,6 +125,23 @@ class CodeEnvironment(base.Environment[response.LLMResponse, request.LLMRequest 
         assert ts.observation is not None
         result = base.TimeStep(step_type="FIRST", reward=ts.reward, discount=ts.discount, observation=ts.observation)
 
+        # Record the FIRST step in the trajectory.
+        # FIRST steps have only observation; action/reward/discount are None per dm_env semantics.
+        if self._trajectory_collector is not None:
+            assert self._current_task is not None
+            self._trajectory_collector.begin_episode(task_name=self._current_task.name)
+            self._trajectory_collector.record_step(
+                trajectory_mod.StepRecord(
+                    step_index=0,
+                    step_type="FIRST",
+                    observation=trajectory_mod.serialize_llm_request(result.observation),
+                    action=None,
+                    reward=None,
+                    discount=None,
+                    timestamp=time.time(),
+                )
+            )
+
         reset_end_time = time.time()
         self._tracker.scalar(f"{self._prefix}/reset", reset_end_time - reset_start_time)
         return result
@@ -145,15 +165,37 @@ class CodeEnvironment(base.Environment[response.LLMResponse, request.LLMRequest 
         with self._tracker.timeit(f"{self._prefix}/get_time_step"):
             ts = await self._get_time_step()
 
+        truncated = False
         if self._step_count >= self._step_limit:
             _LOGGER.debug("[%d] Step limit reached. Returning LAST timestep.", id(self))
             assert self._code_agent_task is not None
             self._code_agent_task.cancel()
             # Truncation: step_type="LAST", discount=1.0, unless we're _also_ already in a terminal state.
+            truncated = ts.step_type != "LAST"
             ts = base.TimeStep(step_type="LAST", reward=ts.reward, discount=ts.discount, observation=ts.observation)
 
         if ts.step_type == "LAST":
             self._requires_reset = True
+
+        # Record the step in the trajectory.
+        if self._trajectory_collector is not None:
+            self._trajectory_collector.record_step(
+                trajectory_mod.StepRecord(
+                    step_index=self._step_count,
+                    step_type=ts.step_type,
+                    observation=(
+                        trajectory_mod.serialize_llm_request(ts.observation)
+                        if ts.observation is not None
+                        else None
+                    ),
+                    action=trajectory_mod.serialize_llm_response(action),
+                    reward=ts.reward,
+                    discount=ts.discount,
+                    timestamp=time.time(),
+                )
+            )
+            if ts.step_type == "LAST":
+                self._trajectory_collector.end_episode(truncated=truncated)
 
         step_end_time = time.time()
         self._tracker.scalar(f"{self._prefix}/step", step_end_time - step_start_time)

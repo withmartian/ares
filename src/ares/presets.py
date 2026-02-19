@@ -22,6 +22,7 @@ from ares.code_agents.terminus2 import terminus2_agent
 from ares.containers import containers
 from ares.environments import base
 from ares.environments import code_env
+from ares.environments import trajectory
 from ares.experiment_tracking import stat_tracker
 
 _LOGGER = logging.getLogger(__name__)
@@ -64,6 +65,7 @@ class HarborSpec:
         selector: registry.TaskSelector,
         container_factory: containers.ContainerFactory,
         tracker: stat_tracker.StatTracker | None = None,
+        trajectory_collector: trajectory.TrajectoryCollector | None = None,
     ) -> base.Environment:
         """Create Harbor Verified environment with mini-swe-agent."""
         all_tasks = self.ds
@@ -78,6 +80,7 @@ class HarborSpec:
             code_agent_factory=self.code_agent_factory,
             step_limit=250,  # Same as mini-swe-agent default.
             tracker=tracker,
+            trajectory_collector=trajectory_collector,
         )
 
 
