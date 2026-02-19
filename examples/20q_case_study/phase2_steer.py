@@ -44,7 +44,6 @@ import numpy as np
 import torch
 from tqdm import tqdm
 import transformer_lens
-import transformers
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -98,6 +97,7 @@ def _precompute_secret_words(n_episodes: int) -> dict[int, str]:
     rng = random.Random(SEED)
     objects = twenty_questions.DEFAULT_OBJECT_LIST
     return {ep_idx: rng.choice(objects) for ep_idx in range(n_episodes)}
+
 
 # ---------------------------------------------------------------------------
 # Helpers (shared with Phase 1)
@@ -204,7 +204,8 @@ def _select_target_step(
 
     print("\n  Step selection (train set):")
     print(
-        f"  {'step':>4s}  {'n_total':>7s}  {'n_inv':>5s}  {'n_val':>5s}  {'inv_rate':>8s}  {'probe_acc':>9s}  {'score':>6s}"
+        f"  {'step':>4s}  {'n_total':>7s}  {'n_inv':>5s}  {'n_val':>5s}  "
+        f"{'inv_rate':>8s}  {'probe_acc':>9s}  {'score':>6s}"
     )
     candidates: list[tuple[float, int]] = []
     for s_str, acc in sorted(step_accuracies.items(), key=lambda x: int(x[0])):
@@ -398,12 +399,10 @@ async def _run_steered_episodes_for_device(
         model = transformer_lens.HookedTransformer.from_pretrained(MODEL_NAME, device="cpu", dtype=torch.bfloat16)
     model = model.to(device)
 
-    tokenizer = transformers.AutoTokenizer.from_pretrained(MODEL_NAME)
-    client = mech_interp.create_hooked_transformer_client_with_chat_template(
+    client = mech_interp.HookedTransformerLLMClient(
         model=model,
-        tokenizer=tokenizer,
         max_new_tokens=MAX_NEW_TOKENS,
-        verbose=False,
+        generation_kwargs={"verbose": False},
     )
 
     hook_name = f"blocks.{middle_layer}.hook_resid_post"
@@ -501,15 +500,12 @@ async def _run_steered_episodes_for_device(
             results.append(result)
 
             n_invalid = sum(1 for _, _, _, _, inv in step_log if inv)
-            tqdm.write(
-                f"  [{device}] {condition:22s} ep={ep_idx:03d} DONE  "
-                f"invalid={n_invalid}/{len(step_log)} steps"
-            )
+            tqdm.write(f"  [{device}] {condition:22s} ep={ep_idx:03d} DONE  invalid={n_invalid}/{len(step_log)} steps")
 
     finally:
         hook_point.remove_hooks("fwd")
 
-    del model, tokenizer, client
+    del model, client
     _free_gpu_memory()
 
     return results
@@ -572,12 +568,10 @@ async def _run_inspect_mode(
 
     model = transformer_lens.HookedTransformer.from_pretrained(MODEL_NAME, device="cpu", dtype=torch.bfloat16)
     model = model.to(device)
-    tokenizer = transformers.AutoTokenizer.from_pretrained(MODEL_NAME)
-    client = mech_interp.create_hooked_transformer_client_with_chat_template(
+    client = mech_interp.HookedTransformerLLMClient(
         model=model,
-        tokenizer=tokenizer,
         max_new_tokens=MAX_NEW_TOKENS,
-        verbose=False,
+        generation_kwargs={"verbose": False},
     )
 
     hook_name = f"blocks.{middle_layer}.hook_resid_post"
@@ -684,7 +678,7 @@ async def _run_inspect_mode(
     finally:
         hook_point.remove_hooks("fwd")
 
-    del model, tokenizer, client
+    del model, client
     _free_gpu_memory()
 
     # Write log file.

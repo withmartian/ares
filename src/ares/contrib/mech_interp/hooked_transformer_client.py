@@ -2,7 +2,7 @@
 
 from collections.abc import Callable, Sequence
 import dataclasses
-from typing import Any
+from typing import Any, cast
 
 import torch
 import transformer_lens
@@ -21,8 +21,6 @@ class HookedTransformerLLMClient:
         model: A TransformerLens HookedTransformer instance.
         max_new_tokens: Maximum number of tokens to generate per completion.
         generation_kwargs: Additional keyword arguments passed to model.generate().
-        format_messages_fn: Optional function to convert chat messages to model input.
-            If None, uses a simple concatenation of message contents.
 
     Example:
         ```python
@@ -47,14 +45,6 @@ class HookedTransformerLLMClient:
     # TODO: Identify better default max_new_tokens size
     max_new_tokens: int = 512
     generation_kwargs: dict[str, Any] = dataclasses.field(default_factory=dict)
-    _format_messages_fn: Callable[[Sequence[Any]], str] | None = dataclasses.field(default=None, repr=False)
-
-    @property
-    def format_messages_fn(self) -> Callable[[Sequence[Any]], str]:
-        """Get the message formatting function."""
-        if self._format_messages_fn is None:
-            return self._default_format_messages
-        return self._format_messages_fn
 
     @staticmethod
     def _default_format_messages(messages: Sequence[Any]) -> str:
@@ -96,7 +86,9 @@ class HookedTransformerLLMClient:
             add_generation_prompt=True,
             truncation=True,
             max_length=self.model.cfg.n_ctx - max_output_tokens,
+            return_tensors="pt",
         )
+        input_ids = cast(torch.Tensor, input_ids)
         input_ids = input_ids.to(self.model.cfg.device)
         input_ids = torch.tensor(input_ids).unsqueeze(0)
         num_input_tokens = input_ids.shape[-1]
@@ -138,58 +130,3 @@ class HookedTransformerLLMClient:
                 generated_tokens=num_output_tokens,
             ),
         )
-
-
-def create_hooked_transformer_client_with_chat_template(
-    model: transformer_lens.HookedTransformer,
-    tokenizer: Any,
-    max_new_tokens: int = 2048,
-    **generation_kwargs: Any,
-) -> HookedTransformerLLMClient:
-    """Create a HookedTransformerLLMClient with proper chat template formatting.
-
-    This factory function creates a client that uses the tokenizer's chat template
-    (like Qwen2.5, Llama, etc.) to properly format messages.
-
-    Args:
-        model: TransformerLens HookedTransformer instance.
-        tokenizer: HuggingFace tokenizer with apply_chat_template method.
-        max_new_tokens: Maximum tokens to generate.
-        **generation_kwargs: Additional arguments for generation.
-
-    Returns:
-        Configured HookedTransformerLLMClient instance.
-
-    Example:
-        ```python
-        from transformer_lens import HookedTransformer
-        from transformers import AutoTokenizer
-
-        model = HookedTransformer.from_pretrained("gpt2-small")
-        tokenizer = AutoTokenizer.from_pretrained("gpt2")
-
-        client = create_hooked_transformer_client_with_chat_template(
-            model=model,
-            tokenizer=tokenizer,
-            max_new_tokens=512,
-            temperature=0.7,
-        )
-        ```
-    """
-
-    def format_with_chat_template(messages: Sequence[Any]) -> str:
-        """Format messages using tokenizer's chat template."""
-        # Apply chat template without tokenization (just get the text)
-        formatted = tokenizer.apply_chat_template(
-            messages,
-            add_generation_prompt=True,
-            tokenize=False,
-        )
-        return formatted
-
-    return HookedTransformerLLMClient(
-        model=model,
-        max_new_tokens=max_new_tokens,
-        generation_kwargs=generation_kwargs,
-        _format_messages_fn=format_with_chat_template,
-    )

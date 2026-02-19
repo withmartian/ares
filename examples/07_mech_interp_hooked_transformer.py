@@ -16,9 +16,8 @@ Example usage:
 import asyncio
 
 import ares
-from ares.contrib.mech_interp import ActivationCapture
-from ares.contrib.mech_interp import HookedTransformerLLMClient
-from transformer_lens import HookedTransformer
+from ares.contrib import mech_interp
+import transformer_lens
 
 from . import utils
 
@@ -31,14 +30,14 @@ async def main():
     # Load a small model for demonstration
     # For real work, you'd use a larger model like gpt2-medium or pythia-1.4b
     print("\nLoading HookedTransformer model...")
-    model = HookedTransformer.from_pretrained(
+    model = transformer_lens.HookedTransformer.from_pretrained(
         "qwen2.5-1.5b-instruct",
         device="cpu",  # Change to "cuda" if you have a GPU
         n_ctx=4096,  # Setting increased context window here since coding takes a lot of tokens
     )
 
     # Create the LLM client using the HookedTransformer model
-    client = HookedTransformerLLMClient(model=model)
+    client = mech_interp.HookedTransformerLLMClient(model=model)
 
     # Example 1: Basic execution with activation capture
     print("\nRunning agent with activation capture...")
@@ -46,7 +45,7 @@ async def main():
 
     async with ares.make("sbv-mswea:0") as env:
         # Set up activation capture
-        with ActivationCapture(model) as capture:
+        with mech_interp.ActivationCapture(model) as capture:
             ts = await env.reset()
             step_count = 0
             max_steps = 3  # Limit steps for demo

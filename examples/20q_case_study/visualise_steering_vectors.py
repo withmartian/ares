@@ -16,10 +16,10 @@
 import json
 import pathlib
 
+from matplotlib import collections
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
-from matplotlib import collections
 
 # ---------------------------------------------------------------------------
 # Configuration (must match phase2_steer.py)
@@ -119,9 +119,7 @@ def compute_per_step_vectors(
 # ---------------------------------------------------------------------------
 
 
-def plot_cosine_similarity_heatmap(
-    vectors: dict[int, np.ndarray], output_path: pathlib.Path
-) -> None:
+def plot_cosine_similarity_heatmap(vectors: dict[int, np.ndarray], output_path: pathlib.Path) -> None:
     steps = sorted(vectors.keys())
     n = len(steps)
     sim_matrix = np.zeros((n, n))
@@ -142,16 +140,14 @@ def plot_cosine_similarity_heatmap(
     ax.set_xlabel("Step")
     ax.set_ylabel("Step")
     ax.set_title(
-        "Cosine similarity between per-step steering vectors\n"
-        "(valid - invalid direction evolves across the trajectory)"
+        "Cosine similarity between per-step steering vectors\n(valid - invalid direction evolves across the trajectory)"
     )
 
     # Annotate cells.
     for i in range(n):
         for j in range(n):
             color = "white" if abs(sim_matrix[i, j]) > 0.6 else "black"
-            ax.text(j, i, f"{sim_matrix[i, j]:.2f}", ha="center", va="center",
-                    fontsize=7, color=color)
+            ax.text(j, i, f"{sim_matrix[i, j]:.2f}", ha="center", va="center", fontsize=7, color=color)
 
     fig.colorbar(im, ax=ax, label="Cosine similarity", shrink=0.8)
     fig.tight_layout()
@@ -160,9 +156,7 @@ def plot_cosine_similarity_heatmap(
     print(f"Saved: {output_path}")
 
 
-def plot_norm_per_step(
-    vectors: dict[int, np.ndarray], output_path: pathlib.Path
-) -> None:
+def plot_norm_per_step(vectors: dict[int, np.ndarray], output_path: pathlib.Path) -> None:
     steps = sorted(vectors.keys())
     norms = [np.linalg.norm(vectors[s]) for s in steps]
 
@@ -175,9 +169,15 @@ def plot_norm_per_step(
     ax.set_title("Steering vector norm per step\n(magnitude of the valid/invalid separation in activation space)")
     ax.grid(True, alpha=0.3, axis="y")
 
-    for bar, norm in zip(bars, norms):
-        ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.01,
-                f"{norm:.2f}", ha="center", va="bottom", fontsize=8)
+    for bar, norm in zip(bars, norms, strict=True):
+        ax.text(
+            bar.get_x() + bar.get_width() / 2,
+            bar.get_height() + 0.01,
+            f"{norm:.2f}",
+            ha="center",
+            va="bottom",
+            fontsize=8,
+        )
 
     fig.tight_layout()
     fig.savefig(output_path, dpi=150, bbox_inches="tight")
@@ -185,19 +185,17 @@ def plot_norm_per_step(
     print(f"Saved: {output_path}")
 
 
-def plot_pca_trajectory(
-    vectors: dict[int, np.ndarray], output_path: pathlib.Path
-) -> None:
+def plot_pca_trajectory(vectors: dict[int, np.ndarray], output_path: pathlib.Path) -> None:
     steps = sorted(vectors.keys())
     matrix = np.stack([vectors[s] for s in steps])  # [n_steps, d_model]
 
     # Centre and PCA.
     mean = matrix.mean(axis=0)
     centred = matrix - mean
-    U, S, Vt = np.linalg.svd(centred, full_matrices=False)
+    U, S, Vt = np.linalg.svd(centred, full_matrices=False)  # noqa: N806, RUF059
     coords = centred @ Vt[:2].T  # project onto first 2 PCs
 
-    explained = S[:2] ** 2 / (S ** 2).sum()
+    explained = S[:2] ** 2 / (S**2).sum()
 
     fig, ax = plt.subplots(figsize=(8, 7))
 
@@ -211,14 +209,23 @@ def plot_pca_trajectory(
 
     # Scatter with step labels.
     scatter = ax.scatter(
-        coords[:, 0], coords[:, 1],
-        c=steps, cmap="viridis", s=80, zorder=5, edgecolors="white", linewidths=1.2,
+        coords[:, 0],
+        coords[:, 1],
+        c=steps,
+        cmap="viridis",
+        s=80,
+        zorder=5,
+        edgecolors="white",
+        linewidths=1.2,
     )
     for i, s in enumerate(steps):
         ax.annotate(
-            f"t={s}", (coords[i, 0], coords[i, 1]),
-            textcoords="offset points", xytext=(8, 8), fontsize=8,
-            bbox=dict(boxstyle="round,pad=0.2", fc="white", alpha=0.7, ec="none"),
+            f"t={s}",
+            (coords[i, 0], coords[i, 1]),
+            textcoords="offset points",
+            xytext=(8, 8),
+            fontsize=8,
+            bbox={"boxstyle": "round,pad=0.2", "fc": "white", "alpha": 0.7, "ec": "none"},
         )
 
     ax.set_xlabel(f"PC1 ({explained[0]:.0%} variance)")
@@ -251,7 +258,7 @@ def main() -> None:
     print("Visualising steering vector evolution across steps")
     print("=" * 70)
 
-    episodes, metadata = load_episodes(DATA_DIR)
+    episodes, _ = load_episodes(DATA_DIR)
     all_ep_indices = sorted({ep["episode_idx"] for ep in episodes})
     train_eps, _ = train_test_split(all_ep_indices, TRAIN_RATIO)
 

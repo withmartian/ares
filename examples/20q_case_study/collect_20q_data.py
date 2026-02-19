@@ -27,7 +27,6 @@ from ares.contrib import mech_interp
 import torch
 from tqdm import tqdm
 import transformer_lens
-import transformers
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -87,12 +86,10 @@ async def _collect_episodes_for_device(
         model = transformer_lens.HookedTransformer.from_pretrained(MODEL_NAME, device="cpu", dtype=torch.bfloat16)
     model = model.to(device)
 
-    tokenizer = transformers.AutoTokenizer.from_pretrained(MODEL_NAME)
-    client = mech_interp.create_hooked_transformer_client_with_chat_template(
+    client = mech_interp.HookedTransformerLLMClient(
         model=model,
-        tokenizer=tokenizer,
         max_new_tokens=MAX_NEW_TOKENS,
-        verbose=False,
+        generation_kwargs={"verbose": False},
     )
 
     n_layers = model.cfg.n_layers
@@ -193,7 +190,7 @@ async def _collect_episodes_for_device(
     finally:
         hook_point.remove_hooks("fwd")
 
-    del model, tokenizer, client
+    del model, client
     _free_gpu_memory()
 
     return episode_summaries, n_layers, d_model, middle_layer

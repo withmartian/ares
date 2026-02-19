@@ -39,7 +39,7 @@ def main() -> None:
         cond_eps.setdefault(cond, []).append(ep)
 
     # Build condition order dynamically from the data.
-    alphas = sorted(set(ep.get("alpha") for ep in data["episodes"] if ep.get("alpha") is not None))
+    alphas = sorted({ep.get("alpha") for ep in data["episodes"] if ep.get("alpha") is not None})
     cond_order = ["baseline"] + [f"alpha={a}" for a in alphas]
     # Filter to conditions actually present in the data.
     cond_order = [c for c in cond_order if c in cond_eps]
@@ -53,7 +53,7 @@ def main() -> None:
     out("=" * 72)
     out()
     out(f"  {'Condition':<16s}  {'Episodes':>8s}  {'Steps':>6s}  {'Invalid':>8s}  {'Rate':>8s}  {'Δ vs base':>10s}")
-    out(f"  {'-'*16}  {'-'*8}  {'-'*6}  {'-'*8}  {'-'*8}  {'-'*10}")
+    out(f"  {'-' * 16}  {'-' * 8}  {'-' * 6}  {'-' * 8}  {'-' * 8}  {'-' * 10}")
 
     baseline_rate = None
     for cond in cond_order:
@@ -84,7 +84,7 @@ def main() -> None:
         short = cond.replace("alpha=", "α=")
         header += f"  {short:>10s}"
     out(header)
-    out(f"  {'-'*16}" + f"  {'-'*10}" * len(cond_order))
+    out(f"  {'-' * 16}" + f"  {'-' * 10}" * len(cond_order))
 
     for phase_name, lo, hi in phases:
         row = f"  {phase_name:<16s}"
@@ -110,7 +110,7 @@ def main() -> None:
         short = cond.replace("alpha=", "α=")
         header += f"  {short:>10s}"
     out(header)
-    out(f"  {'-'*4}" + f"  {'-'*10}" * len(cond_order))
+    out(f"  {'-' * 4}" + f"  {'-' * 10}" * len(cond_order))
 
     max_step = max(s["step_idx"] for ep in data["episodes"] for s in ep["steps"])
     for step_idx in range(max_step + 1):
@@ -121,7 +121,7 @@ def main() -> None:
             if steps:
                 n_inv = sum(1 for s in steps if s["is_invalid"])
                 n_tot = len(steps)
-                row += f"  {n_inv}/{n_tot}={n_inv/n_tot:>4.0%} "
+                row += f"  {n_inv}/{n_tot}={n_inv / n_tot:>4.0%} "
             else:
                 row += f"  {'---':>10s}"
         out(row)
@@ -136,13 +136,13 @@ def main() -> None:
     out("=" * 72)
     out()
     out(f"  {'Condition':<16s}  {'Has ?':>8s}  {'Total':>6s}  {'Rate':>8s}")
-    out(f"  {'-'*16}  {'-'*8}  {'-'*6}  {'-'*8}")
+    out(f"  {'-' * 16}  {'-' * 8}  {'-' * 6}  {'-' * 8}")
     for cond in cond_order:
         eps = cond_eps[cond]
         steps = [s for ep in eps for s in ep["steps"] if s["step_idx"] <= 9]
         n_q = sum(1 for s in steps if _is_question_shaped(s["model_question"]))
         n_tot = len(steps)
-        out(f"  {cond:<16s}  {n_q:>8d}  {n_tot:>6d}  {n_q/n_tot:>8.1%}")
+        out(f"  {cond:<16s}  {n_q:>8d}  {n_tot:>6d}  {n_q / n_tot:>8.1%}")
 
     # ===================================================================
     # FIGURE: Curated examples
@@ -156,7 +156,8 @@ def main() -> None:
     # Pick the best steered condition (lowest invalid rate that isn't baseline).
     best_steered_cond = min(
         (c for c in cond_order if c != "baseline"),
-        key=lambda c: sum(1 for ep in cond_eps[c] for s in ep["steps"] if s["is_invalid"]) / max(1, sum(len(ep["steps"]) for ep in cond_eps[c])),
+        key=lambda c: sum(1 for ep in cond_eps[c] for s in ep["steps"] if s["is_invalid"])
+        / max(1, sum(len(ep["steps"]) for ep in cond_eps[c])),
     )
     # Find an episode where baseline has high invalid rate and steered has lower.
     best_rescue_ep = None
@@ -184,7 +185,7 @@ def main() -> None:
 
     if best_rescue_ep is not None:
         for cond in ["baseline", best_steered_cond]:
-            ep = [e for e in cond_eps[cond] if e["episode_idx"] == best_rescue_ep][0]
+            ep = next(e for e in cond_eps[cond] if e["episode_idx"] == best_rescue_ep)
             label = "Baseline (no steering)" if cond == "baseline" else f"Steered ({cond.replace('alpha=', 'α=')})"
             out(f"\n  [{label}]")
             for s in ep["steps"]:
@@ -221,7 +222,7 @@ def main() -> None:
         if ep_idx in seen_eps:
             continue
         seen_eps.add(ep_idx)
-        out(f"    ep{ep_idx} t={step_idx}: \"{_clean(q, 100)}\"")
+        out(f'    ep{ep_idx} t={step_idx}: "{_clean(q, 100)}"')
         shown += 1
         if shown >= 5:
             break
@@ -235,7 +236,7 @@ def main() -> None:
         if ep_idx in seen_eps:
             continue
         seen_eps.add(ep_idx)
-        out(f"    ep{ep_idx} t={step_idx}: \"{_clean(q, 100)}\"")
+        out(f'    ep{ep_idx} t={step_idx}: "{_clean(q, 100)}"')
         shown += 1
         if shown >= 5:
             break
@@ -250,7 +251,7 @@ def main() -> None:
     for ep_idx in range(5):
         out(f"  Episode {ep_idx}, step 1:")
         for cond in cond_order:
-            ep = [e for e in cond_eps[cond] if e["episode_idx"] == ep_idx][0]
+            ep = next(e for e in cond_eps[cond] if e["episode_idx"] == ep_idx)
             s = [s for s in ep["steps"] if s["step_idx"] == 1]
             if not s:
                 continue
@@ -272,7 +273,7 @@ def main() -> None:
     highest_eps = cond_eps[highest_alpha_cond]
     sample_ep_indices = sorted({ep["episode_idx"] for ep in highest_eps})[:2]
     for ep_idx in sample_ep_indices:
-        ep = [e for e in highest_eps if e["episode_idx"] == ep_idx][0]
+        ep = next(e for e in highest_eps if e["episode_idx"] == ep_idx)
         out(f"  Episode {ep_idx} ({highest_alpha_short}):")
         for s in ep["steps"]:
             if s["step_idx"] > 6:
@@ -310,7 +311,7 @@ def main() -> None:
 
     b_early = _phase_rate("baseline", 0, 4)
     s_early = _phase_rate(best_steered_cond, 0, 4)
-    out(f"2. The effect is strongest in early game steps (0-4): baseline invalid")
+    out("2. The effect is strongest in early game steps (0-4): baseline invalid")
     out(f"   rate of {b_early:.0%} drops to {s_early:.0%} with {best_short}, and the model consistently")
     out("   produces well-formed yes/no questions.")
     out()
@@ -331,7 +332,7 @@ def main() -> None:
     out()
 
     if best_rescue_ep is not None:
-        out(f"5. Steering is most effective when the model's baseline behaviour is")
+        out("5. Steering is most effective when the model's baseline behaviour is")
         out(f"   recoverable. Episode {best_rescue_ep} demonstrates that steering can rescue an")
         out("   episode from degeneration, confirming that the learned direction is")
         out("   causally related to the valid/invalid question distinction.")

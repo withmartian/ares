@@ -78,22 +78,6 @@ client = HookedTransformerLLMClient(
 )
 ```
 
-**With Chat Templates:**
-
-```python
-from transformers import AutoTokenizer
-from ares.contrib.mech_interp import create_hooked_transformer_client_with_chat_template
-
-tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen2.5-3B-Instruct")
-model = HookedTransformer.from_pretrained("Qwen/Qwen2.5-3B-Instruct")
-
-client = create_hooked_transformer_client_with_chat_template(
-    model=model,
-    tokenizer=tokenizer,
-    max_new_tokens=2048,
-)
-```
-
 ### 2. ActivationCapture
 
 Captures activations across an agent trajectory for later analysis.
