@@ -1,10 +1,21 @@
 ## Case Study: Mech Interp for 20 Questions
 
-This folder contains example code for using [TransformerLens](https://github.com/TransformerLensOrg/TransformerLens) with [ARES](https://github.com/withmartian/ares) to conduct mechanistic interpretability research on a toy 20 Questions environment. 
+This folder contains example code for using [TransformerLens](https://github.com/TransformerLensOrg/TransformerLens) with [ARES](https://github.com/withmartian/ares) to conduct mechanistic interpretability research on a toy 20 Questions environment.
+
+### Quick start
+
+```bash
+git clone https://github.com/withmartian/ares.git
+cd ares
+uv sync --group examples --extra transformer-lens
+uv run jupyter lab examples/20q_case_study/ares_mi_20q_tutorial.ipynb
+```
+
+The notebook's first cell downloads pre-computed results from [Hugging Face](https://huggingface.co/datasets/withmartian/ares-20q-case-study), so you can explore all the analysis without a GPU. Set `COLLECT_DATA = True` in Phase 0 to collect fresh activations (requires a GPU).
 
 ### Our Findings
 
-The accompanying notebook [ares_mi_20q_tutorial.ipynb](./ares_mi_20q_tutorial.ipynb) contains results from our experiments - open it to read through.
+The accompanying notebook [ares_mi_20q_tutorial.ipynb](./ares_mi_20q_tutorial.ipynb) contains results from our experiments — open it to read through.
 
 ### Reproducing Results
 

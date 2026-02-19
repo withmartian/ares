@@ -78,6 +78,7 @@ examples = [
     "ipython>=9.10.0",
     "scikit-learn>=1.8.0",
     "huggingface-hub>=0.30.0",
+    "jupyterlab>=4.0.0",
 ]
 
 [tool.pytest.ini_options]
