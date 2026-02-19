@@ -1,8 +1,8 @@
 """LLM client implementation using TransformerLens HookedTransformer."""
 
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 import dataclasses
-from typing import Any, cast
+from typing import Any
 
 import torch
 import transformer_lens
@@ -86,11 +86,10 @@ class HookedTransformerLLMClient:
             add_generation_prompt=True,
             truncation=True,
             max_length=self.model.cfg.n_ctx - max_output_tokens,
-            return_tensors="pt",
         )
-        input_ids = cast(torch.Tensor, input_ids)
-        input_ids = input_ids.to(self.model.cfg.device)
         input_ids = torch.tensor(input_ids).unsqueeze(0)
+        # Make sure to transfer tokens to the correct device before inference
+        input_ids = input_ids.to(self.model.cfg.device)
         num_input_tokens = input_ids.shape[-1]
 
         # Prepare generation kwargs
