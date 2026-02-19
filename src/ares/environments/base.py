@@ -18,7 +18,9 @@ from ares.containers import containers
 _LOGGER = logging.getLogger(__name__)
 
 # Make sure using the correct docker socket
-os.environ["DOCKER_HOST"] = "unix:///var/run/docker.sock"
+# NOTE: Don't override user configuration (e.g. Colima/Docker Desktop on macOS).
+# Default to the standard Linux socket only if nothing is set.
+os.environ.setdefault("DOCKER_HOST", "unix:///var/run/docker.sock")
 
 
 StepType = Literal["FIRST", "MID", "LAST"]
