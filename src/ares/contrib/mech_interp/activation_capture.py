@@ -6,9 +6,8 @@ import pathlib
 from typing import Any
 
 import torch
-from transformer_lens import ActivationCache
-from transformer_lens import HookedTransformer
-from transformer_lens.hook_points import HookPoint
+import transformer_lens
+from transformer_lens import hook_points
 
 
 @dataclasses.dataclass
@@ -16,12 +15,12 @@ class TrajectoryActivations:
     """Container for activations captured across an agent trajectory.
 
     Attributes:
-        step_activations: List of ActivationCache objects, one per agent step.
+        step_activations: List of transformer_lens.ActivationCache objects, one per agent step.
         step_metadata: Optional metadata for each step (e.g., observation, action).
         model_name: Name of the model used.
     """
 
-    step_activations: list[ActivationCache]
+    step_activations: list[transformer_lens.ActivationCache]
     step_metadata: list[dict[str, Any]] = dataclasses.field(default_factory=list)
     model_name: str = "unknown"
 
@@ -38,9 +37,9 @@ class TrajectoryActivations:
         path = pathlib.Path(path)
         path.mkdir(parents=True, exist_ok=True)
 
-        # Save each step's activations as plain dicts (ActivationCache can't be pickled)
+        # Save each step's activations as plain dicts (transformer_lens.ActivationCache can't be pickled)
         for i, cache in enumerate(self.step_activations):
-            # Convert ActivationCache to dict for serialization
+            # Convert transformer_lens.ActivationCache to dict for serialization
             cache_dict = dict(cache.cache_dict.items())
             torch.save(cache_dict, path / f"step_{i:04d}.pt")
 
@@ -73,13 +72,15 @@ class TrajectoryActivations:
         with open(path / "metadata.json") as f:
             metadata = json.load(f)
 
-        # Load activation dicts (we saved as plain dicts, not ActivationCache objects)
+        # Load activation dicts (we saved as plain dicts, not transformer_lens.ActivationCache objects)
         step_files = sorted(path.glob("step_*.pt"))
         step_activations_dicts = [torch.load(f, weights_only=False) for f in step_files]
 
-        # Convert back to ActivationCache objects if needed, or just use dicts
-        # For now, we'll keep them as ActivationCache objects for API compatibility
-        step_activations = [ActivationCache(cache_dict, model=None) for cache_dict in step_activations_dicts]
+        # Convert back to transformer_lens.ActivationCache objects if needed, or just use dicts
+        # For now, we'll keep them as transformer_lens.ActivationCache objects for API compatibility
+        step_activations = [
+            transformer_lens.ActivationCache(cache_dict, model=None) for cache_dict in step_activations_dicts
+        ]
 
         return cls(
             step_activations=step_activations,
@@ -114,17 +115,17 @@ class TrajectoryActivations:
 class ActivationCapture:
     """Context manager for capturing activations during agent execution.
 
-    This class provides a convenient way to capture activations from a HookedTransformer
+    This class provides a convenient way to capture activations from a transformer_lens.HookedTransformer
     during an ARES agent episode, enabling trajectory-level mechanistic interpretability
     analysis.
 
     Example:
         ```python
-        from transformer_lens import HookedTransformer
-        from ares.contrib.mech_interp import ActivationCapture, HookedTransformerLLMClient
+        from transformer_lens import transformer_lens.HookedTransformer
+        from ares.contrib.mech_interp import ActivationCapture, transformer_lens.HookedTransformerLLMClient
 
-        model = HookedTransformer.from_pretrained("gpt2-small")
-        client = HookedTransformerLLMClient(model=model)
+        model = transformer_lens.HookedTransformer.from_pretrained("gpt2-small")
+        client = transformer_lens.HookedTransformerLLMClient(model=model)
 
         # Capture activations during episode
         with ActivationCapture(model) as capture:
@@ -146,20 +147,20 @@ class ActivationCapture:
 
     def __init__(
         self,
-        model: HookedTransformer,
+        model: transformer_lens.HookedTransformer,
         hook_filter: Callable[[str], bool] | None = None,
     ):
         """Initialize activation capture.
 
         Args:
-            model: HookedTransformer to capture activations from.
+            model: transformer_lens.HookedTransformer to capture activations from.
             hook_filter: Optional function to filter which hooks to capture.
                 If None, captures all hooks. Example: lambda name: "attn" in name
         """
         # TODO: Should we store logits and loss as well? By default or via flag?
         self.model = model
         self.hook_filter = hook_filter
-        self.step_activations: list[ActivationCache] = []
+        self.step_activations: list[transformer_lens.ActivationCache] = []
         self.step_metadata: list[dict[str, Any]] = []
         self._hook_handles: list[Any] = []
 
@@ -185,7 +186,7 @@ class ActivationCapture:
     def _make_capture_hook(self, hook_name: str) -> Callable:
         """Create a hook function that captures activations."""
 
-        def capture_hook(activation: torch.Tensor, hook: HookPoint) -> torch.Tensor:  # noqa: ARG001
+        def capture_hook(activation: torch.Tensor, hook: hook_points.HookPoint) -> torch.Tensor:  # noqa: ARG001
             # Store a copy of the activation (detached from computation graph)
             self._current_step_cache[hook_name] = activation.detach().cpu()
             return activation
@@ -199,8 +200,8 @@ class ActivationCapture:
     def end_step(self) -> None:
         """Mark the end of an agent step and save captured activations."""
         if self._current_step_cache:
-            # Convert dict to ActivationCache
-            cache = ActivationCache(
+            # Convert dict to transformer_lens.ActivationCache
+            cache = transformer_lens.ActivationCache(
                 self._current_step_cache.copy(),
                 self.model,
             )
@@ -234,24 +235,24 @@ class ActivationCapture:
         self._current_step_cache = {}
 
 
-def automatic_activation_capture(model: HookedTransformer) -> ActivationCapture:
+def automatic_activation_capture(model: transformer_lens.HookedTransformer) -> ActivationCapture:
     """Create an ActivationCapture that automatically records steps during generation.
 
     This wraps the model's generate method to automatically call start_step() and
     end_step() around each generation, making it seamless to use with ARES environments.
 
     Args:
-        model: HookedTransformer to capture activations from.
+        model: transformer_lens.HookedTransformer to capture activations from.
 
     Returns:
         ActivationCapture instance with automatic step tracking.
 
     Example:
         ```python
-        model = HookedTransformer.from_pretrained("gpt2-small")
+        model = transformer_lens.HookedTransformer.from_pretrained("gpt2-small")
 
         with automatic_activation_capture(model) as capture:
-            client = HookedTransformerLLMClient(model=model)
+            client = transformer_lens.HookedTransformerLLMClient(model=model)
             # Now activations are captured automatically during client calls
             async with env:
                 ts = await env.reset()

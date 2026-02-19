@@ -21,30 +21,29 @@ ARES enables **trajectory-level mechanistic interpretability** by:
 ### Installation
 
 ```bash
-# Install ARES with mech_interp group (includes TransformerLens)
-uv add ares[mech-interp]
+# Install ARES with transformer-lens extra (includes TransformerLens)
+uv sync --extra transformer-lens
 # or with pip
-pip install ares[mech-interp]
+pip install ares[transformer-lens]
 ```
 
 ### Basic Example
 
 ```python
 import asyncio
-from transformer_lens import HookedTransformer
-from ares.contrib.mech_interp import HookedTransformerLLMClient, ActivationCapture
-from ares.environments import swebench_env
+
+import ares
+from ares.contrib import mech_interp
+import transformer_lens
 
 async def main():
     # Load model
-    model = HookedTransformer.from_pretrained("gpt2-small")
-    client = HookedTransformerLLMClient(model=model)
+    model = transformer_lens.HookedTransformer.from_pretrained("gpt2-small")
+    client = mech_interp.HookedTransformerLLMClient(model=model)
 
     # Run agent and capture activations
-    tasks = swebench_env.swebench_verified_tasks()[:1]
-
-    async with swebench_env.SweBenchEnv(tasks=tasks) as env:
-        with ActivationCapture(model) as capture:
+    async with ares.make("sbv-mswea:0") as env:
+        with mech_interp.ActivationCapture(model) as capture:
             ts = await env.reset()
             while not ts.last():
                 capture.start_step()
@@ -67,11 +66,11 @@ asyncio.run(main())
 An ARES-compatible LLM client that uses TransformerLens's `HookedTransformer` for inference.
 
 ```python
-from transformer_lens import HookedTransformer
-from ares.contrib.mech_interp import HookedTransformerLLMClient
+from ares.contrib import mech_interp
+import transformer_lens
 
-model = HookedTransformer.from_pretrained("gpt2-medium")
-client = HookedTransformerLLMClient(
+model = transformer_lens.HookedTransformer.from_pretrained("gpt2-medium")
+client = mech_interp.HookedTransformerLLMClient(
     model=model,
     max_new_tokens=1024,
     generation_kwargs={"temperature": 0.7}
@@ -83,9 +82,9 @@ client = HookedTransformerLLMClient(
 Captures activations across an agent trajectory for later analysis.
 
 ```python
-from ares.contrib.mech_interp import ActivationCapture
+from ares.contrib import mech_interp
 
-with ActivationCapture(model) as capture:
+with mech_interp.ActivationCapture(model) as capture:
     # Filter which hooks to capture (optional)
     # capture = ActivationCapture(model, hook_filter=lambda name: "attn" in name)
 
@@ -114,15 +113,15 @@ all_layer0_resid = trajectory.get_activation_across_trajectory("blocks.0.hook_re
 trajectory.save("./activations/episode_001")
 
 # Load later
-loaded = TrajectoryActivations.load("./activations/episode_001")
+loaded = mech_interp.TrajectoryActivations.load("./activations/episode_001")
 ```
 
 **Automatic Capture:**
 
 ```python
-from ares.contrib.mech_interp import automatic_activation_capture
+from ares.contrib import mech_interp
 
-with automatic_activation_capture(model) as capture:
+with mech_interp.automatic_activation_capture(model) as capture:
     # Activations are captured automatically during each client call
     async with env:
         ts = await env.reset()
@@ -144,7 +143,7 @@ Coming Soon!
 Study how attention patterns evolve as agents work through tasks:
 
 ```python
-with ActivationCapture(model) as capture:
+with mech_interp.ActivationCapture(model) as capture:
     # Run agent episode
     ...
 
@@ -158,7 +157,7 @@ for step in range(len(trajectory)):
 
 ### 2. Identifying Critical Decision Points
 
-NOTE: This example relies on a `InterventionManager` component that we are still finalizing the interface for. Nice support for intervention via hooks is coming soon!
+NOTE: This example relies on an `InterventionManager` component that we are still finalizing the interface for. Nice support for intervention via hooks is coming soon!
 
 Find steps where small perturbations significantly alter outcomes:
 
@@ -208,7 +207,7 @@ Track how information propagates through the model across steps:
 
 ```python
 # Capture activations with detailed metadata
-with ActivationCapture(model) as capture:
+with mech_interp.ActivationCapture(model) as capture:
     async with env:
         ts = await env.reset()
         while not ts.last():
@@ -237,16 +236,16 @@ Compare how different models solve the same task:
 
 ```python
 models = [
-    HookedTransformer.from_pretrained("gpt2-small"),
-    HookedTransformer.from_pretrained("gpt2-medium"),
-    HookedTransformer.from_pretrained("pythia-1.4b"),
+    transformer_lens.HookedTransformer.from_pretrained("gpt2-small"),
+    transformer_lens.HookedTransformer.from_pretrained("gpt2-medium"),
+    transformer_lens.HookedTransformer.from_pretrained("pythia-1.4b"),
 ]
 
 trajectories = []
 for model in models:
-    client = HookedTransformerLLMClient(model=model)
+    client = mech_interp.HookedTransformerLLMClient(model=model)
 
-    with ActivationCapture(model) as capture:
+    with mech_interp.ActivationCapture(model) as capture:
         # Run same task
         trajectory = run_episode(env, client, capture)
         trajectories.append(trajectory)
@@ -260,7 +259,7 @@ compare_trajectories(trajectories)
 **Memory Optimization:**
 ```python
 # Only capture specific activations
-ActivationCapture(
+mech_interp.ActivationCapture(
     model,
     hook_filter=lambda name: "attn.hook_pattern" in name or "hook_resid" in name
 )
@@ -275,10 +274,10 @@ if len(capture.step_activations) > 100:
 **Speed Optimization:**
 ```python
 # Use smaller models for initial exploration
-model = HookedTransformer.from_pretrained("gpt2-small", device="cuda")
+model = transformer_lens.HookedTransformer.from_pretrained("gpt2-small", device="cuda")
 
 # Reduce max_new_tokens during ablation studies
-client = HookedTransformerLLMClient(model=model, max_new_tokens=256)
+client = mech_interp.HookedTransformerLLMClient(model=model, max_new_tokens=256)
 ```
 
 ## Resources

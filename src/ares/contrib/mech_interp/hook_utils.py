@@ -7,12 +7,12 @@ import torch
 from transformer_lens import hook_points
 
 from ares.containers import containers
-from ares.environments.base import TimeStep
+from ares.environments import base
 
 
 @dataclasses.dataclass
 class FullyObservableState:
-    timestep: TimeStep | None
+    timestep: base.TimeStep | None
     container: containers.Container | None
     step_num: int
 

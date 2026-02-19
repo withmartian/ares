@@ -55,9 +55,6 @@ ignore = [
 # Allow alpha greek character
 allowed-confusables = ["α"]
 
-# Exclude notebooks
-exclude = ["*.ipynb"]
-
 # Allow fix for all enabled rules (when `--fix`) is provided.
 fixable = ["ALL"]
 unfixable = []
@@ -97,6 +94,3 @@ skip-magic-trailing-comma = false
 
 # Like Black, automatically detect the appropriate line ending.
 line-ending = "auto"
-
-# Ignore Notebooks
-exclude = ["*.ipynb"]

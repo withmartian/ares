@@ -1,18 +1,18 @@
 #!/usr/bin/env python
+"""Probing for "Invalid Question" in Twenty Questions.
 
-# # Probing for "Invalid Question" in Twenty Questions
-#
-# Loads pre-collected 20Q episode data (from collect_20q_data.py), trains
-# linear probes on middle-layer residual stream activations, and evaluates
-# on a held-out test set.
-#
-# No GPU required -- all computation is numpy / sklearn.
-#
-# ## Requirements
-#   pip install scikit-learn matplotlib numpy torch   (torch only for loading .pt files)
-#
-# ## Run
-#   uv run --no-sync python examples/20q_case_study/phase1_probe.py
+Loads pre-collected 20Q episode data (from collect_20q_data.py), trains
+linear probes on middle-layer residual stream activations, and evaluates
+on a held-out test set.
+
+No GPU required -- all computation is numpy / sklearn.
+
+Requirements:
+    pip install scikit-learn matplotlib numpy torch   (torch only for loading .pt files)
+
+Run:
+    uv run --no-sync python examples/20q_case_study/phase1_probe.py
+"""
 
 import dataclasses
 import json
@@ -29,7 +29,6 @@ import torch
 # ---------------------------------------------------------------------------
 
 SEED = 42
-np.random.seed(SEED)
 
 DATA_DIR = pathlib.Path("outputs/20q_data")
 OUTPUT_DIR = pathlib.Path("outputs/20q_probing_results")
@@ -357,6 +356,8 @@ def save_results_json(result: ProbeResult, path: pathlib.Path) -> None:
 
 
 def main() -> None:
+    np.random.seed(SEED)
+
     print(f"Loading data from {DATA_DIR}...")
     episodes, metadata = load_episodes(DATA_DIR)
 

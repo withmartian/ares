@@ -8,9 +8,9 @@ This example demonstrates how to:
 Example usage:
 
     1. Make sure you have mech_interp dependencies installed
-       `uv sync --group mech_interp`
+       `uv sync --extra transformer-lens --group examples`
     2. Run the example
-       `uv run -m examples.03_mech_interp_hooked_transformer`
+       `uv run -m examples.07_mech_interp_hooked_transformer`
 """
 
 import asyncio

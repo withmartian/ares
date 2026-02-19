@@ -1,33 +1,33 @@
 #!/usr/bin/env python
+"""Phase 2: CAA Steering for 20Q Invalid Questions.
 
-# # Phase 2: CAA Steering for 20Q Invalid Questions
-#
-# Tests whether the linear direction identified by Phase 1 probing is *causal*:
-# can we steer the model toward valid questions by adding a contrastive
-# activation vector (CAA) at the target step?
-#
-# ## Offline stage (no GPU needed beyond loading saved data):
-#   1. Load saved episodes and Phase 1 probe results
-#   2. Reproduce the same train/test split as Phase 1
-#   3. Auto-select target step t* (highest probe accuracy with both classes >= 5 in train)
-#   4. Compute steering vectors from training activations at t* for each pooling strategy
-#
-# ## Online stage (requires GPU + oracle API):
-#   5. For each pooling strategy, run new episodes with steering at step t*
-#      for several alpha values
-#   6. Record invalid question rates per (pooling, alpha) condition
-#   7. Plot steering effectiveness across pooling strategies
-#
-# ## Requirements
-#   uv sync --extra transformer-lens
-#   # CHAT_COMPLETION_API_KEY must be set in .env (for the oracle)
-#   # Phase 1 data must exist in outputs/20q_data/ and outputs/20q_probing_results/
-#
-# ## Run
-#   uv run --no-sync python examples/20q_case_study/phase2_steer.py
+Tests whether the linear direction identified by Phase 1 probing is *causal*:
+can we steer the model toward valid questions by adding a contrastive
+activation vector (CAA) at the target step?
+
+Offline stage (no GPU needed beyond loading saved data):
+    1. Load saved episodes and Phase 1 probe results
+    2. Reproduce the same train/test split as Phase 1
+    3. Auto-select target step t* (highest probe accuracy with both classes >= 5 in train)
+    4. Compute steering vectors from training activations at t* for each pooling strategy
+
+Online stage (requires GPU + oracle API):
+    5. For each pooling strategy, run new episodes with steering at step t*
+       for several alpha values
+    6. Record invalid question rates per (pooling, alpha) condition
+    7. Plot steering effectiveness across pooling strategies
+
+Requirements:
+    uv sync --extra transformer-lens --group examples
+    # CHAT_COMPLETION_API_KEY must be set in .env (for the oracle)
+    # Phase 1 data must exist in outputs/20q_data/ and outputs/20q_probing_results/
+
+Run:
+    uv run --no-sync python examples/20q_case_study/phase2_steer.py
+"""
 
 import asyncio
-from concurrent.futures import ThreadPoolExecutor
+import concurrent.futures
 import gc
 import json
 import pathlib
@@ -42,7 +42,7 @@ from ares.environments import twenty_questions
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
-from tqdm import tqdm
+import tqdm
 import transformer_lens
 
 # ---------------------------------------------------------------------------
@@ -393,7 +393,8 @@ async def _run_steered_episodes_for_device(
     Returns list of per-episode result dicts with full step data.
     """
     print(f"[{device}] Loading {MODEL_NAME}...")
-    torch.cuda.set_device(device)
+    if torch.cuda.is_available() and device.startswith("cuda"):
+        torch.cuda.set_device(device)
 
     with _MODEL_LOAD_LOCK:
         model = transformer_lens.HookedTransformer.from_pretrained(MODEL_NAME, device="cpu", dtype=torch.bfloat16)
@@ -472,7 +473,7 @@ async def _run_steered_episodes_for_device(
                     step_log.append((step_idx, model_question, oracle_answer, steer_active, is_invalid))
 
                     steered = "*" if steer_active else " "
-                    tqdm.write(
+                    tqdm.tqdm.write(
                         f"    [{device}] {condition:22s} ep={ep_idx:03d} "
                         f"step={step_idx:2d}/{max_steps_per_episode}{steered} "
                         f"oracle={oracle_answer[:60]}"
@@ -500,7 +501,9 @@ async def _run_steered_episodes_for_device(
             results.append(result)
 
             n_invalid = sum(1 for _, _, _, _, inv in step_log if inv)
-            tqdm.write(f"  [{device}] {condition:22s} ep={ep_idx:03d} DONE  invalid={n_invalid}/{len(step_log)} steps")
+            tqdm.tqdm.write(
+                f"  [{device}] {condition:22s} ep={ep_idx:03d} DONE  invalid={n_invalid}/{len(step_log)} steps"
+            )
 
     finally:
         hook_point.remove_hooks("fwd")
@@ -843,7 +846,7 @@ async def run() -> None:
         print(f"{'=' * 70}\n")
 
         loop = asyncio.get_running_loop()
-        with ThreadPoolExecutor(max_workers=n_devices) as executor:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=n_devices) as executor:
             futures = [
                 loop.run_in_executor(
                     executor,

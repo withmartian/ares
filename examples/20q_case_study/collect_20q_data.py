@@ -1,21 +1,21 @@
 #!/usr/bin/env python
+"""Collect 20Q Episode Data with Activations.
 
-# # Collect 20Q Episode Data with Activations
-#
-# Runs Twenty Questions episodes using a HookedTransformer model across all
-# available GPUs, captures middle-layer residual stream activations, and saves
-# everything to disk for downstream probing / steering / early-detection
-# experiments.
-#
-# ## Requirements
-#   uv sync --group transformer-lens
-#   # CHAT_COMPLETION_API_KEY must be set in .env (for the oracle)
-#
-# ## Run
-#   uv run --no-sync python examples/20q_case_study/collect_20q_data.py
+Runs Twenty Questions episodes using a HookedTransformer model across all
+available GPUs, captures middle-layer residual stream activations, and saves
+everything to disk for downstream probing / steering / early-detection
+experiments.
+
+Requirements:
+    uv sync --extra transformer-lens --group examples
+    # CHAT_COMPLETION_API_KEY must be set in .env (for the oracle)
+
+Run:
+    uv run --no-sync python examples/20q_case_study/collect_20q_data.py
+"""
 
 import asyncio
-from concurrent.futures import ThreadPoolExecutor
+import concurrent.futures
 import gc
 import json
 import pathlib
@@ -25,7 +25,7 @@ import threading
 import ares
 from ares.contrib import mech_interp
 import torch
-from tqdm import tqdm
+import tqdm
 import transformer_lens
 
 # ---------------------------------------------------------------------------
@@ -80,7 +80,8 @@ async def _collect_episodes_for_device(
     Returns (episode_summaries, n_layers, d_model, middle_layer).
     """
     print(f"[{device}] Loading {MODEL_NAME}...")
-    torch.cuda.set_device(device)
+    if torch.cuda.is_available() and device.startswith("cuda"):
+        torch.cuda.set_device(device)
 
     with _MODEL_LOAD_LOCK:
         model = transformer_lens.HookedTransformer.from_pretrained(MODEL_NAME, device="cpu", dtype=torch.bfloat16)
@@ -167,7 +168,7 @@ async def _collect_episodes_for_device(
 
                     steps.append(step_record)
                     step_idx += 1
-                    tqdm.write(
+                    tqdm.tqdm.write(
                         f"    [{device}] ep={ep} step={step_idx}/{max_steps_per_episode}  oracle={oracle_answer[:60]}"
                     )
 
@@ -183,7 +184,7 @@ async def _collect_episodes_for_device(
             episode_summaries.append(summary)
 
             invalid_pct = (n_invalid / step_idx * 100) if step_idx > 0 else 0.0
-            tqdm.write(
+            tqdm.tqdm.write(
                 f"  [{device}] episode={ep:03d}  steps={step_idx:2d}  invalid={n_invalid:2d} ({invalid_pct:.0f}%)"
             )
 
@@ -235,8 +236,9 @@ async def run() -> None:
 
     print(f"\nCollecting {N_EPISODES} episodes across {n_devices} device(s)...")
 
+    # TODO: Replace run_in_executor/threading with proper async (asyncio.create_task).
     loop = asyncio.get_running_loop()
-    with ThreadPoolExecutor(max_workers=n_devices) as executor:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=n_devices) as executor:
         futures = [
             loop.run_in_executor(executor, _run_device_worker, device, work_queue, MAX_STEPS_PER_EPISODE)
             for device in devices
