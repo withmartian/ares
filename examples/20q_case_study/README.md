@@ -17,9 +17,9 @@ The notebook's first cell downloads pre-computed results from [Hugging Face](htt
 
 The accompanying notebook [ares_mi_20q_tutorial.ipynb](./ares_mi_20q_tutorial.ipynb) contains results from our experiments — open it to read through.
 
-### Reproducing Results
+### Other Scripts
 
-To follow along and create results yourself, run the scripts located in this directory:
+Other more involved implementation details are broken down in our other scripts, in case you would like to follow along more in depth. These are:
 - [collect_20q_data.py](./collect_20q_data.py) generates data by interacting with the 20 Questions environment.
 - [phase1_probe.py](./phase1_probe.py) trains a linear probe on the collected data.
 - [phase2_steer.py](./phase2_steer.py) runs the environments again but this time introducing steering vectors to affect the LLM's behavior.
