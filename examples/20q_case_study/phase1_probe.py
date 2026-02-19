@@ -14,15 +14,14 @@
 # ## Run
 #   uv run --no-sync python examples/20q_case_study/phase1_probe.py
 
-from dataclasses import dataclass
-from dataclasses import field
+import dataclasses
 import json
 import pathlib
 
 import matplotlib.pyplot as plt
 import numpy as np
-from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import classification_report
+from sklearn import linear_model
+from sklearn import metrics
 import torch
 
 # ---------------------------------------------------------------------------
@@ -49,7 +48,7 @@ MIN_SAMPLES_FOR_PROBE = 8
 # ---------------------------------------------------------------------------
 
 
-@dataclass
+@dataclasses.dataclass
 class StepSample:
     """A single step's activation vector and oracle-invalidity label."""
 
@@ -59,7 +58,7 @@ class StepSample:
     step_idx: int
 
 
-@dataclass
+@dataclasses.dataclass
 class ProbeResult:
     """Aggregated probe results."""
 
@@ -75,8 +74,8 @@ class ProbeResult:
     invalid_rate: float
     feature_pooling: str
     # Per-step probe test accuracy: step_idx -> accuracy
-    step_accuracies: dict[int, float] = field(default_factory=dict)
-    step_sample_counts: dict[int, int] = field(default_factory=dict)
+    step_accuracies: dict[int, float] = dataclasses.field(default_factory=dict)
+    step_sample_counts: dict[int, int] = dataclasses.field(default_factory=dict)
     # Global (pooled) probe metrics
     global_accuracy: float = 0.0
     global_report: str = ""
@@ -182,7 +181,7 @@ def _fit_and_eval(
     y_test: np.ndarray,
 ) -> float:
     """Fit logistic regression on train, return accuracy on test."""
-    probe = LogisticRegression(penalty="l2", C=1.0, max_iter=2000, solver="liblinear", random_state=SEED)
+    probe = linear_model.LogisticRegression(penalty="l2", C=1.0, max_iter=2000, solver="liblinear", random_state=SEED)
     probe.fit(x_train, y_train)
     return float(np.mean(probe.predict(x_test) == y_test))
 
@@ -232,10 +231,12 @@ def train_probes(
         result.global_accuracy = _fit_and_eval(x_train_all, y_train_all, x_test_all, y_test_all)
 
         # Full classification report on test set.
-        probe = LogisticRegression(penalty="l2", C=1.0, max_iter=2000, solver="liblinear", random_state=SEED)
+        probe = linear_model.LogisticRegression(
+            penalty="l2", C=1.0, max_iter=2000, solver="liblinear", random_state=SEED
+        )
         probe.fit(x_train_all, y_train_all)
         y_pred = probe.predict(x_test_all)
-        result.global_report = classification_report(
+        result.global_report = metrics.classification_report(
             y_test_all, y_pred, target_names=["Valid (Yes/No)", "Invalid Question"], zero_division=0
         )
         print(f"\n  Global probe test accuracy: {result.global_accuracy:.3f}")

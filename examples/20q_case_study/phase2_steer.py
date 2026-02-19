@@ -37,14 +37,14 @@ import threading
 
 import ares
 from ares import presets
-from ares.contrib.mech_interp.hooked_transformer_client import create_hooked_transformer_client_with_chat_template
+from ares.contrib import mech_interp
 from ares.environments import twenty_questions
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
 from tqdm import tqdm
-from transformer_lens import HookedTransformer
-from transformers import AutoTokenizer
+import transformer_lens
+import transformers
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -60,7 +60,7 @@ ALPHAS = [0.5, 1.0, 2.0, 4.0]
 AGENT_SYSTEM_PROMPT = "Try to keep your response under 30 words."
 
 # Register a custom 20q preset with the system prompt for the agent.
-ares.registry.register_preset(
+ares.register_preset(
     ENV_NAME,
     presets.TwentyQuestionsSpec(system_prompt=AGENT_SYSTEM_PROMPT),
 )
@@ -395,11 +395,11 @@ async def _run_steered_episodes_for_device(
     torch.cuda.set_device(device)
 
     with _MODEL_LOAD_LOCK:
-        model = HookedTransformer.from_pretrained(MODEL_NAME, device="cpu", dtype=torch.bfloat16)
+        model = transformer_lens.HookedTransformer.from_pretrained(MODEL_NAME, device="cpu", dtype=torch.bfloat16)
     model = model.to(device)
 
-    tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
-    client = create_hooked_transformer_client_with_chat_template(
+    tokenizer = transformers.AutoTokenizer.from_pretrained(MODEL_NAME)
+    client = mech_interp.create_hooked_transformer_client_with_chat_template(
         model=model,
         tokenizer=tokenizer,
         max_new_tokens=MAX_NEW_TOKENS,
@@ -407,6 +407,7 @@ async def _run_steered_episodes_for_device(
     )
 
     hook_name = f"blocks.{middle_layer}.hook_resid_post"
+    # TODO: Cleanup hook_point usage, and add good devX interface for adding hooks in client
     hook_point = model.hook_dict[hook_name]
 
     # Pre-convert per-step steering vectors to device tensors.
@@ -436,6 +437,7 @@ async def _run_steered_episodes_for_device(
                 ts = await env.reset()
                 # Override the secret word with our pre-computed one so that
                 # baseline and steered runs for the same ep_idx use the same word.
+                # TODO: Clean up seeding logic in 20Q env for reproducibility
                 env._hidden_object = secret_words[ep_idx]
                 step_idx = 0
 
@@ -568,10 +570,10 @@ async def _run_inspect_mode(
 
     _log(f"[inspect] Loading {MODEL_NAME} on {device}...")
 
-    model = HookedTransformer.from_pretrained(MODEL_NAME, device="cpu", dtype=torch.bfloat16)
+    model = transformer_lens.HookedTransformer.from_pretrained(MODEL_NAME, device="cpu", dtype=torch.bfloat16)
     model = model.to(device)
-    tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
-    client = create_hooked_transformer_client_with_chat_template(
+    tokenizer = transformers.AutoTokenizer.from_pretrained(MODEL_NAME)
+    client = mech_interp.create_hooked_transformer_client_with_chat_template(
         model=model,
         tokenizer=tokenizer,
         max_new_tokens=MAX_NEW_TOKENS,

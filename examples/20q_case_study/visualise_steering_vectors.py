@@ -19,7 +19,7 @@ import pathlib
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
-from matplotlib.collections import LineCollection
+from matplotlib import collections
 
 # ---------------------------------------------------------------------------
 # Configuration (must match phase2_steer.py)
@@ -205,7 +205,7 @@ def plot_pca_trajectory(
     points = coords.reshape(-1, 1, 2)
     segments = np.concatenate([points[:-1], points[1:]], axis=1)
     norm = plt.Normalize(min(steps), max(steps))
-    lc = LineCollection(segments, cmap="viridis", norm=norm, linewidths=2, alpha=0.7)
+    lc = collections.LineCollection(segments, cmap="viridis", norm=norm, linewidths=2, alpha=0.7)
     lc.set_array(np.array(steps[:-1]))
     ax.add_collection(lc)
 

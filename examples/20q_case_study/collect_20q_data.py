@@ -23,11 +23,11 @@ import queue
 import threading
 
 import ares
-from ares.contrib.mech_interp.hooked_transformer_client import create_hooked_transformer_client_with_chat_template
+from ares.contrib import mech_interp
 import torch
 from tqdm import tqdm
-from transformer_lens import HookedTransformer
-from transformers import AutoTokenizer
+import transformer_lens
+import transformers
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -84,11 +84,11 @@ async def _collect_episodes_for_device(
     torch.cuda.set_device(device)
 
     with _MODEL_LOAD_LOCK:
-        model = HookedTransformer.from_pretrained(MODEL_NAME, device="cpu", dtype=torch.bfloat16)
+        model = transformer_lens.HookedTransformer.from_pretrained(MODEL_NAME, device="cpu", dtype=torch.bfloat16)
     model = model.to(device)
 
-    tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
-    client = create_hooked_transformer_client_with_chat_template(
+    tokenizer = transformers.AutoTokenizer.from_pretrained(MODEL_NAME)
+    client = mech_interp.create_hooked_transformer_client_with_chat_template(
         model=model,
         tokenizer=tokenizer,
         max_new_tokens=MAX_NEW_TOKENS,
