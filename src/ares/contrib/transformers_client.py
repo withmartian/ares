@@ -211,8 +211,10 @@ class TransformersLLMClient(llm_clients.LLMClient):
         and timer, allowing truly independent batching per parameter set.
         """
         while True:
+            collected_items: list[ValueAndFuture[request.LLMRequest, response.LLMResponse]] = []
             try:
                 first_item = await self._request_queue.get()
+                collected_items.append(first_item)
                 kwargs = openai_chat_converter.to_external(first_item.value, strict=False)
                 temp = kwargs.get("temperature")
                 max_tokens = kwargs.get("max_completion_tokens")
@@ -236,6 +238,7 @@ class TransformersLLMClient(llm_clients.LLMClient):
 
                     try:
                         item = await asyncio.wait_for(self._request_queue.get(), timeout=timeout)
+                        collected_items.append(item)
                         kwargs = openai_chat_converter.to_external(item.value, strict=False)
                         temp = kwargs.get("temperature")
                         max_tokens = kwargs.get("max_completion_tokens")
@@ -254,6 +257,9 @@ class TransformersLLMClient(llm_clients.LLMClient):
 
             except Exception as e:
                 _LOGGER.exception("Error in inference loop: %s", e)
+                for item in collected_items:
+                    if not item.future.done():
+                        item.future.set_exception(e)
 
     async def _process_batch(
         self,
