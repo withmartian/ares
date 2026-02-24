@@ -52,6 +52,9 @@ ignore = [
     "D213", # Ignore multi-line summary on first line (Google prefers D212)
 ]
 
+# Allow alpha greek character
+allowed-confusables = ["α"]
+
 # Allow fix for all enabled rules (when `--fix`) is provided.
 fixable = ["ALL"]
 unfixable = []

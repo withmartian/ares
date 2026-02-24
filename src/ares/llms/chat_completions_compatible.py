@@ -1,8 +1,8 @@
 """An LLM Client for Chat Completions-compatible models."""
 
 import dataclasses
-import functools
 import logging
+import threading
 
 import httpx
 import openai
@@ -12,20 +12,33 @@ import tenacity
 from ares import config
 from ares.llms import accounting
 from ares.llms import llm_clients
+from ares.llms import openai_chat_converter
 from ares.llms import request
 from ares.llms import response
 
 _LOGGER = logging.getLogger(__name__)
 
 
-@functools.lru_cache
+_thread_local = threading.local()
+
+
 def _get_llm_client(base_url: str, api_key: str) -> openai.AsyncClient:
-    return openai.AsyncClient(
-        base_url=base_url,
-        api_key=api_key,
-        max_retries=0,
-        http_client=httpx.AsyncClient(timeout=60.0, http2=True),
-    )
+    """Return a per-thread cached AsyncClient.
+
+    httpx.AsyncClient is bound to the event loop of the thread that created it,
+    so a global lru_cache deadlocks when workers run in separate threads.
+    """
+    key = (base_url, api_key)
+    clients: dict[tuple[str, str], openai.AsyncClient] = getattr(_thread_local, "clients", {})
+    if key not in clients:
+        clients[key] = openai.AsyncClient(
+            base_url=base_url,
+            api_key=api_key,
+            max_retries=0,
+            http_client=httpx.AsyncClient(timeout=60.0, http2=True),
+        )
+        _thread_local.clients = clients
+    return clients[key]
 
 
 @tenacity.retry(
@@ -34,9 +47,9 @@ def _get_llm_client(base_url: str, api_key: str) -> openai.AsyncClient:
     before_sleep=tenacity.before_sleep_log(_LOGGER, logging.INFO),
 )
 async def _query_llm_with_retry(
-    llm_client: openai.AsyncClient, model: str, request: request.LLMRequest
+    llm_client: openai.AsyncClient, model: str, req: request.LLMRequest
 ) -> openai.types.chat.chat_completion.ChatCompletion:
-    response = await llm_client.chat.completions.create(model=model, **request.to_chat_completion_kwargs())
+    response = await llm_client.chat.completions.create(model=model, **openai_chat_converter.to_external(req))
     return response
 
 

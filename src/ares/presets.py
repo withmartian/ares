@@ -22,6 +22,7 @@ from ares.code_agents.terminus2 import terminus2_agent
 from ares.containers import containers
 from ares.environments import base
 from ares.environments import code_env
+from ares.environments import twenty_questions
 from ares.experiment_tracking import stat_tracker
 
 _LOGGER = logging.getLogger(__name__)
@@ -81,6 +82,43 @@ class HarborSpec:
         )
 
 
+@dataclasses.dataclass(frozen=True)
+class TwentyQuestionsSpec:
+    """Environment spec for the Twenty Questions game."""
+
+    objects: tuple[str, ...] = twenty_questions.DEFAULT_OBJECT_LIST
+    oracle_model: str = "openai/gpt-4o-mini"
+    step_limit: int = 20
+    system_prompt: str | None = None
+
+    def get_info(self) -> registry.EnvironmentInfo:
+        """Return metadata about Twenty Questions."""
+        return registry.EnvironmentInfo(
+            name="20q",
+            description=f"Twenty Questions ({len(self.objects)} objects, oracle={self.oracle_model})",
+            num_tasks=len(self.objects),
+        )
+
+    def get_env(
+        self,
+        *,
+        selector: registry.TaskSelector,
+        container_factory: containers.ContainerFactory,
+        tracker: stat_tracker.StatTracker | None = None,
+    ) -> base.Environment:
+        """Create Twenty Questions environment."""
+        del container_factory  # Not needed — no containers.
+        selected_objects = selector(list(self.objects))
+
+        return twenty_questions.TwentyQuestionsEnvironment(
+            objects=tuple(selected_objects),
+            oracle_model=self.oracle_model,
+            step_limit=self.step_limit,
+            system_prompt=self.system_prompt,
+            tracker=tracker,
+        )
+
+
 def _register_default_presets() -> None:
     """Register all default ARES environment presets.
 
@@ -102,6 +140,9 @@ def _register_default_presets() -> None:
                     code_agent_id=code_agent_id,
                 ),
             )
+
+    # Twenty Questions — lightweight, no Docker needed.
+    registry.register_preset("20q", TwentyQuestionsSpec())
 
     _LOGGER.debug("Registered %d default presets", len(registry._list_presets()))
 

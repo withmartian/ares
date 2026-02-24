@@ -47,6 +47,7 @@ docs = [
     "sphinx-rtd-theme>=2.0.0",
     "sphinx-autodoc-typehints>=1.25.0",
 ]
+transformer-lens = ["transformer-lens>=2.10.0"]
 
 [project.urls]
 Homepage = "https://github.com/withmartian/ares"
@@ -62,6 +63,7 @@ dev = [
     "hatchling>=1.28.0",
     "twine>=6.2.0",
 ]
+
 examples = [
     "transformers>=4.57.3",
     "llama-cpp-python>=0.3.16",
@@ -73,6 +75,11 @@ examples = [
     "tinker-cookbook>=0.1.0",
     "chz>=0.4.0",
     "numpy>=2.4.0",
+    "matplotlib>=3.10.8",
+    "ipython>=9.10.0",
+    "scikit-learn>=1.8.0",
+    "huggingface-hub>=0.30.0",
+    "jupyterlab>=4.0.0",
 ]
 
 [tool.pytest.ini_options]
