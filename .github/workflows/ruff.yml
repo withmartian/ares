@@ -20,8 +20,8 @@ jobs:
 
       - uses: astral-sh/setup-uv@61cb8a9741eeb8a550a1b8544337180c0fc8476b # v7.2.0
 
-      - name: Sync dependencies (dev)
-        run: uv sync --group dev
+      - name: Sync dependencies
+        run: uv sync --all-groups --all-extras
 
       - name: Ruff lint
         run: uv run ruff check .
