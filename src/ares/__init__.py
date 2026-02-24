@@ -53,6 +53,8 @@ from ares.registry import EnvironmentInfo
 from ares.registry import info
 from ares.registry import list_presets
 from ares.registry import make
+from ares.registry import register_env
+from ares.registry import register_preset
 
 # Define public API
 __all__ = [
@@ -62,4 +64,6 @@ __all__ = [
     "info",
     "list_presets",
     "make",
+    "register_env",
+    "register_preset",
 ]

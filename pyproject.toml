@@ -43,13 +43,15 @@ dependencies = [
 
 [project.optional-dependencies]
 tensorboard = ["tensorboard>=2.20.0", "torch>=2.9.1"]
-llamacpp = ["llama-cpp-python>=0.3.16"]
+llamacpp_client = ["llama-cpp-python>=0.3.16"]
+transformers_client = ["transformers>=4.57.3", "torch>=2.9.1"]
 eval-viz = ["rich>=13.7.0", "textual>=1.0.0"]
 docs = [
     "sphinx>=7.0.0",
     "sphinx-rtd-theme>=2.0.0",
     "sphinx-autodoc-typehints>=1.25.0",
 ]
+transformer-lens = ["transformer-lens>=2.10.0"]
 
 [project.urls]
 Homepage = "https://github.com/withmartian/ares"
@@ -58,13 +60,14 @@ Repository = "https://github.com/withmartian/ares"
 [dependency-groups]
 dev = [
     "pyright>=1.1.406",
-    "ruff>=0.14.1",
+    "ruff==0.14.3",
     "pytest>=8.0.0",
     "pytest-asyncio>=0.25.2",
     "pytest-xdist>=3.6.0",
     "hatchling>=1.28.0",
     "twine>=6.2.0",
 ]
+
 examples = [
     "transformers>=4.57.3",
     "llama-cpp-python>=0.3.16",
@@ -76,6 +79,11 @@ examples = [
     "tinker-cookbook>=0.1.0",
     "chz>=0.4.0",
     "numpy>=2.4.0",
+    "matplotlib>=3.10.8",
+    "ipython>=9.10.0",
+    "scikit-learn>=1.8.0",
+    "huggingface-hub>=0.30.0",
+    "jupyterlab>=4.0.0",
 ]
 
 [tool.pytest.ini_options]

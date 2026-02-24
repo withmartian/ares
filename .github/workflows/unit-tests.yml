@@ -21,7 +21,7 @@ jobs:
       - uses: astral-sh/setup-uv@v5
 
       - name: Install deps
-        run: uv sync --group dev
+        run: uv sync --all-groups --all-extras
 
       - name: Run tests
         run: uv run -m pytest -q

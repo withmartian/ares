@@ -4,7 +4,7 @@
   <a href="https://martian-ares.readthedocs.io/en/latest/"><img src="https://img.shields.io/badge/docs-readthedocs-blue.svg" alt="Documentation"></a>
   <a href="https://pypi.org/project/martian-ares/"><img src="https://img.shields.io/pypi/v/martian-ares.svg" alt="PyPI version"></a>
   <a href="https://github.com/withmartian/ares/blob/main/LICENSE"><img src="https://img.shields.io/github/license/withmartian/ares.svg" alt="License"></a>
-  <a href="https://discord.gg/TFfMTrzw"><img src="https://img.shields.io/badge/discord-join-5865F2?logo=discord" alt="Discord"></a>
+  <a href="https://discord.gg/kX6s6nV3zT"><img src="https://img.shields.io/badge/discord-join-5865F2?logo=discord" alt="Discord"></a>
 </p>
 
 <p align="center">

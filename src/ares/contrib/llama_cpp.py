@@ -7,9 +7,9 @@ WARNING: This is not a core ARES component. The interface may change without not
 For production use, consider implementing your own LLM client following the LLMClient protocol.
 
 Required dependency group:
-    uv add withmartian-ares[llamacpp]
+    uv add withmartian-ares[llamacpp_client]
     OR
-    uv sync --group llamacpp
+    uv sync --group llamacpp_client
 
 Example usage:
     from ares.contrib import llama_cpp
