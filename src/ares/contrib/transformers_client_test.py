@@ -203,15 +203,16 @@ class TestTransformersLLMClientLifecycle:
             mock.patch.object(type(client), "_model", new_callable=mock.PropertyMock, return_value=mock_model),
             mock.patch.object(type(client), "_tokenizer", new_callable=mock.PropertyMock, return_value=mock_tokenizer),
         ):
-            req = request_lib.LLMRequest(messages=[{"role": "user", "content": "test"}])
+            async with client:
+                req = request_lib.LLMRequest(messages=[{"role": "user", "content": "test"}])
 
-            # Make request - should start task via cached_property
-            response = await client(req)
+                # Make request - should start task via cached_property
+                resp = await client(req)
 
-            # Task should now be cached
-            assert "_inference_task" in client.__dict__
-            assert isinstance(client._inference_task, asyncio.Task)
-            assert isinstance(response, response_lib.LLMResponse)
+                # Task should now be cached
+                assert "_inference_task" in client.__dict__
+                assert isinstance(client._inference_task, asyncio.Task)
+                assert isinstance(resp, response_lib.LLMResponse)
 
 
 class TestTransformersLLMClientBatching:
@@ -230,18 +231,19 @@ class TestTransformersLLMClientBatching:
         mock_model.generate.return_value = torch.tensor([[1, 2, 3, 4, 5, 6]])  # 3 input + 3 generated
 
         with setup_client_mocks(client, mock_model, mock_tokenizer):
-            req = request_lib.LLMRequest(
-                messages=[{"role": "user", "content": "test"}],
-            )
+            async with client:
+                req = request_lib.LLMRequest(
+                    messages=[{"role": "user", "content": "test"}],
+                )
 
-            response = await client(req)
+                resp = await client(req)
 
-            assert isinstance(response, response_lib.LLMResponse)
-            assert len(response.data) == 1
-            assert response.data[0].content == "Response text"
-            assert response.cost == 0.0
-            assert response.usage.prompt_tokens > 0
-            assert response.usage.generated_tokens > 0
+                assert isinstance(resp, response_lib.LLMResponse)
+                assert len(resp.data) == 1
+                assert resp.data[0].content == "Response text"
+                assert resp.cost == 0.0
+                assert resp.usage.prompt_tokens > 0
+                assert resp.usage.generated_tokens > 0
 
     @pytest.mark.asyncio
     async def test_batch_multiple_requests(self):
@@ -269,18 +271,21 @@ class TestTransformersLLMClientBatching:
         mock_model.generate.return_value = torch.zeros((3, 8), dtype=torch.long)  # 3 requests, 8 tokens each
 
         with setup_client_mocks(client, mock_model, mock_tokenizer):
-            # Submit 3 requests concurrently
-            requests = [request_lib.LLMRequest(messages=[{"role": "user", "content": f"test {i}"}]) for i in range(3)]
+            async with client:
+                # Submit 3 requests concurrently
+                requests = [
+                    request_lib.LLMRequest(messages=[{"role": "user", "content": f"test {i}"}]) for i in range(3)
+                ]
 
-            responses = await asyncio.gather(*[client(req) for req in requests])
+                responses = await asyncio.gather(*[client(req) for req in requests])
 
-            assert len(responses) == 3
-            for i, resp in enumerate(responses):
-                assert isinstance(resp, response_lib.LLMResponse)
-                assert resp.data[0].content == f"Response {i + 1}"
+                assert len(responses) == 3
+                for i, resp in enumerate(responses):
+                    assert isinstance(resp, response_lib.LLMResponse)
+                    assert resp.data[0].content == f"Response {i + 1}"
 
-            # Verify generate was called once with batch
-            mock_model.generate.assert_called_once()
+                # Verify generate was called once with batch
+                mock_model.generate.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -336,15 +341,16 @@ async def test_integration_with_minimal_model():
             return_value=minimal_tokenizer,
         ),
     ):
-        req = request_lib.LLMRequest(
-            messages=[{"role": "user", "content": "Hello"}],
-        )
+        async with client:
+            req = request_lib.LLMRequest(
+                messages=[{"role": "user", "content": "Hello"}],
+            )
 
-        response = await client(req)
+            resp = await client(req)
 
-        assert isinstance(response, response_lib.LLMResponse)
-        assert len(response.data) == 1
-        assert isinstance(response.data[0].content, str)
-        assert response.cost == 0.0
-        assert response.usage.prompt_tokens > 0
-        assert response.usage.generated_tokens > 0
+            assert isinstance(resp, response_lib.LLMResponse)
+            assert len(resp.data) == 1
+            assert isinstance(resp.data[0].content, str)
+            assert resp.cost == 0.0
+            assert resp.usage.prompt_tokens > 0
+            assert resp.usage.generated_tokens > 0

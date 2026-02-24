@@ -26,6 +26,7 @@ Note: The background batching task automatically exits when the client is garbag
 
 import asyncio
 import collections
+import contextlib
 import dataclasses
 import functools
 import logging
@@ -37,6 +38,7 @@ import transformers
 
 from ares.async_utils import ValueAndFuture
 from ares.llms import llm_clients
+from ares.llms import openai_chat_converter
 from ares.llms import request
 from ares.llms import response
 
@@ -190,6 +192,20 @@ class TransformersLLMClient(llm_clients.LLMClient):
         await self._request_queue.put(ValueAndFuture(value=req, future=future))
         return await future
 
+    async def close(self) -> None:
+        """Stop the background inference task."""
+        self._inference_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await self._inference_task
+
+    async def __aenter__(self) -> "TransformersLLMClient":
+        if self._inference_task.done():
+            raise RuntimeError("TransformersLLMClient has already been closed and cannot be reused")
+        return self
+
+    async def __aexit__(self, exc_type: object, exc_val: object, exc_tb: object) -> None:
+        await self.close()
+
     async def _inference_loop(self, weak_self: weakref.ReferenceType) -> None:
         """Background task that batches and processes requests.
 
@@ -214,7 +230,7 @@ class TransformersLLMClient(llm_clients.LLMClient):
                 except TimeoutError:
                     continue
 
-                kwargs = first_item.value.to_chat_completion_kwargs()
+                kwargs = openai_chat_converter.to_external(first_item.value, strict=False)
                 temp = kwargs.get("temperature")
                 max_tokens = kwargs.get("max_completion_tokens")
                 first_params = (
@@ -237,7 +253,7 @@ class TransformersLLMClient(llm_clients.LLMClient):
 
                     try:
                         item = await asyncio.wait_for(self._request_queue.get(), timeout=timeout)
-                        kwargs = item.value.to_chat_completion_kwargs()
+                        kwargs = openai_chat_converter.to_external(item.value, strict=False)
                         temp = kwargs.get("temperature")
                         max_tokens = kwargs.get("max_completion_tokens")
                         params = (
@@ -272,7 +288,7 @@ class TransformersLLMClient(llm_clients.LLMClient):
 
             chat_conversations = []
             for item in batch:
-                kwargs = item.value.to_chat_completion_kwargs()
+                kwargs = openai_chat_converter.to_external(item.value, strict=False)
                 chat_conversations.append(kwargs["messages"])
 
             responses = await asyncio.to_thread(  # transformers is not async
