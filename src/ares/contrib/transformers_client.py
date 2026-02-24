@@ -20,8 +20,6 @@ Example usage:
 
     req = request.LLMRequest(messages=[{"role": "user", "content": "Hello!"}])
     response = await client(req)
-
-Note: The background batching task automatically exits when the client is garbage collected.
 """
 
 import asyncio
@@ -31,7 +29,6 @@ import dataclasses
 import functools
 import logging
 from typing import Literal, cast
-import weakref
 
 import torch
 import transformers
@@ -126,12 +123,8 @@ class TransformersLLMClient(llm_clients.LLMClient):
 
     @functools.cached_property
     def _inference_task(self) -> asyncio.Task[None]:
-        """Lazy-initialized background inference task.
-
-        The task automatically exits when the client is garbage collected via weakref.
-        """
-        weak_self = weakref.ref(self)
-        task = asyncio.create_task(self._inference_loop(weak_self))
+        """Lazy-initialized background inference task."""
+        task = asyncio.create_task(self._inference_loop())
         _LOGGER.info("TransformersLLMClient started background inference task")
         return task
 
@@ -206,7 +199,7 @@ class TransformersLLMClient(llm_clients.LLMClient):
     async def __aexit__(self, exc_type: object, exc_val: object, exc_tb: object) -> None:
         await self.close()
 
-    async def _inference_loop(self, weak_self: weakref.ReferenceType) -> None:
+    async def _inference_loop(self) -> None:
         """Background task that batches and processes requests.
 
         Groups requests by (temperature, max_tokens) during collection to preserve per-request
@@ -216,20 +209,10 @@ class TransformersLLMClient(llm_clients.LLMClient):
         and splitting later, but less efficient than a full meta-queue with per-parameter timers.
         Future: Could extend to a queue-of-queues where each parameter combo gets its own queue
         and timer, allowing truly independent batching per parameter set.
-
-        Args:
-            weak_self: Weakref to the client - task exits when client is GC'd
         """
-        while weak_self() is not None:
+        while True:
             try:
-                try:
-                    first_item = await asyncio.wait_for(
-                        self._request_queue.get(),
-                        timeout=60.0,  # Periodic timeout to check if client was GC'd
-                    )
-                except TimeoutError:
-                    continue
-
+                first_item = await self._request_queue.get()
                 kwargs = openai_chat_converter.to_external(first_item.value, strict=False)
                 temp = kwargs.get("temperature")
                 max_tokens = kwargs.get("max_completion_tokens")
