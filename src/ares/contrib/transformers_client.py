@@ -316,6 +316,8 @@ class TransformersLLMClient(llm_clients.LLMClient):
             assert isinstance(text, str)  # apply_chat_template with tokenize=False returns str
             input_texts.append(text)
 
+        # TODO: Add truncation strategies.
+        # see https://github.com/withmartian/ares/pull/89#discussion_r2805921801
         inputs: transformers.BatchEncoding = self._tokenizer(
             input_texts,
             return_tensors="pt",
