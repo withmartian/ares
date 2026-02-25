@@ -2,6 +2,7 @@
 
 import dataclasses
 from typing import Any, Literal
+import uuid
 
 import anthropic.types
 import openai.types.responses
@@ -62,8 +63,8 @@ class LLMResponse:
     data: list[TextData | ToolUseData]
     cost: float
     usage: Usage
-    id: str
-    model: str
+    id: str = dataclasses.field(default_factory=lambda: str(uuid.uuid4()))
+    model: str = ""
 
     # Anthropic-only properties
     stop_reason: anthropic.types.StopReason | None = None

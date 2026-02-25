@@ -13,7 +13,6 @@ import pytest
 from ares.llms import accounting
 from ares.llms import openai_responses_converter
 from ares.llms import request as request_lib
-from ares.llms import response
 
 
 class TestStructuredContentHandling:

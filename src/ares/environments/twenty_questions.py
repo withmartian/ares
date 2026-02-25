@@ -356,6 +356,8 @@ class TwentyQuestionsEnvironment(base.Environment[response.LLMResponse, request.
             oracle_response = await self._oracle_client(oracle_request)
 
         # Extract answer from response - LLMResponse has data: list[TextData]
+        if not isinstance(oracle_response.data[0], response.TextData):
+            raise RuntimeError(f"Oracle response is not a TextData: {oracle_response.data[0]}")
         answer_text = oracle_response.data[0].content.strip()
 
         _LOGGER.debug("[%d] Raw oracle response: %s", id(self), answer_text)
@@ -365,6 +367,8 @@ class TwentyQuestionsEnvironment(base.Environment[response.LLMResponse, request.
     def _extract_question_from_response(self, action: response.LLMResponse) -> str:
         """Extract the question text from the agent's response."""
         # Get the text content from the first data element
+        if not isinstance(action.data[0], response.TextData):
+            return ""
         question = action.data[0].content if action.data else ""
         return question.strip()
 

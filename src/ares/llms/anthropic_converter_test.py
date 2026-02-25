@@ -12,7 +12,6 @@ import pytest
 from ares.llms import accounting
 from ares.llms import anthropic_converter
 from ares.llms import request as request_lib
-from ares.llms import response
 
 
 class TestStructuredContentHandling:
