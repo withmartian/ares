@@ -427,7 +427,10 @@ def ares_response_from_external(
             )
 
         else:
-            msg = f"Unsupported content block type: {type(block).__name__}. Only TextBlock and ToolUseBlock are supported."
+            msg = (
+                f"Unsupported content block type: {type(block).__name__}. "
+                "Only TextBlock and ToolUseBlock are supported."
+            )
             if strict:
                 raise ValueError(msg)
             _LOGGER.warning(msg)

@@ -70,6 +70,9 @@ class LLMResponse:
     stop_reason: anthropic.types.StopReason | None = None
     stop_sequence: str | None = None
 
+    # Chat Completions-only properties
+    finish_reason: Literal["stop", "length", "tool_calls", "content_filter", "function_call"] | None = None
+
     # Responses-only properties
     created_at: float | None = None
     status: openai.types.responses.ResponseStatus | None = None

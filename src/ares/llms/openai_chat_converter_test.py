@@ -359,10 +359,4 @@ class TestLLMResponseConversion:
         )
         converted_message = openai_chat_converter.ares_response_to_external(ares_response)
 
-        # Convert original completion to message for comparison
-        original_ares = openai_chat_converter.ares_response_from_external(
-            original_completion, model="gpt-5", cost_mapping=_MOCK_COST_MAPPING
-        )
-
-        # Verify round-trip: ARES data should be identical
-        assert ares_response.data == original_ares.data
+        assert converted_message == original_completion

@@ -17,8 +17,10 @@ import json
 import logging
 from typing import Any, cast
 
+import openai.types
 import openai.types.chat
 import openai.types.chat.chat_completion
+import openai.types.chat.chat_completion_message_tool_call
 import openai.types.chat.completion_create_params
 import openai.types.shared_params
 
@@ -476,48 +478,86 @@ def ares_response_from_external(
         generated_tokens=completion.usage.completion_tokens if completion.usage else 0,
     )
 
+    # Extract finish_reason from first choice
+    finish_reason = completion.choices[0].finish_reason if completion.choices else None
+
     return llm_response.LLMResponse(
         data=data,
         cost=cost_float,
         usage=usage,
         id=completion.id,
         model=completion.model,
+        created_at=float(completion.created),
+        finish_reason=finish_reason,
     )
 
 
 def ares_response_to_external(
     response: llm_response.LLMResponse,
-) -> dict[str, Any]:
-    """Convert ARES LLMResponse to OpenAI assistant message format.
+) -> openai.types.chat.ChatCompletion:
+    """Convert ARES LLMResponse to OpenAI ChatCompletion format.
 
     Args:
         response: ARES LLMResponse with TextData and/or ToolUseData
 
     Returns:
-        Dictionary representing an OpenAI assistant message
+        OpenAI ChatCompletion object
+
+    Raises:
+        ValueError: If required fields (finish_reason, created_at) are missing
     """
-    message: dict[str, Any] = {"role": "assistant"}
+    # Validate required fields
+    if response.finish_reason is None:
+        raise ValueError("Cannot convert to Chat Completions format: finish_reason is required")
+    if response.created_at is None:
+        raise ValueError("Cannot convert to Chat Completions format: created_at is required")
 
     # Extract text content (first TextData block)
     text_blocks = [block for block in response.data if isinstance(block, llm_response.TextData)]
-    if text_blocks:
-        message["content"] = text_blocks[0].content
-    else:
-        message["content"] = None
+    content = text_blocks[0].content if text_blocks else None
 
     # Extract tool calls
     tool_calls_blocks = [block for block in response.data if isinstance(block, llm_response.ToolUseData)]
+    tool_calls: list[openai.types.chat.ChatCompletionMessageToolCall] | None = None
     if tool_calls_blocks:
-        message["tool_calls"] = [
-            {
-                "id": block.id,
-                "type": "function",
-                "function": {
-                    "name": block.name,
-                    "arguments": json.dumps(block.input),
-                },
-            }
+        tool_calls = [
+            openai.types.chat.ChatCompletionMessageToolCall(
+                id=block.id,
+                type="function",
+                function=openai.types.chat.chat_completion_message_tool_call.Function(
+                    name=block.name,
+                    arguments=json.dumps(block.input),
+                ),
+            )
             for block in tool_calls_blocks
         ]
 
-    return message
+    # Build the message
+    message = openai.types.chat.ChatCompletionMessage(
+        role="assistant",
+        content=content,
+        tool_calls=tool_calls,
+    )
+
+    # Build the choice
+    choice = openai.types.chat.chat_completion.Choice(
+        index=0,
+        message=message,
+        finish_reason=response.finish_reason,
+    )
+
+    # Build usage
+    usage = openai.types.CompletionUsage(
+        prompt_tokens=response.usage.prompt_tokens,
+        completion_tokens=response.usage.generated_tokens,
+        total_tokens=response.usage.total_tokens,
+    )
+
+    return openai.types.chat.ChatCompletion(
+        id=response.id,
+        choices=[choice],
+        created=int(response.created_at),
+        model=response.model,
+        object="chat.completion",
+        usage=usage,
+    )

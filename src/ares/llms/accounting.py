@@ -74,9 +74,7 @@ def martian_cost_list(
 def get_llm_cost(
     model_id: str,
     completion: (
-        openai.types.chat.chat_completion.ChatCompletion
-        | openai.types.responses.Response
-        | anthropic.types.Message
+        openai.types.chat.chat_completion.ChatCompletion | openai.types.responses.Response | anthropic.types.Message
     ),
     *,
     cost_mapping: Mapping[str, ModelCost],

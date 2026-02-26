@@ -497,7 +497,10 @@ def ares_response_from_external(
             )
 
         else:
-            msg = f"Unsupported output type: {type(item).__name__}. Only ResponseOutputMessage and ResponseFunctionToolCall are supported."
+            msg = (
+                f"Unsupported output type: {type(item).__name__}. "
+                "Only ResponseOutputMessage and ResponseFunctionToolCall are supported."
+            )
             if strict:
                 raise ValueError(msg)
             _LOGGER.warning(msg)
