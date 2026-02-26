@@ -4,6 +4,10 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/ares"]
+exclude = [
+    "**/*_test.py",
+    "**/test_data/",
+]
 
 [project]
 name = "martian-ares"

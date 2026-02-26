@@ -1,0 +1,36 @@
+{
+  "id": "resp_abc123",
+  "object": "response",
+  "created_at": 1677652288,
+  "model": "gpt-5",
+  "status": "completed",
+  "parallel_tool_calls": true,
+  "tool_choice": "auto",
+  "tools": [],
+  "output": [
+    {
+      "id": "msg_001",
+      "type": "message",
+      "role": "assistant",
+      "status": "completed",
+      "content": [
+        {
+          "type": "output_text",
+          "text": "Hello! How can I help you today?",
+          "annotations": []
+        }
+      ]
+    }
+  ],
+  "usage": {
+    "input_tokens": 10,
+    "input_tokens_details": {
+      "cached_tokens": 0
+    },
+    "output_tokens": 9,
+    "output_tokens_details": {
+      "reasoning_tokens": 0
+    },
+    "total_tokens": 19
+  }
+}
