@@ -159,10 +159,13 @@ class MiniSWECodeAgent(code_agent_base.CodeAgent):
         with self.tracker.timeit("mswea/setup"):
             _LOGGER.debug("[%d] Starting mini-swe-agent run.", id(self))
 
-            system = (await self.container.exec_run("uname -a", env=self._environment_env_vars)).output.strip()
-            release = (await self.container.exec_run("uname -r", env=self._environment_env_vars)).output.strip()
-            version = (await self.container.exec_run("uname -v", env=self._environment_env_vars)).output.strip()
-            machine = (await self.container.exec_run("uname -m", env=self._environment_env_vars)).output.strip()
+            # Use a short timeout for system info commands - these should complete quickly.
+            setup_timeout_s = 30
+            env = self._environment_env_vars
+            system = (await self.container.exec_run("uname -a", timeout_s=setup_timeout_s, env=env)).output.strip()
+            release = (await self.container.exec_run("uname -r", timeout_s=setup_timeout_s, env=env)).output.strip()
+            version = (await self.container.exec_run("uname -v", timeout_s=setup_timeout_s, env=env)).output.strip()
+            machine = (await self.container.exec_run("uname -m", timeout_s=setup_timeout_s, env=env)).output.strip()
 
             _LOGGER.debug("[%d] System information: %s %s %s %s", id(self), system, release, version, machine)
 
