@@ -125,12 +125,17 @@ def _register_default_presets() -> None:
     This function is called automatically when the presets module is imported,
     ensuring built-in presets are always available.
     """
+    seen_dataset_ids: set[str] = set()
     for ds_spec in code_env.list_harbor_datasets():
+        ds_id = _make_harbor_dataset_id(ds_spec.name, ds_spec.version)
+        if ds_id in seen_dataset_ids:
+            _LOGGER.debug("Skipping duplicate dataset '%s'", ds_id)
+            continue
+        seen_dataset_ids.add(ds_id)
         for code_agent_id, code_agent_factory in [
             ("mswea", mini_swe_agent.MiniSWECodeAgent),
             ("terminus2", terminus2_agent.Terminus2Agent),
         ]:
-            ds_id = _make_harbor_dataset_id(ds_spec.name, ds_spec.version)
             registry.register_preset(
                 f"{ds_id}-{code_agent_id}",
                 HarborSpec(
