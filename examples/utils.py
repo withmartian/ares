@@ -7,6 +7,7 @@ from typing import Any
 
 import ares
 from ares import llms
+from ares.llms import open_responses
 import tqdm
 
 _LOGGER = logging.getLogger(__name__)
@@ -14,7 +15,7 @@ _LOGGER = logging.getLogger(__name__)
 
 def print_step(
     step_count: int,
-    observation: llms.LLMRequest | None,
+    observation: open_responses.Request | None,
     action: llms.LLMResponse,
 ) -> None:
     """Print a step in the RL loop.
@@ -28,11 +29,11 @@ def print_step(
     print("-" * 80)
 
     if observation is not None:
-        messages = list(observation.messages)
+        messages = open_responses.to_chat_messages(observation, strict=False)
         if len(messages) > 0:
             observation_content = messages[-1].get("content", "")
         else:
-            observation_content = str(observation.system_prompt) or "(no messages)"
+            observation_content = str(observation.instructions) or "(no messages)"
 
         observation_preview = str(observation_content)[:200]
         if len(str(observation_content)) > 200:

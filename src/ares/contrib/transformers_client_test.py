@@ -9,7 +9,7 @@ import torch
 import transformers
 
 from ares.contrib import transformers_client
-from ares.llms import request as request_lib
+from ares.llms import open_responses
 from ares.llms import response as response_lib
 
 # Helper functions for mocking
@@ -204,7 +204,7 @@ class TestTransformersLLMClientLifecycle:
             mock.patch.object(type(client), "_tokenizer", new_callable=mock.PropertyMock, return_value=mock_tokenizer),
         ):
             async with client:
-                req = request_lib.LLMRequest(messages=[{"role": "user", "content": "test"}])
+                req = open_responses.make_request([open_responses.user_message("test")])
 
                 # Make request - should start task via cached_property
                 resp = await client(req)
@@ -232,9 +232,7 @@ class TestTransformersLLMClientBatching:
 
         with setup_client_mocks(client, mock_model, mock_tokenizer):
             async with client:
-                req = request_lib.LLMRequest(
-                    messages=[{"role": "user", "content": "test"}],
-                )
+                req = open_responses.make_request([open_responses.user_message("test")])
 
                 resp = await client(req)
 
@@ -273,9 +271,7 @@ class TestTransformersLLMClientBatching:
         with setup_client_mocks(client, mock_model, mock_tokenizer):
             async with client:
                 # Submit 3 requests concurrently
-                requests = [
-                    request_lib.LLMRequest(messages=[{"role": "user", "content": f"test {i}"}]) for i in range(3)
-                ]
+                requests = [open_responses.make_request([open_responses.user_message(f"test {i}")]) for i in range(3)]
 
                 responses = await asyncio.gather(*[client(req) for req in requests])
 
@@ -342,9 +338,7 @@ async def test_integration_with_minimal_model():
         ),
     ):
         async with client:
-            req = request_lib.LLMRequest(
-                messages=[{"role": "user", "content": "Hello"}],
-            )
+            req = open_responses.make_request([open_responses.user_message("Hello")])
 
             resp = await client(req)
 

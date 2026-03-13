@@ -48,6 +48,7 @@ from typing import Any
 
 import ares
 from ares import llms
+from ares.llms import open_responses
 import hydra
 import omegaconf
 import ray
@@ -91,7 +92,7 @@ class ARESSkyRLGymEnv(base_text_env.BaseTextEnv):
         self.preset_name = extras.get("preset_name", kwargs.get("preset_name"))
         if not self.preset_name:
             raise ValueError("preset_name must be provided in extras or kwargs")
-        self.env: ares.Environment[llms.LLMResponse, llms.LLMRequest, float, float] | None = None
+        self.env: ares.Environment[llms.LLMResponse, open_responses.Request, float, float] | None = None
 
     async def init(
         self, prompt: base_text_env.ConversationType
@@ -104,7 +105,8 @@ class ARESSkyRLGymEnv(base_text_env.BaseTextEnv):
         await self.env.__aenter__()
         ts = await self.env.reset()
 
-        return ts.observation.messages, {}  # type: ignore
+        assert ts.observation is not None
+        return open_responses.to_chat_messages(ts.observation, strict=True), {}
 
     async def step(self, action: str) -> base_text_env.BaseTextEnvStepOutput:
         """Runs one environment step.
@@ -130,7 +132,7 @@ class ARESSkyRLGymEnv(base_text_env.BaseTextEnv):
             # Hack to approximate a context manager
             await self.env.__aexit__(None, None, None)
 
-        msgs = [] if ts.last() else ts.observation.messages
+        msgs = [] if ts.last() else open_responses.to_chat_messages(ts.observation, strict=True)
         return base_text_env.BaseTextEnvStepOutput(
             observations=msgs,
             reward=ts.reward or 0.0,

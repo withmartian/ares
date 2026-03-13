@@ -10,7 +10,7 @@ Required dependency group:
 
 Example usage:
     from ares.contrib import transformers_client
-    from ares.llms import request
+    from ares.llms import open_responses
 
     client = transformers_client.TransformersLLMClient(
         model_name="Qwen/Qwen2.5-0.5B-Instruct",
@@ -18,7 +18,7 @@ Example usage:
         max_batch_size=8,
     )
 
-    req = request.LLMRequest(messages=[{"role": "user", "content": "Hello!"}])
+    req = open_responses.make_request([open_responses.user_message("Hello!")])
     response = await client(req)
 """
 
@@ -35,8 +35,7 @@ import transformers
 
 from ares.async_utils import ValueAndFuture
 from ares.llms import llm_clients
-from ares.llms import openai_chat_converter
-from ares.llms import request
+from ares.llms import open_responses
 from ares.llms import response
 
 _LOGGER = logging.getLogger(__name__)
@@ -117,7 +116,7 @@ class TransformersLLMClient(llm_clients.LLMClient):
     temperature: float = 1.0
 
     @functools.cached_property
-    def _request_queue(self) -> asyncio.Queue[ValueAndFuture[request.LLMRequest, response.LLMResponse]]:
+    def _request_queue(self) -> asyncio.Queue[ValueAndFuture[open_responses.Request, response.LLMResponse]]:
         """Lazy-initialized queue for batching requests."""
         return asyncio.Queue()
 
@@ -169,13 +168,13 @@ class TransformersLLMClient(llm_clients.LLMClient):
             tokenizer.pad_token = tokenizer.eos_token
         return tokenizer
 
-    async def __call__(self, req: request.LLMRequest) -> response.LLMResponse:
+    async def __call__(self, req: open_responses.Request) -> response.LLMResponse:
         """Queue request and wait for batched inference.
 
         The background inference task is started automatically on first call.
 
         Args:
-            req: The LLM request containing messages and optional temperature
+            req: The Open Responses request to run.
 
         Returns:
             LLMResponse with the generated completion
@@ -211,19 +210,18 @@ class TransformersLLMClient(llm_clients.LLMClient):
         and timer, allowing truly independent batching per parameter set.
         """
         while True:
-            collected_items: list[ValueAndFuture[request.LLMRequest, response.LLMResponse]] = []
+            collected_items: list[ValueAndFuture[open_responses.Request, response.LLMResponse]] = []
             try:
                 first_item = await self._request_queue.get()
                 collected_items.append(first_item)
-                kwargs = openai_chat_converter.to_external(first_item.value, strict=False)
-                temp = kwargs.get("temperature")
-                max_tokens = kwargs.get("max_completion_tokens")
+                temp = first_item.value.temperature
+                max_tokens = first_item.value.max_output_tokens
                 first_params = (
                     self.temperature if temp is None else temp,
                     self.max_new_tokens if max_tokens is None else max_tokens,
                 )
 
-                groups: dict[tuple[float, int], list[ValueAndFuture[request.LLMRequest, response.LLMResponse]]] = (
+                groups: dict[tuple[float, int], list[ValueAndFuture[open_responses.Request, response.LLMResponse]]] = (
                     collections.defaultdict(list)
                 )
                 groups[first_params].append(first_item)
@@ -239,9 +237,8 @@ class TransformersLLMClient(llm_clients.LLMClient):
                     try:
                         item = await asyncio.wait_for(self._request_queue.get(), timeout=timeout)
                         collected_items.append(item)
-                        kwargs = openai_chat_converter.to_external(item.value, strict=False)
-                        temp = kwargs.get("temperature")
-                        max_tokens = kwargs.get("max_completion_tokens")
+                        temp = item.value.temperature
+                        max_tokens = item.value.max_output_tokens
                         params = (
                             self.temperature if temp is None else temp,
                             self.max_new_tokens if max_tokens is None else max_tokens,
@@ -263,7 +260,7 @@ class TransformersLLMClient(llm_clients.LLMClient):
 
     async def _process_batch(
         self,
-        batch: list[ValueAndFuture[request.LLMRequest, response.LLMResponse]],
+        batch: list[ValueAndFuture[open_responses.Request, response.LLMResponse]],
         params: tuple[float, int],
     ) -> None:
         """Process a batch of requests with homogeneous parameters.
@@ -277,8 +274,9 @@ class TransformersLLMClient(llm_clients.LLMClient):
 
             chat_conversations = []
             for item in batch:
-                kwargs = openai_chat_converter.to_external(item.value, strict=False)
-                chat_conversations.append(kwargs["messages"])
+                chat_conversations.append(
+                    open_responses.to_chat_messages(item.value, model=self.model_name, strict=True)
+                )
 
             responses = await asyncio.to_thread(  # transformers is not async
                 self._generate_batch,

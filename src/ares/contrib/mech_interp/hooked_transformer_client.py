@@ -8,6 +8,7 @@ import torch
 import transformer_lens
 
 from ares import llms
+from ares.llms import open_responses
 
 
 @dataclasses.dataclass
@@ -58,24 +59,20 @@ class HookedTransformerLLMClient:
 
     async def __call__(
         self,
-        request: llms.LLMRequest,
+        request: open_responses.Request,
         max_output_tokens: int | None = None,
     ) -> llms.LLMResponse:
         """Generate a completion using the HookedTransformer.
 
         Args:
-            request: LLM request containing messages and optional temperature.
+            request: Open Responses request containing the model input.
 
         Returns:
             LLM response with chat completion and cost information.
         """
         max_output_tokens = max_output_tokens or request.max_output_tokens or self.max_new_tokens
 
-        # Format messages into text
-        messages_list = []
-        if request.system_prompt:
-            messages_list.append({"role": "system", "content": request.system_prompt})
-        messages_list.extend(request.messages)
+        messages_list = open_responses.to_chat_messages(request, strict=True)
 
         # Tokenize input
         # TODO: Need to support various truncation methods

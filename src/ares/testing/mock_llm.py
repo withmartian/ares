@@ -3,7 +3,7 @@
 from collections.abc import Callable
 import dataclasses
 
-from ares.llms import request
+from ares.llms import open_responses
 from ares.llms import response
 
 
@@ -15,20 +15,20 @@ class MockLLMClient:
     API requests. It records all requests and allows configuring responses.
 
     Attributes:
-        requests: List of all LLMRequest objects received.
+        requests: List of all Open Responses requests received.
         responses: List of response strings to return (cycles through them).
         response_handler: Optional function to dynamically generate responses.
         default_response: Default response if no responses configured.
         call_count: Number of times the client has been called.
     """
 
-    requests: list[request.LLMRequest] = dataclasses.field(default_factory=list)
+    requests: list[open_responses.Request] = dataclasses.field(default_factory=list)
     responses: list[str] = dataclasses.field(default_factory=list)
-    response_handler: Callable[[request.LLMRequest], str] | None = None
+    response_handler: Callable[[open_responses.Request], str] | None = None
     default_response: str = "Mock LLM response"
     call_count: int = 0
 
-    async def __call__(self, request: request.LLMRequest) -> response.LLMResponse:
+    async def __call__(self, request: open_responses.Request) -> response.LLMResponse:
         """Process LLM request and return mock response.
 
         Args:
@@ -55,15 +55,15 @@ class MockLLMClient:
             usage=response.Usage(prompt_tokens=100, generated_tokens=50),
         )
 
-    def get_last_request(self) -> request.LLMRequest | None:
+    def get_last_request(self) -> open_responses.Request | None:
         """Get the most recent request, or None if no requests."""
         return self.requests[-1] if self.requests else None
 
-    def get_request_messages(self, index: int = -1) -> list[request.Message]:
-        """Get messages from a specific request (default: last request)."""
+    def get_request_messages(self, index: int = -1) -> list[open_responses.InputItemMessage]:
+        """Get message items from a specific request (default: last request)."""
         if not self.requests:
             return []
-        return self.requests[index].messages
+        return open_responses.message_items(self.requests[index])
 
     def reset(self) -> None:
         """Clear all recorded data."""

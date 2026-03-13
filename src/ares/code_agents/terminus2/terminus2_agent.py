@@ -32,7 +32,7 @@ from ares.code_agents.terminus2 import xml_parser
 from ares.containers import containers
 from ares.experiment_tracking import stat_tracker
 from ares.llms import llm_clients
-from ares.llms import request
+from ares.llms import open_responses
 from ares.llms import response
 
 _LOGGER = logging.getLogger(__name__)
@@ -174,7 +174,7 @@ class Terminus2Agent(code_agent_base.CodeAgent):
         self._summarize_template = _load_template(template_dir / "summarize.txt")
 
         # Conversation history
-        self._messages: list[request.Message] = []
+        self._messages: list[open_responses.InputItemMessage] = []
         self._system_prompt: str | None = None  # Set during run()
 
         # State tracking
@@ -646,7 +646,9 @@ class Terminus2Agent(code_agent_base.CodeAgent):
 
     def _get_total_chars(self) -> int:
         """Get the total number of characters in the conversation history and system prompt."""
-        return sum(len(str(msg.get("content", ""))) for msg in self._messages) + len(self._system_prompt or "")
+        return sum(len(open_responses.message_text(msg, strict=False)) for msg in self._messages) + len(
+            self._system_prompt or ""
+        )
 
     async def _query_llm(self) -> response.LLMResponse:
         """Query the LLM with the current conversation history.
@@ -681,7 +683,7 @@ class Terminus2Agent(code_agent_base.CodeAgent):
 
         try:
             response = await self.llm_client(
-                request.LLMRequest(messages=self._messages, system_prompt=self._system_prompt)
+                open_responses.make_request(self._messages, instructions=self._system_prompt)
             )
             _LOGGER.debug("[%d] Received LLM response", id(self))
             return response
@@ -714,7 +716,7 @@ class Terminus2Agent(code_agent_base.CodeAgent):
 
                 # Retry the query with summarized context
                 response = await self.llm_client(
-                    request.LLMRequest(messages=self._messages, system_prompt=self._system_prompt)
+                    open_responses.make_request(self._messages, instructions=self._system_prompt)
                 )
                 _LOGGER.debug("[%d] Received LLM response after summarization", id(self))
                 return response
@@ -871,7 +873,10 @@ class Terminus2Agent(code_agent_base.CodeAgent):
         # Sanitize content before adding
         sanitized = _sanitize_content(content)
         assert role in ("user", "assistant")
-        self._messages.append(cast(request.Message, {"role": role, "content": sanitized}))
+        if role == "user":
+            self._messages.append(open_responses.user_message(sanitized))
+        else:
+            self._messages.append(open_responses.assistant_message(sanitized))
 
     def _unwrap_single_response(self, llm_response: response.LLMResponse) -> str:
         """Unwrap a single-item LLMResponse and update metrics.
@@ -914,10 +919,10 @@ class Terminus2Agent(code_agent_base.CodeAgent):
         try:
             # Use the conversation history for context (same as Harbor's implementation)
             summary_messages = list(self._messages)
-            summary_messages.append({"role": "user", "content": summary_prompt})
+            summary_messages.append(open_responses.user_message(summary_prompt))
 
             summary_response = await self.llm_client(
-                request.LLMRequest(messages=summary_messages, system_prompt=self._system_prompt)
+                open_responses.make_request(summary_messages, instructions=self._system_prompt)
             )
 
             summary_content = self._unwrap_single_response(summary_response)
@@ -932,9 +937,9 @@ class Terminus2Agent(code_agent_base.CodeAgent):
                 _LOGGER.warning("[%d] Summarization hit context limit, using last 20 messages only", id(self))
                 try:
                     summary_messages = [self._messages[0], *self._messages[-20:]]
-                    summary_messages.append({"role": "user", "content": summary_prompt})
+                    summary_messages.append(open_responses.user_message(summary_prompt))
                     summary_response = await self.llm_client(
-                        request.LLMRequest(messages=summary_messages, system_prompt=self._system_prompt)
+                        open_responses.make_request(summary_messages, instructions=self._system_prompt)
                     )
                     summary_content = self._unwrap_single_response(summary_response)
                     _LOGGER.info("[%d] Step 1/3: Summary generated (with fallback)", id(self))
@@ -957,7 +962,7 @@ class Terminus2Agent(code_agent_base.CodeAgent):
 
         try:
             questions_response = await self.llm_client(
-                request.LLMRequest(messages=[{"role": "user", "content": question_prompt}])
+                open_responses.make_request([open_responses.user_message(question_prompt)])
             )
 
             model_questions = self._unwrap_single_response(questions_response)
@@ -977,10 +982,10 @@ class Terminus2Agent(code_agent_base.CodeAgent):
         try:
             # Use the conversation history for context (same as Harbor's implementation)
             answer_messages = list(self._messages)
-            answer_messages.append({"role": "user", "content": answer_request_prompt})
+            answer_messages.append(open_responses.user_message(answer_request_prompt))
 
             answers_response = await self.llm_client(
-                request.LLMRequest(messages=answer_messages, system_prompt=self._system_prompt)
+                open_responses.make_request(answer_messages, instructions=self._system_prompt)
             )
 
             answers_content = self._unwrap_single_response(answers_response)
@@ -994,9 +999,9 @@ class Terminus2Agent(code_agent_base.CodeAgent):
                 _LOGGER.warning("[%d] Answer generation hit context limit, using last 20 messages only", id(self))
                 try:
                     answer_messages = [*self._messages[-20:]]
-                    answer_messages.append({"role": "user", "content": answer_request_prompt})
+                    answer_messages.append(open_responses.user_message(answer_request_prompt))
                     answers_response = await self.llm_client(
-                        request.LLMRequest(messages=answer_messages, system_prompt=self._system_prompt)
+                        open_responses.make_request(answer_messages, instructions=self._system_prompt)
                     )
                     answers_content = self._unwrap_single_response(answers_response)
                     _LOGGER.info("[%d] Step 3/3: Answers provided (with fallback)", id(self))

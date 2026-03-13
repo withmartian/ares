@@ -49,6 +49,7 @@ from typing import Any, Literal
 import ares
 from ares import containers
 from ares import llms
+from ares.llms import open_responses
 import chz
 import frozendict
 import numpy as np
@@ -109,7 +110,7 @@ class TinkerCompatibleEnv(tinker_types.Env):
     """Adapter wrapping ARES environments to work with Tinker's RL training loop.
 
     Handles bidirectional conversion:
-    - ARES LLMRequest -> Tinker ModelInput (tokenized prompts)
+    - ARES Open Responses request -> Tinker ModelInput (tokenized prompts)
     - Tinker Action (text) -> ARES LLMResponse
     - ARES TimeStep -> Tinker StepResult
 
@@ -121,7 +122,7 @@ class TinkerCompatibleEnv(tinker_types.Env):
 
     def __init__(
         self,
-        env: ares.Environment[llms.LLMResponse, llms.LLMRequest, float, float],
+        env: ares.Environment[llms.LLMResponse, open_responses.Request, float, float],
         renderer: renderers.Renderer,
         convo_prefix: list[renderers.Message] | None,
         max_tokens: int,
@@ -132,14 +133,14 @@ class TinkerCompatibleEnv(tinker_types.Env):
         self.max_tokens = max_tokens
 
     def _get_tinker_observation(
-        self, ts: ares.TimeStep[llms.LLMRequest | None, float, float]
+        self, ts: ares.TimeStep[open_responses.Request | None, float, float]
     ) -> tinker_types.Observation:
         if ts.observation is None:
             return tinker.ModelInput.empty()
 
         messages = self.convo_prefix + [
             renderers.Message(role=message["role"], content=message["content"])  # type: ignore
-            for message in ts.observation.messages
+            for message in open_responses.to_chat_messages(ts.observation, strict=True)
         ]
         model_input = self.renderer.build_generation_prompt(messages)
 

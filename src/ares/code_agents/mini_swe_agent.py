@@ -25,7 +25,7 @@ from ares.code_agents import code_agent_base
 from ares.containers import containers
 from ares.experiment_tracking import stat_tracker
 from ares.llms import llm_clients
-from ares.llms import request
+from ares.llms import open_responses
 from ares.llms import response
 
 # Ensure that MSWEA doesn't log its startup message on import.
@@ -128,7 +128,12 @@ class MiniSWECodeAgent(code_agent_base.CodeAgent):
         # Somewhat frustratingly, minisweagent uses kwargs.
         # We handle this by inspecting whether an argument will be accepted by the agent config.
         agent_config_dict = self._config.get("agent", {})
-        agent_config = default_agent.AgentConfig()
+        agent_config = default_agent.AgentConfig(
+            system_template=agent_config_dict["system_template"],
+            instance_template=agent_config_dict["instance_template"],
+            step_limit=agent_config_dict.get("step_limit", 0),
+            cost_limit=agent_config_dict.get("cost_limit", 0.0),
+        )
         for k, v in agent_config_dict.items():
             if hasattr(default_agent.AgentConfig, k):
                 setattr(agent_config, k, v)
@@ -142,14 +147,14 @@ class MiniSWECodeAgent(code_agent_base.CodeAgent):
         self._cost_limit = self._agent_config.get("cost_limit", 0.0)
 
         self._system_prompt = _render_system_template(self._agent_config["system_template"])
-        self._messages: list[request.Message] = []
+        self._messages: list[open_responses.InputItemMessage] = []
         _LOGGER.debug("[%d] Initialized MiniSWECodeAgent.", id(self))
 
     def _add_message(self, role: Literal["user", "assistant"], content: str) -> None:
         if role == "user":
-            self._messages.append(request.UserMessage(role="user", content=content))
+            self._messages.append(open_responses.user_message(content))
         elif role == "assistant":
-            self._messages.append(request.AssistantMessage(role="assistant", content=content))
+            self._messages.append(open_responses.assistant_message(content))
         else:
             assert_never(role)
 
@@ -208,9 +213,9 @@ class MiniSWECodeAgent(code_agent_base.CodeAgent):
 
         with self.tracker.timeit("mswea/llm_request"):
             response = await self.llm_client(
-                request.LLMRequest(
-                    messages=self._messages,
-                    system_prompt=self._system_prompt,
+                open_responses.make_request(
+                    self._messages,
+                    instructions=self._system_prompt,
                     temperature=0.0,
                 )
             )

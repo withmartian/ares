@@ -15,7 +15,7 @@ import frozendict
 from ares.environments import base
 from ares.experiment_tracking import stat_tracker
 from ares.llms import chat_completions_compatible
-from ares.llms import request
+from ares.llms import open_responses
 from ares.llms import response
 
 _LOGGER = logging.getLogger(__name__)
@@ -168,7 +168,7 @@ DEFAULT_OBJECT_LIST = tuple(obj for objects in DEFAULT_OBJECT_DICT.values() for 
 SIMPLE_OBJECT_LIST = ("Football", "Dog", "Banana", "Truck", "Pants", "Computer", "Piano", "Chair", "Pen", "Scissors")
 
 
-class TwentyQuestionsEnvironment(base.Environment[response.LLMResponse, request.LLMRequest, float, float]):
+class TwentyQuestionsEnvironment(base.Environment[response.LLMResponse, open_responses.Request, float, float]):
     """Environment for twenty questions game using an LLM-based oracle."""
 
     def __init__(
@@ -209,7 +209,7 @@ class TwentyQuestionsEnvironment(base.Environment[response.LLMResponse, request.
         self._step_count = 0
         self._requires_reset = False
 
-    async def reset(self) -> base.TimeStep[request.LLMRequest, float, float]:
+    async def reset(self) -> base.TimeStep[open_responses.Request, float, float]:
         """Start a new episode by selecting a random object."""
         reset_start_time = time.time()
         self._assert_active()
@@ -232,11 +232,9 @@ class TwentyQuestionsEnvironment(base.Environment[response.LLMResponse, request.
             "When you think you know the answer, ask 'Is it [object]?'"
         )
 
-        observation = request.LLMRequest(
-            messages=[
-                request.UserMessage(role="user", content=initial_prompt),
-            ],
-            system_prompt=self._system_prompt,
+        observation = open_responses.make_request(
+            [open_responses.user_message(initial_prompt)],
+            instructions=self._system_prompt,
         )
 
         reset_end_time = time.time()
@@ -244,7 +242,7 @@ class TwentyQuestionsEnvironment(base.Environment[response.LLMResponse, request.
 
         return base.TimeStep(step_type="FIRST", reward=None, discount=None, observation=observation)
 
-    async def step(self, action: response.LLMResponse) -> base.TimeStep[request.LLMRequest, float, float]:
+    async def step(self, action: response.LLMResponse) -> base.TimeStep[open_responses.Request, float, float]:
         """Process agent's question and get oracle's answer."""
         step_start_time = time.time()
         self._assert_active()
@@ -276,11 +274,9 @@ class TwentyQuestionsEnvironment(base.Environment[response.LLMResponse, request.
                 "\n".join(self._conversation_history) + f"\n\nYou win! The object was {self._hidden_object}."
             )
 
-            observation = request.LLMRequest(
-                messages=[
-                    request.UserMessage(role="user", content=observation_content),
-                ],
-                system_prompt=self._system_prompt,
+            observation = open_responses.make_request(
+                [open_responses.user_message(observation_content)],
+                instructions=self._system_prompt,
             )
 
             step_end_time = time.time()
@@ -309,11 +305,9 @@ class TwentyQuestionsEnvironment(base.Environment[response.LLMResponse, request.
                 + f"\n\nYou've run out of questions! The object was {self._hidden_object}."
             )
 
-            observation = request.LLMRequest(
-                messages=[
-                    request.UserMessage(role="user", content=observation_content),
-                ],
-                system_prompt=self._system_prompt,
+            observation = open_responses.make_request(
+                [open_responses.user_message(observation_content)],
+                instructions=self._system_prompt,
             )
 
             step_end_time = time.time()
@@ -324,11 +318,9 @@ class TwentyQuestionsEnvironment(base.Environment[response.LLMResponse, request.
 
         # Continue episode
         observation_content = "\n".join(self._conversation_history)
-        observation = request.LLMRequest(
-            messages=[
-                request.UserMessage(role="user", content=observation_content),
-            ],
-            system_prompt=self._system_prompt,
+        observation = open_responses.make_request(
+            [open_responses.user_message(observation_content)],
+            instructions=self._system_prompt,
         )
 
         step_end_time = time.time()
@@ -344,11 +336,9 @@ class TwentyQuestionsEnvironment(base.Environment[response.LLMResponse, request.
         # Create oracle prompt
         oracle_prompt = ORACLE_PROMPT_TEMPLATE.format(word=self._hidden_object, question=question)
 
-        oracle_request = request.LLMRequest(
-            messages=[
-                request.UserMessage(role="user", content=oracle_prompt),
-            ],
-            temperature=0.0,  # Deterministic answers
+        oracle_request = open_responses.make_request(
+            [open_responses.user_message(oracle_prompt)],
+            temperature=0.0,
         )
 
         # Call oracle

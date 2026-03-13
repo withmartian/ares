@@ -12,8 +12,7 @@ import tenacity
 from ares import config
 from ares.llms import accounting
 from ares.llms import llm_clients
-from ares.llms import openai_chat_converter
-from ares.llms import request
+from ares.llms import open_responses
 from ares.llms import response
 
 _LOGGER = logging.getLogger(__name__)
@@ -47,9 +46,9 @@ def _get_llm_client(base_url: str, api_key: str) -> openai.AsyncClient:
     before_sleep=tenacity.before_sleep_log(_LOGGER, logging.INFO),
 )
 async def _query_llm_with_retry(
-    llm_client: openai.AsyncClient, model: str, req: request.LLMRequest
+    llm_client: openai.AsyncClient, req: open_responses.Request
 ) -> openai.types.chat.chat_completion.ChatCompletion:
-    response = await llm_client.chat.completions.create(model=model, **openai_chat_converter.to_external(req))
+    response = await llm_client.chat.completions.create(**open_responses.to_chat_completions_kwargs(req))
     return response
 
 
@@ -59,14 +58,16 @@ class ChatCompletionCompatibleLLMClient(llm_clients.LLMClient):
     base_url: str = config.CONFIG.chat_completion_api_base_url
     api_key: str = config.CONFIG.chat_completion_api_key
 
-    async def __call__(self, request: request.LLMRequest) -> response.LLMResponse:
+    async def __call__(self, request: open_responses.Request) -> response.LLMResponse:
         _LOGGER.debug("[%d] Requesting LLM.", id(self))
+
+        request = open_responses.with_model(request, self.model)
 
         # GPT-5 models don't support temperature.
         if self.model.startswith("openai/gpt-5"):
             request = dataclasses.replace(request, temperature=None)
 
-        resp = await _query_llm_with_retry(_get_llm_client(self.base_url, self.api_key), self.model, request)
+        resp = await _query_llm_with_retry(_get_llm_client(self.base_url, self.api_key), request)
         _LOGGER.debug("[%d] LLM response received.", id(self))
 
         cost = accounting.get_llm_cost(self.model, resp, cost_mapping=accounting.martian_cost_list())
