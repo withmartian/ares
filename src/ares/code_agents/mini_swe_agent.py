@@ -11,6 +11,7 @@ GH link: https://github.com/SWE-agent/mini-swe-agent
 Commit hash: 6ff7d26ac371e5bb9611ec37074fc1bedf400895
 """
 
+import copy
 import dataclasses
 import logging
 import os
@@ -117,7 +118,7 @@ class MiniSWECodeAgent(code_agent_base.CodeAgent):
     tracker: stat_tracker.StatTracker = dataclasses.field(default_factory=stat_tracker.NullStatTracker)
 
     def __post_init__(self):
-        config_path = pathlib.Path(minisweagent.config.builtin_config_dir) / "extra" / "swebench.yaml"
+        config_path = pathlib.Path(minisweagent.config.builtin_config_dir) / "benchmarks" / "swebench.yaml"
         self._config = yaml.safe_load(config_path.read_text())
         self._agent_config = self._config.get("agent", {})
 
@@ -126,14 +127,13 @@ class MiniSWECodeAgent(code_agent_base.CodeAgent):
         self._environment_env_vars = environment_config.get("env", None)
 
         # Somewhat frustratingly, minisweagent uses kwargs.
-        # We handle this by inspecting whether an argument will be accepted by the agent config.
+        # We handle this by filtering to only fields that AgentConfig accepts.
         agent_config_dict = self._config.get("agent", {})
-        agent_config = default_agent.AgentConfig()
-        for k, v in agent_config_dict.items():
-            if hasattr(default_agent.AgentConfig, k):
-                setattr(agent_config, k, v)
-            else:
-                _LOGGER.info("Ignoring argument %s in agent configuration.", k)
+        accepted_fields = set(default_agent.AgentConfig.model_fields)
+        filtered_config = {k: v for k, v in agent_config_dict.items() if k in accepted_fields}
+        for k in set(agent_config_dict) - set(filtered_config):
+            _LOGGER.info("Ignoring argument %s in agent configuration.", k)
+        agent_config = default_agent.AgentConfig(**filtered_config)  # noqa: F841
 
         # Initialize step and cost tracking
         self._n_calls = 0
@@ -144,6 +144,39 @@ class MiniSWECodeAgent(code_agent_base.CodeAgent):
         self._system_prompt = _render_system_template(self._agent_config["system_template"])
         self._messages: list[request.Message] = []
         _LOGGER.debug("[%d] Initialized MiniSWECodeAgent.", id(self))
+
+    def get_state(self) -> code_agent_base.CodeAgentState:
+        """Capture the agent's current conversational state."""
+        return code_agent_base.CodeAgentState(
+            messages=copy.deepcopy(self._messages),
+            n_calls=self._n_calls,
+            total_cost=self._total_cost,
+        )
+
+    async def restore_and_resume(self, state: code_agent_base.CodeAgentState, task: str) -> None:
+        """Restore state and resume the agent loop from the next LLM call.
+
+        This is the tail of run() without the setup preamble. The agent
+        picks up from its saved message history and resumes the
+        query/execute loop.
+        """
+        del task  # The task context is already in the saved messages.
+
+        self._messages = copy.deepcopy(state.messages)
+        self._n_calls = state.n_calls
+        self._total_cost = state.total_cost
+
+        while True:
+            try:
+                with self.tracker.timeit("mswea/step"):
+                    await self.step()
+            except _NonTerminatingError as e:
+                _LOGGER.debug("[%d] Non-terminating error: %s", id(self), e)
+                self._add_message("user", repr(e))
+            except _TerminatingError as e:
+                _LOGGER.debug("[%d] Terminating error: %s", id(self), e)
+                self._add_message("user", repr(e))
+                return
 
     def _add_message(self, role: Literal["user", "assistant"], content: str) -> None:
         if role == "user":
