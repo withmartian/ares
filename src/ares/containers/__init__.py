@@ -3,6 +3,7 @@
 from ares.containers.containers import Container
 from ares.containers.containers import ContainerFactory
 from ares.containers.containers import Resources
+from ares.containers.containers import SnapshotableContainer
 from ares.containers.daytona import DaytonaContainer
 
 __all__ = [
@@ -10,4 +11,5 @@ __all__ = [
     "ContainerFactory",
     "DaytonaContainer",
     "Resources",
+    "SnapshotableContainer",
 ]

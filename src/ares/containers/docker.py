@@ -1,12 +1,15 @@
 """An interface for interacting with local Docker containers."""
 
 import asyncio
+import contextlib
 import dataclasses
 import functools
 import io
+import logging
 import pathlib
 import tarfile
 from typing import cast
+import uuid
 
 import docker
 import docker.errors
@@ -14,6 +17,8 @@ import docker.models.containers
 import docker.models.images
 
 from ares.containers import containers
+
+_LOGGER = logging.getLogger(__name__)
 
 
 def _make_docker_client() -> docker.DockerClient:
@@ -24,7 +29,7 @@ def _make_docker_client() -> docker.DockerClient:
 
 
 @dataclasses.dataclass(kw_only=True)
-class DockerContainer(containers.Container):
+class DockerContainer(containers.SnapshotableContainer):
     image: str | None = None
     dockerfile_path: pathlib.Path | str | None = None
     name: str | None = None
@@ -182,6 +187,46 @@ class DockerContainer(containers.Container):
                     if file_data:
                         with open(local_path, "wb") as f:
                             f.write(file_data.read())
+
+    async def snapshot(self) -> str:
+        """Commit current container state as a Docker image."""
+        if self._container is None:
+            raise RuntimeError("Container not started, snapshot is not possible.")
+
+        tag = f"ares-snapshot-{uuid.uuid4().hex[:12]}"
+        image = await asyncio.to_thread(
+            self._container.commit,
+            repository="ares-go-explore",
+            tag=tag,
+            conf={"Labels": {"ares-go-explore": "true"}},
+        )
+        _LOGGER.info("Snapshot created: %s (tag: %s)", image.id, tag)
+        return image.id
+
+    async def delete_snapshot(self, snapshot_id: str) -> None:
+        """Delete a Docker image created by snapshot()."""
+        try:
+            await asyncio.to_thread(self._client.images.remove, snapshot_id)
+            _LOGGER.info("Snapshot deleted: %s", snapshot_id)
+        except docker.errors.ImageNotFound:
+            _LOGGER.debug("Snapshot %s already deleted.", snapshot_id)
+
+    def delete_snapshot_sync(self, snapshot_id: str) -> None:
+        """Synchronous version for atexit cleanup."""
+        with contextlib.suppress(docker.errors.ImageNotFound):
+            self._client.images.remove(snapshot_id)
+
+    @classmethod
+    def from_snapshot(
+        cls,
+        snapshot_id: str,
+        *,
+        name: str | None = None,
+        resources: containers.Resources | None = None,
+        default_workdir: str | None = None,
+    ) -> "DockerContainer":
+        """Create a DockerContainer from a previously captured snapshot."""
+        return DockerContainer(image=snapshot_id, name=name, resources=resources, default_workdir=default_workdir)
 
     @classmethod
     def from_image(
