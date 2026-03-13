@@ -131,6 +131,66 @@ class Container(Protocol):
         """
 
 
+class SnapshotableContainer(Container, Protocol):
+    """A container that supports filesystem state snapshotting.
+
+    This extends the Container protocol with the ability to capture and
+    restore filesystem state, enabling algorithms like Go-Explore that
+    need to return to previously visited environment states.
+    """
+
+    @abc.abstractmethod
+    async def snapshot(self) -> str:
+        """Capture the container's current filesystem state.
+
+        Creates a snapshot of all filesystem changes since the container was started.
+        Running processes are NOT captured -- only filesystem state.
+
+        Returns:
+            A snapshot ID string that can be passed to from_snapshot() to create
+            a new container with this filesystem state.
+        """
+
+    @classmethod
+    @abc.abstractmethod
+    def from_snapshot(
+        cls,
+        snapshot_id: str,
+        *,
+        name: str | None = None,
+        resources: Resources | None = None,
+        default_workdir: str | None = None,
+    ) -> "SnapshotableContainer":
+        """Create a new (unstarted) container from a previously captured snapshot.
+
+        Args:
+            snapshot_id: A snapshot ID previously returned by snapshot().
+            name: Optional name for the container.
+            resources: Optional resource constraints.
+            default_workdir: Optional default working directory for commands.
+
+        Returns:
+            A new SnapshotableContainer instance (not yet started).
+        """
+        ...
+
+    @abc.abstractmethod
+    async def delete_snapshot(self, snapshot_id: str) -> None:
+        """Delete a previously captured snapshot, freeing its resources.
+
+        Args:
+            snapshot_id: The snapshot ID to delete.
+        """
+
+    @abc.abstractmethod
+    def delete_snapshot_sync(self, snapshot_id: str) -> None:
+        """Synchronous version of delete_snapshot for atexit cleanup.
+
+        Args:
+            snapshot_id: The snapshot ID to delete.
+        """
+
+
 class ContainerFactory(Protocol):
     """Protocol for creating containers from images or Dockerfiles.
 
