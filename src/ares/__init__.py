@@ -45,7 +45,9 @@ All other functionality is available via submodules:
 # Import presets first to register defaults
 # This must come before we expose make and info to ensure presets are available
 from ares import presets  # noqa: F401
+from ares.environments.base import CheckpointableEnvironment
 from ares.environments.base import Environment
+from ares.environments.base import EnvironmentCheckpoint
 from ares.environments.base import TimeStep
 from ares.registry import EnvironmentInfo
 
@@ -58,7 +60,9 @@ from ares.registry import register_preset
 
 # Define public API
 __all__ = [
+    "CheckpointableEnvironment",
     "Environment",
+    "EnvironmentCheckpoint",
     "EnvironmentInfo",
     "TimeStep",
     "info",
