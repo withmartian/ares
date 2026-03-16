@@ -404,3 +404,14 @@ class TestLLMRequestResponsesConversion:
         request = openai_responses_converter.from_external(kwargs, strict=False)
 
         assert request.tools is None
+
+    def test_from_responses_rejects_unknown_params_in_strict_mode(self):
+        """Test that strict mode rejects unhandled responses parameters."""
+        kwargs: openai.types.responses.response_create_params.ResponseCreateParams = {
+            "model": "gpt-4o",
+            "input": "Hello",
+            "unexpected_flag": True,  # type: ignore[typeddict-item]
+        }
+
+        with pytest.raises(ValueError, match=r"unsupported parameters: unexpected_flag"):
+            openai_responses_converter.from_external(kwargs, strict=True)

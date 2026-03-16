@@ -8,6 +8,22 @@ import openai.types.responses.response_create_params
 from ares.llms import open_responses
 from ares.llms import request as legacy_request
 
+_SUPPORTED_RESPONSES_FIELDS = frozenset(
+    {
+        "input",
+        "instructions",
+        "max_output_tokens",
+        "metadata",
+        "model",
+        "service_tier",
+        "stream",
+        "temperature",
+        "tool_choice",
+        "tools",
+        "top_p",
+    }
+)
+
 
 def _raise_or_log(messages: list[str], *, strict: bool) -> None:
     if not messages:
@@ -91,7 +107,12 @@ def from_external(
     *,
     strict: bool = True,
 ) -> legacy_request.LLMRequest:
-    payload = dict(kwargs)
+    payload = open_responses.validate_external_fields(
+        dict(kwargs),
+        allowed_fields=_SUPPORTED_RESPONSES_FIELDS,
+        strict=strict,
+        context="Open Responses identity",
+    )
     payload.setdefault("model", open_responses.MODEL_STUB)
     payload, fallback_messages = _sanitize_payload_for_conversion(payload, strict=strict)
 

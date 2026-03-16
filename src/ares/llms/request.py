@@ -1,4 +1,8 @@
-"""Unified LLM request abstraction supporting multiple API formats."""
+"""Legacy ARES request abstraction kept for converter compatibility.
+
+Open Responses requests in `ares.llms.open_responses` are the canonical internal request
+shape used by environments, agents, and LLM clients.
+"""
 
 import dataclasses
 import logging
@@ -134,10 +138,10 @@ ToolChoice = Literal["auto", "any", "none"] | ToolChoiceTool
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
 class LLMRequest:
-    """Unified request format for OpenAI Chat Completions, OpenAI Responses, and Claude Messages APIs.
+    """Legacy request format for OpenAI Chat/Responses/Anthropic edge adapters.
 
-    This class provides a common abstraction over three major LLM API formats, making it easy
-    to convert between them. It includes the 9 core parameters that exist across all APIs.
+    This class remains available for compatibility with the legacy converter layer and tests,
+    but new runtime code should build canonical Open Responses requests instead.
 
     Core Parameters (all APIs):
         messages: List of user/assistant/tool messages (system messages go in system_prompt)
@@ -156,7 +160,7 @@ class LLMRequest:
         top_k: Top-K sampling (Claude only)
 
     Note:
-        - Model is NOT stored here - it should be managed by the LLMClient
+        - Model is NOT stored here - canonical Open Responses requests inject a model stub instead
         - Messages only include user/assistant/tool roles (system/developer go in system_prompt)
         - Temperature is stored in OpenAI range (0-2), converted to Claude range (0-1) on export
         - Tool schemas are converted as needed for each API

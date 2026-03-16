@@ -103,21 +103,21 @@ Follow **Google-style imports**: always import modules, not individual classes o
 ```python
 # Good ✅
 import ares
-from ares import llms
+from ares.llms import open_responses
 
-request = llms.LLMRequest(messages=[...])
+request = open_responses.make_request([open_responses.user_message("Hello")])
 env = ares.make("sbv-mswea")
 
 # Good for internal code ✅
-from ares.llms import request
+from ares.llms import open_responses
 from ares.llms import response
 
-req = request.LLMRequest(messages=[...])
+req = open_responses.make_request([open_responses.user_message("Hello")])
 resp = response.LLMResponse(data=[...], cost=0.0, usage=...)
 
 # Avoid ❌
-from ares.llms import LLMRequest, TextData
-from ares.llms.request import LLMRequest
+from ares.llms import OpenResponsesRequest, TextData
+from ares.llms.open_responses import Request
 ```
 
 **Rationale:** Makes code more readable and explicit about where objects come from.

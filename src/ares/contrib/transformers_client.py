@@ -275,7 +275,7 @@ class TransformersLLMClient(llm_clients.LLMClient):
             chat_conversations = []
             for item in batch:
                 chat_conversations.append(
-                    open_responses.to_chat_messages(item.value, model=self.model_name, strict=True)
+                    open_responses.to_chat_messages(item.value, model=self.model_name, strict=False)
                 )
 
             responses = await asyncio.to_thread(  # transformers is not async

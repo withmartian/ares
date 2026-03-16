@@ -277,3 +277,15 @@ class TestLLMRequestMessagesConversion:
         assert kwargs["messages"][0] == {"role": "user", "content": "Hello"}
         assert kwargs["messages"][1] == {"role": "assistant", "content": "I'm fine"}
         assert kwargs["messages"][2] == {"role": "user", "content": "Great"}
+
+    def test_from_messages_rejects_unknown_params_in_strict_mode(self):
+        """Test that strict mode rejects unhandled Anthropic parameters."""
+        kwargs: anthropic.types.MessageCreateParams = {
+            "model": "claude-sonnet-4-5-20250929",
+            "messages": [{"role": "user", "content": "Hello"}],
+            "max_tokens": 100,
+            "unexpected_flag": True,  # type: ignore[typeddict-item]
+        }
+
+        with pytest.raises(ValueError, match=r"unsupported parameters: unexpected_flag"):
+            anthropic_converter.from_external(kwargs, strict=True)

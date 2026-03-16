@@ -8,6 +8,24 @@ import linguafranca as lf
 from ares.llms import open_responses
 from ares.llms import request as legacy_request
 
+_SUPPORTED_ANTHROPIC_FIELDS = frozenset(
+    {
+        "max_tokens",
+        "messages",
+        "metadata",
+        "model",
+        "service_tier",
+        "stop_sequences",
+        "stream",
+        "system",
+        "temperature",
+        "tool_choice",
+        "tools",
+        "top_k",
+        "top_p",
+    }
+)
+
 
 def _raise_or_log(messages: list[str], *, strict: bool) -> None:
     if not messages:
@@ -109,7 +127,12 @@ def from_external(
     *,
     strict: bool = True,
 ) -> legacy_request.LLMRequest:
-    payload = dict(kwargs)
+    payload = open_responses.validate_external_fields(
+        dict(kwargs),
+        allowed_fields=_SUPPORTED_ANTHROPIC_FIELDS,
+        strict=strict,
+        context="Anthropic -> Open Responses",
+    )
     payload.setdefault("model", open_responses.MODEL_STUB)
     if strict and isinstance(payload.get("system"), list):
         legacy_request._extract_string_content(payload["system"], strict=True, context="System prompt")

@@ -28,6 +28,17 @@ type Tool = request_types.Tool
 type ToolChoice = request_types.ToolChoice
 
 
+def ensure_request(request: object) -> Request:
+    if isinstance(request, legacy_request.LLMRequest):
+        raise TypeError(
+            "ARES LLM clients now expect canonical Open Responses requests. "
+            "Convert legacy requests with open_responses.from_legacy_request(...)."
+        )
+    if not isinstance(request, request_types.OpenResponsesRequest):
+        raise TypeError(f"Expected OpenResponsesRequest, got {type(request).__name__}")
+    return request
+
+
 def user_message(content: str) -> InputItemMessage:
     return request_types.InputItemMessage(content=content, role=request_types.MessageRole.user, type="message")
 
@@ -93,10 +104,12 @@ def make_request(
 
 
 def with_model(request: Request, model: str) -> Request:
+    request = ensure_request(request)
     return dataclasses.replace(request, model=model)
 
 
 def input_items(request: Request) -> list[InputItem]:
+    request = ensure_request(request)
     if isinstance(request.input, str):
         return [user_message(request.input)]
     return list(request.input)
@@ -200,7 +213,81 @@ def to_jsonable(value: Any) -> Any:
 
 
 def request_to_jsonable(request: Request) -> dict[str, Any]:
+    request = ensure_request(request)
     return cast(dict[str, Any], to_jsonable(request))
+
+
+def validate_external_fields(
+    payload: dict[str, Any],
+    *,
+    allowed_fields: frozenset[str],
+    strict: bool,
+    context: str,
+) -> dict[str, Any]:
+    unsupported_fields = sorted(field for field in payload if field not in allowed_fields)
+    if not unsupported_fields:
+        return payload
+
+    _raise_or_log_messages(
+        [f"unsupported parameters: {', '.join(unsupported_fields)}"],
+        strict=strict,
+        context=context,
+    )
+    return {field: value for field, value in payload.items() if field in allowed_fields}
+
+
+def _append_legacy_tool_calls(
+    input_items_list: list[InputItem],
+    tool_calls: Any,
+    *,
+    strict: bool,
+) -> None:
+    if not isinstance(tool_calls, list):
+        _raise_or_log_messages(
+            ["assistant tool_calls must be a list"],
+            strict=strict,
+            context="Legacy -> Open Responses conversion",
+        )
+        return
+
+    for tool_call in tool_calls:
+        if not isinstance(tool_call, dict):
+            _raise_or_log_messages(
+                [f"assistant tool_calls entry has unsupported type {type(tool_call).__name__}"],
+                strict=strict,
+                context="Legacy -> Open Responses conversion",
+            )
+            continue
+
+        if tool_call.get("type") != "function":
+            _raise_or_log_messages(
+                [f"assistant tool_calls entry has unsupported type '{tool_call.get('type')}'"],
+                strict=strict,
+                context="Legacy -> Open Responses conversion",
+            )
+            continue
+
+        function = tool_call.get("function")
+        if not isinstance(function, dict):
+            _raise_or_log_messages(
+                ["assistant tool_calls entry is missing a function payload"],
+                strict=strict,
+                context="Legacy -> Open Responses conversion",
+            )
+            continue
+
+        call_id = tool_call.get("id")
+        name = function.get("name")
+        arguments = function.get("arguments")
+        if not call_id or not name or arguments is None:
+            _raise_or_log_messages(
+                ["assistant tool_calls entries require id, function.name, and function.arguments"],
+                strict=strict,
+                context="Legacy -> Open Responses conversion",
+            )
+            continue
+
+        input_items_list.append(function_call(call_id=str(call_id), name=str(name), arguments=str(arguments)))
 
 
 def _legacy_tool_choice_to_open_responses(
@@ -289,6 +376,8 @@ def from_legacy_request(request: legacy_request.LLMRequest, *, strict: bool = Tr
             input_items_list.append(user_message(content))
         else:
             input_items_list.append(assistant_message(content))
+            if "tool_calls" in message_dict:
+                _append_legacy_tool_calls(input_items_list, message_dict["tool_calls"], strict=strict)
 
     _raise_or_log_messages(conversion_notes, strict=strict, context="Legacy -> Open Responses conversion")
 
@@ -508,6 +597,7 @@ def to_legacy_request(request: Request | dict[str, Any], *, strict: bool = True)
 
 
 def to_chat_completions_kwargs(request: Request, *, model: str | None = None, strict: bool = True) -> dict[str, Any]:
+    request = ensure_request(request)
     request_with_model = with_model(request, model) if model is not None else request
     result = lf.convert_request_json(
         request_to_jsonable(request_with_model),
@@ -536,6 +626,7 @@ __all__ = [
     "Tool",
     "ToolChoice",
     "assistant_message",
+    "ensure_request",
     "extract_text_content",
     "from_legacy_request",
     "function_call",
@@ -553,5 +644,6 @@ __all__ = [
     "to_jsonable",
     "to_legacy_request",
     "user_message",
+    "validate_external_fields",
     "with_model",
 ]

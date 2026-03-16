@@ -15,7 +15,8 @@ from collections.abc import Sequence
 import dataclasses
 import logging
 import re
-from typing import Protocol, overload
+import sys
+from typing import Any, Protocol, cast, overload
 
 from ares.containers import containers
 from ares.containers import docker
@@ -616,4 +617,7 @@ def clear_registry() -> None:
         >>> assert len(_list_presets()) == 0
     """
     _REGISTRY.clear()
+    presets_module = sys.modules.get("ares.presets")
+    if presets_module is not None and hasattr(presets_module, "_DEFAULT_PRESETS_REGISTERED"):
+        cast(Any, presets_module)._DEFAULT_PRESETS_REGISTERED = False
     _LOGGER.debug("Cleared all presets from registry")

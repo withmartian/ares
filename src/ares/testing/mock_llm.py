@@ -59,11 +59,11 @@ class MockLLMClient:
         """Get the most recent request, or None if no requests."""
         return self.requests[-1] if self.requests else None
 
-    def get_request_messages(self, index: int = -1) -> list[open_responses.InputItemMessage]:
-        """Get message items from a specific request (default: last request)."""
+    def get_request_messages(self, index: int = -1) -> list[open_responses.InputItem]:
+        """Get input items from a specific request (default: last request)."""
         if not self.requests:
             return []
-        return open_responses.message_items(self.requests[index])
+        return open_responses.input_items(self.requests[index])
 
     def reset(self) -> None:
         """Clear all recorded data."""

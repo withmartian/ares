@@ -15,7 +15,7 @@ ARES is an RL-first framework for training and evaluating LLM agents, especially
 
 It is a modern [gym](https://github.com/Farama-Foundation/Gymnasium): the environment layer powering RL research.
 
-ARES treats LLMRequests as observations and LLMResponses as actions within the environment, so you can focus on training just the LLM - not the Code Agent surrounding it. The interface is entirely async, and supports scaling up to hundreds or thousands of parallel environments easily - check out [example 3](https://github.com/withmartian/ares/tree/main/examples/03_parallel_eval_with_api.py) to run this yourself.
+ARES treats Open Responses requests as observations and LLMResponses as actions within the environment, so you can focus on training just the LLM - not the Code Agent surrounding it. The interface is entirely async, and supports scaling up to hundreds or thousands of parallel environments easily - check out [example 3](https://github.com/withmartian/ares/tree/main/examples/03_parallel_eval_with_api.py) to run this yourself.
 
 
 ## Quick Start

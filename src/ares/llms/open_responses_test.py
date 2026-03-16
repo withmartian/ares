@@ -1,6 +1,7 @@
 """Tests for the canonical Open Responses helpers."""
 
 from ares.llms import open_responses
+from ares.llms import request as request_lib
 
 
 def test_make_request_defaults_to_model_stub():
@@ -35,3 +36,33 @@ def test_to_chat_completions_kwargs_maps_instructions_and_messages():
     assert kwargs["messages"][0] == {"role": "system", "content": "Be concise."}
     assert kwargs["messages"][1] == {"role": "user", "content": "Hi"}
     assert kwargs["messages"][2] == {"role": "assistant", "content": "Hello"}
+
+
+def test_from_legacy_request_preserves_embedded_assistant_tool_calls():
+    legacy_request = request_lib.LLMRequest(
+        messages=[
+            request_lib.UserMessage(role="user", content="What is the weather?"),
+            request_lib.AssistantMessage(
+                role="assistant",
+                content="Let me check.",
+                tool_calls=[
+                    {
+                        "id": "call_123",
+                        "type": "function",
+                        "function": {"name": "get_weather", "arguments": '{"location":"SF"}'},
+                    }
+                ],
+            ),
+        ]
+    )
+
+    canonical_request = open_responses.from_legacy_request(legacy_request)
+    items = open_responses.request_to_jsonable(canonical_request)["input"]
+
+    assert len(items) == 3
+    assert items[1]["type"] == "message"
+    assert items[1]["content"] == "Let me check."
+    assert items[2]["type"] == "function_call"
+    assert items[2]["call_id"] == "call_123"
+    assert items[2]["name"] == "get_weather"
+    assert items[2]["arguments"] == '{"location":"SF"}'

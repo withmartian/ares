@@ -8,6 +8,23 @@ import openai.types.chat.completion_create_params
 from ares.llms import open_responses
 from ares.llms import request as legacy_request
 
+_SUPPORTED_CHAT_FIELDS = frozenset(
+    {
+        "max_completion_tokens",
+        "max_tokens",
+        "messages",
+        "metadata",
+        "model",
+        "service_tier",
+        "stop",
+        "stream",
+        "temperature",
+        "tool_choice",
+        "tools",
+        "top_p",
+    }
+)
+
 
 def _raise_or_log(messages: list[str], *, strict: bool) -> None:
     if not messages:
@@ -80,7 +97,12 @@ def from_external(
     *,
     strict: bool = True,
 ) -> legacy_request.LLMRequest:
-    payload = dict(kwargs)
+    payload = open_responses.validate_external_fields(
+        dict(kwargs),
+        allowed_fields=_SUPPORTED_CHAT_FIELDS,
+        strict=strict,
+        context="Chat -> Open Responses conversion",
+    )
     payload.setdefault("model", open_responses.MODEL_STUB)
 
     result = lf.convert_request_json(

@@ -238,6 +238,43 @@ class TestLLMRequestChatCompletionConversion:
         assert tool_call["function"]["name"] == "get_weather"
         assert tool_call["function"]["arguments"] == '{"location":"LA"}'
 
+    def test_to_chat_completion_preserves_embedded_assistant_tool_calls(self):
+        """Test that embedded assistant tool_calls survive legacy -> canonical conversion."""
+        request = request_lib.LLMRequest(
+            messages=[
+                request_lib.UserMessage(role="user", content="What's the weather?"),
+                request_lib.AssistantMessage(
+                    role="assistant",
+                    content="Let me check.",
+                    tool_calls=[
+                        {
+                            "id": "call_123",
+                            "type": "function",
+                            "function": {"name": "get_weather", "arguments": '{"location":"LA"}'},
+                        }
+                    ],
+                ),
+            ],
+        )
+
+        kwargs = openai_chat_converter.to_external(request)
+
+        assert len(kwargs["messages"]) == 2
+        assert kwargs["messages"][1]["role"] == "assistant"
+        assert kwargs["messages"][1]["content"] == "Let me check."
+        assert kwargs["messages"][1]["tool_calls"][0]["id"] == "call_123"
+
+    def test_from_chat_completion_rejects_unknown_params_in_strict_mode(self):
+        """Test that strict mode rejects unhandled chat parameters."""
+        kwargs: openai.types.chat.completion_create_params.CompletionCreateParams = {
+            "model": "gpt-4o",
+            "messages": [{"role": "user", "content": "Hello"}],
+            "unexpected_flag": 123,  # type: ignore[typeddict-item]
+        }
+
+        with pytest.raises(ValueError, match=r"unsupported parameters: unexpected_flag"):
+            openai_chat_converter.from_external(kwargs, strict=True)
+
     def test_from_chat_completion_extracts_tool_calls(self):
         """Test that AssistantMessage.tool_calls are extracted as separate ToolCallMessage."""
         kwargs: openai.types.chat.completion_create_params.CompletionCreateParams = {

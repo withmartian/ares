@@ -1,5 +1,7 @@
 """Tests for mock LLM client implementation."""
 
+from typing import cast
+
 import pytest
 
 from ares.llms import open_responses
@@ -113,7 +115,27 @@ async def test_mock_llm_client_get_request_messages():
 
     messages = client.get_request_messages()
     assert len(messages) == 1
-    assert open_responses.message_text(messages[0]) == "Hello"
+    assert open_responses.message_text(cast(open_responses.InputItemMessage, messages[0])) == "Hello"
+
+
+@pytest.mark.asyncio
+async def test_mock_llm_client_get_request_messages_includes_tool_items():
+    """Test that request item helper returns tool call items too."""
+    client = mock_llm.MockLLMClient()
+
+    req = open_responses.make_request(
+        [
+            open_responses.function_call(call_id="call_1", name="search", arguments="{}"),
+            open_responses.function_call_output(call_id="call_1", output="done"),
+        ]
+    )
+
+    await client(req)
+
+    items = client.get_request_messages()
+    assert len(items) == 2
+    assert items[0].type == "function_call"
+    assert items[1].type == "function_call_output"
 
 
 @pytest.mark.asyncio
