@@ -236,6 +236,43 @@ def validate_external_fields(
     return {field: value for field, value in payload.items() if field in allowed_fields}
 
 
+def _flatten_chat_tool_call_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    flattened: list[dict[str, Any]] = []
+    for message in messages:
+        tool_calls = message.get("tool_calls")
+        if tool_calls and flattened and flattened[-1].get("role") == "assistant":
+            flattened[-1]["tool_calls"] = tool_calls
+            continue
+        flattened.append(message)
+    return flattened
+
+
+def _strip_chat_tool_strict_flags(payload: dict[str, Any]) -> None:
+    tools = payload.get("tools")
+    if not isinstance(tools, list):
+        return
+
+    for tool in tools:
+        if not isinstance(tool, dict):
+            continue
+        function = tool.get("function")
+        if isinstance(function, dict):
+            function.pop("strict", None)
+
+
+def normalize_chat_completions_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    messages = payload.get("messages")
+    if isinstance(messages, list):
+        payload["messages"] = _flatten_chat_tool_call_messages(cast(list[dict[str, Any]], messages))
+
+    _strip_chat_tool_strict_flags(payload)
+
+    if payload.get("stream") is False:
+        payload.pop("stream", None)
+
+    return payload
+
+
 def _append_legacy_tool_calls(
     input_items_list: list[InputItem],
     tool_calls: Any,
@@ -605,7 +642,8 @@ def to_chat_completions_kwargs(request: Request, *, model: str | None = None, st
         target_format=lf.FormatName.OPENAI_CHAT_COMPLETIONS,
     )
     handle_conversion_warnings(result.warnings, strict=strict, context="Open Responses -> Chat Completions")
-    return cast(dict[str, Any], result.value)
+    payload = cast(dict[str, Any], result.value)
+    return normalize_chat_completions_payload(payload)
 
 
 def to_chat_messages(request: Request, *, model: str | None = None, strict: bool = True) -> list[dict[str, Any]]:
@@ -637,6 +675,7 @@ __all__ = [
     "make_request",
     "message_items",
     "message_text",
+    "normalize_chat_completions_payload",
     "request_to_jsonable",
     "specific_tool_choice",
     "to_chat_completions_kwargs",

@@ -26,7 +26,6 @@ from ares.environments import twenty_questions
 from ares.experiment_tracking import stat_tracker
 
 _LOGGER = logging.getLogger(__name__)
-_DEFAULT_PRESETS_REGISTERED = False
 
 
 def _make_harbor_dataset_id(name: str, version: str) -> str:
@@ -126,10 +125,7 @@ def _register_default_presets() -> None:
     This function is called automatically when the presets module is imported,
     ensuring built-in presets are always available.
     """
-    global _DEFAULT_PRESETS_REGISTERED
-    if _DEFAULT_PRESETS_REGISTERED:
-        return
-
+    existing_preset_names = set(registry._list_presets())
     seen_preset_names: set[str] = set()
     for ds_spec in code_env.list_harbor_datasets():
         for code_agent_id, code_agent_factory in [
@@ -138,29 +134,25 @@ def _register_default_presets() -> None:
         ]:
             ds_id = _make_harbor_dataset_id(ds_spec.name, ds_spec.version)
             preset_name = f"{ds_id}-{code_agent_id}"
-            if preset_name in seen_preset_names:
+            if preset_name in seen_preset_names or preset_name in existing_preset_names:
                 continue
             seen_preset_names.add(preset_name)
-            try:
-                registry.register_preset(
-                    preset_name,
-                    HarborSpec(
-                        ds_spec=ds_spec,
-                        dataset_id=ds_id,
-                        code_agent_factory=code_agent_factory,
-                        code_agent_id=code_agent_id,
-                    ),
-                )
-            except ValueError:
-                _LOGGER.warning("Skipping duplicate built-in preset registration for '%s'", preset_name)
+            registry.register_preset(
+                preset_name,
+                HarborSpec(
+                    ds_spec=ds_spec,
+                    dataset_id=ds_id,
+                    code_agent_factory=code_agent_factory,
+                    code_agent_id=code_agent_id,
+                ),
+            )
+            existing_preset_names.add(preset_name)
 
     # Twenty Questions — lightweight, no Docker needed.
-    try:
+    if "20q" not in existing_preset_names:
         registry.register_preset("20q", TwentyQuestionsSpec())
-    except ValueError:
-        _LOGGER.warning("Skipping duplicate built-in preset registration for '20q'")
+        existing_preset_names.add("20q")
 
-    _DEFAULT_PRESETS_REGISTERED = True
     _LOGGER.debug("Registered %d default presets", len(registry._list_presets()))
 
 

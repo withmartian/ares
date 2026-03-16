@@ -1,8 +1,8 @@
 """ARES: Agentic Research and Evaluation Suite.
 
 ARES is an RL-first framework for training and evaluating code agents. It implements
-an async version of DeepMind's dm_env specification, treating LLM requests as
-observations and LLM responses as actions within a standard RL loop.
+an async version of DeepMind's dm_env specification, treating canonical Open Responses
+requests as observations and LLM responses as actions within a standard RL loop.
 
 The primary way to create environments is via the registry system:
 

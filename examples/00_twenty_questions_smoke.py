@@ -11,7 +11,7 @@ Example usage:
 
 import asyncio
 
-import ares
+from ares.environments import twenty_questions
 from ares.testing import mock_llm
 
 from . import utils
@@ -20,7 +20,9 @@ from . import utils
 async def main() -> None:
     agent = mock_llm.MockLLMClient(responses=["Is it Basketball?"])
 
-    async with ares.make("20q:0") as env:
+    async with twenty_questions.TwentyQuestionsEnvironment(
+        objects=("Basketball",), oracle_model="openai/gpt-4o-mini"
+    ) as env:
         ts = await env.reset()
         assert ts.observation is not None
 

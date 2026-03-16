@@ -28,7 +28,7 @@ The ``QueueMediatedLLMClient`` implements the ``LLMClient`` protocol, but instea
 
 Meanwhile, the environment:
 
-1. **Watches the queue**: Extracts ``LLMRequest`` objects as they arrive
+1. **Watches the queue**: Extracts canonical Open Responses requests as they arrive
 2. **Exposes them as observations**: Returns them from ``reset()`` and ``step()``
 3. **Provides responses**: When you call ``step(action)``, sets the Future's result
 
@@ -41,9 +41,9 @@ The core implementation is simple:
 
     @dataclass(frozen=True)
     class QueueMediatedLLMClient(LLMClient):
-        q: asyncio.Queue[ValueAndFuture[LLMRequest, LLMResponse]]
+        q: asyncio.Queue[ValueAndFuture[open_responses.Request, LLMResponse]]
 
-        async def __call__(self, request: LLMRequest) -> LLMResponse:
+        async def __call__(self, request: open_responses.Request) -> LLMResponse:
             future = asyncio.Future[LLMResponse]()
             await self.q.put(ValueAndFuture(value=request, future=future))
             return await future  # Blocks until env provides response

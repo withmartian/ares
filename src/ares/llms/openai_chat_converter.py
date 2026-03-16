@@ -1,5 +1,6 @@
 """Converter for OpenAI Chat Completions request format."""
 
+import logging
 from typing import Any, cast
 
 import linguafranca as lf
@@ -7,6 +8,8 @@ import openai.types.chat.completion_create_params
 
 from ares.llms import open_responses
 from ares.llms import request as legacy_request
+
+_LOGGER = logging.getLogger(__name__)
 
 _SUPPORTED_CHAT_FIELDS = frozenset(
     {
@@ -32,33 +35,12 @@ def _raise_or_log(messages: list[str], *, strict: bool) -> None:
     joined = "; ".join(messages)
     if strict:
         raise ValueError(f"Converting to Chat Completions will lose information: {joined}")
+    for message in messages:
+        _LOGGER.warning("Open Responses -> Chat warning: %s", message)
 
 
 def _filtered_warnings(warnings: list[lf.ConversionWarning]) -> list[lf.ConversionWarning]:
     return [warning for warning in warnings if warning.field not in {"stop"}]
-
-
-def _flatten_tool_call_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    flattened: list[dict[str, Any]] = []
-    for message in messages:
-        tool_calls = message.get("tool_calls")
-        if tool_calls and flattened and flattened[-1].get("role") == "assistant":
-            flattened[-1]["tool_calls"] = tool_calls
-            continue
-        flattened.append(message)
-    return flattened
-
-
-def _strip_function_tool_strict_flag(payload: dict[str, Any]) -> None:
-    tools = payload.get("tools")
-    if not isinstance(tools, list):
-        return
-    for tool in tools:
-        if not isinstance(tool, dict):
-            continue
-        function = tool.get("function")
-        if isinstance(function, dict):
-            function.pop("strict", None)
 
 
 def to_external(request: legacy_request.LLMRequest, *, strict: bool = True) -> dict[str, Any]:
@@ -79,16 +61,12 @@ def to_external(request: legacy_request.LLMRequest, *, strict: bool = True) -> d
     )
     open_responses.handle_conversion_warnings(result.warnings, strict=strict, context="Open Responses -> Chat")
 
-    payload = cast(dict[str, Any], result.value)
+    payload = open_responses.normalize_chat_completions_payload(cast(dict[str, Any], result.value))
     payload.pop("model", None)
-    payload["messages"] = _flatten_tool_call_messages(cast(list[dict[str, Any]], payload["messages"]))
-    _strip_function_tool_strict_flag(payload)
     if request.service_tier and request.service_tier != "standard_only":
         payload["service_tier"] = request.service_tier
     if request.stop_sequences:
         payload["stop"] = request.stop_sequences[:4]
-    if payload.get("stream") is False:
-        payload.pop("stream", None)
     return payload
 
 

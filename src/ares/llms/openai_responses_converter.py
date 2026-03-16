@@ -1,5 +1,6 @@
 """Converter for OpenAI Responses request format."""
 
+import logging
 from typing import Any, cast
 
 import linguafranca as lf
@@ -7,6 +8,8 @@ import openai.types.responses.response_create_params
 
 from ares.llms import open_responses
 from ares.llms import request as legacy_request
+
+_LOGGER = logging.getLogger(__name__)
 
 _SUPPORTED_RESPONSES_FIELDS = frozenset(
     {
@@ -31,6 +34,8 @@ def _raise_or_log(messages: list[str], *, strict: bool) -> None:
     joined = "; ".join(messages)
     if strict:
         raise ValueError(f"Converting to Responses will lose information: {joined}")
+    for message in messages:
+        _LOGGER.warning("Open Responses identity warning: %s", message)
 
 
 def _sanitize_payload_for_conversion(

@@ -1,5 +1,6 @@
 """Converter for Anthropic Messages request format."""
 
+import logging
 from typing import Any, cast
 
 import anthropic.types
@@ -7,6 +8,8 @@ import linguafranca as lf
 
 from ares.llms import open_responses
 from ares.llms import request as legacy_request
+
+_LOGGER = logging.getLogger(__name__)
 
 _SUPPORTED_ANTHROPIC_FIELDS = frozenset(
     {
@@ -33,6 +36,8 @@ def _raise_or_log(messages: list[str], *, strict: bool) -> None:
     joined = "; ".join(messages)
     if strict:
         raise ValueError(f"Converting to Claude Messages will lose information: {joined}")
+    for message in messages:
+        _LOGGER.warning("Open Responses -> Anthropic warning: %s", message)
 
 
 def _filtered_warnings(warnings: list[lf.ConversionWarning]) -> list[lf.ConversionWarning]:

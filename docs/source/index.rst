@@ -20,10 +20,10 @@ See the main `README <https://github.com/withmartian/ares>`_ for installation in
 Key Features
 ------------
 
-* **RL-First Design**: Built around the reinforcement learning loop with observations (LLM requests) and actions (LLM responses)
+* **RL-First Design**: Built around the reinforcement learning loop with observations (Open Responses requests) and actions (LLM responses)
 * **LLM-Level Optimization**: Train the LLM within code agents, not just the agent as a whole
 * **Distributed Workloads**: Support for high-volume, distributed training and evaluation
-* **Mechanistic Interpretability**: Raw access to LLM requests and responses for deep analysis
+* **Mechanistic Interpretability**: Raw access to canonical LLM requests and responses for deep analysis
 * **Async Gym/dm_env like Spec**: Close to Gym/dm_env spec, but incorporating async methods for performance 
 
 Indices and tables
