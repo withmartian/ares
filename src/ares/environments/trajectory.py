@@ -193,6 +193,22 @@ class TrajectoryCollector(Protocol):
         ...
 
 
+class NullTrajectoryCollector:
+    """No-op trajectory collector that discards all data."""
+
+    def begin_episode(self, *, task_name: str) -> None:
+        del task_name
+
+    def record_step(self, record: StepRecord) -> None:
+        del record
+
+    def end_episode(self, *, truncated: bool = False) -> EpisodeTrajectory:
+        del truncated
+        return EpisodeTrajectory(
+            episode_id="", task_name="", steps=[], start_time=0.0
+        )
+
+
 class JsonTrajectoryCollector:
     """Collects trajectories and persists each episode as a JSON file.
 
