@@ -170,6 +170,49 @@ class TestTransformersLLMClientInitialization:
         assert "_inference_task" not in client.__dict__
 
 
+class TestOpenResponsesRendering:
+    """Tests for direct Open Responses rendering."""
+
+    def test_render_request_with_instructions_and_tool_history(self):
+        request = open_responses.make_request(
+            [
+                open_responses.user_message("What is the weather?"),
+                open_responses.assistant_message("Let me check."),
+                open_responses.function_call(call_id="call_123", name="get_weather", arguments='{"city":"SF"}'),
+                open_responses.function_call_output(call_id="call_123", output="Sunny"),
+            ],
+            instructions="You are helpful.",
+        )
+
+        rendered = transformers_client._render_request_to_chat_messages(request)
+
+        assert rendered == [
+            {"role": "system", "content": "You are helpful."},
+            {"role": "user", "content": "What is the weather?"},
+            {"role": "assistant", "content": "Let me check."},
+            {
+                "role": "assistant",
+                "content": 'Called tool get_weather with call_id call_123:\n{"city":"SF"}',
+            },
+            {"role": "user", "content": "Tool result for call_id call_123:\nSunny"},
+        ]
+
+    def test_render_request_logs_dropped_fields(self, caplog):
+        request = open_responses.make_request(
+            [open_responses.user_message("Hello")],
+            metadata={"user_id": "123"},
+            tools=[open_responses.function_tool(name="lookup")],
+            tool_choice=open_responses.specific_tool_choice("lookup"),
+            stream=True,
+        )
+
+        with caplog.at_level("WARNING"):
+            rendered = transformers_client._render_request_to_chat_messages(request)
+
+        assert rendered == [{"role": "user", "content": "Hello"}]
+        assert "dropped unsupported Open Responses fields: metadata, stream, tool_choice, tools" in caplog.text
+
+
 class TestTransformersLLMClientLifecycle:
     """Tests for client lifecycle behavior."""
 
@@ -282,6 +325,34 @@ class TestTransformersLLMClientBatching:
 
                 # Verify generate was called once with batch
                 mock_model.generate.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_request_params_propagate_top_p_and_max_tokens(self):
+        """Test per-request generation params are passed through batching."""
+        client = transformers_client.TransformersLLMClient(
+            model_name="test-model",
+            batch_wait_ms=10,
+        )
+
+        mock_tokenizer = create_mock_tokenizer()
+        mock_model = mock.MagicMock()
+        mock_model.generate.return_value = torch.tensor([[1, 2, 3, 4, 5, 6]])
+
+        with setup_client_mocks(client, mock_model, mock_tokenizer):
+            async with client:
+                req = open_responses.make_request(
+                    [open_responses.user_message("test")],
+                    max_output_tokens=7,
+                    temperature=0.4,
+                    top_p=0.8,
+                )
+
+                await client(req)
+
+                _, kwargs = mock_model.generate.call_args
+                assert kwargs["max_new_tokens"] == 7
+                assert kwargs["temperature"] == 0.4
+                assert kwargs["top_p"] == 0.8
 
 
 @pytest.mark.asyncio
