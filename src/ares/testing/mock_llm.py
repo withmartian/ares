@@ -3,6 +3,8 @@
 from collections.abc import Callable
 import dataclasses
 
+from linguafranca import types as lft
+
 from ares.llms import open_responses
 from ares.llms import response
 
@@ -22,13 +24,13 @@ class MockLLMClient:
         call_count: Number of times the client has been called.
     """
 
-    requests: list[open_responses.Request] = dataclasses.field(default_factory=list)
+    requests: list[lft.OpenResponsesRequest] = dataclasses.field(default_factory=list)
     responses: list[str] = dataclasses.field(default_factory=list)
-    response_handler: Callable[[open_responses.Request], str] | None = None
+    response_handler: Callable[[lft.OpenResponsesRequest], str] | None = None
     default_response: str = "Mock LLM response"
     call_count: int = 0
 
-    async def __call__(self, request: open_responses.Request) -> response.LLMResponse:
+    async def __call__(self, request: lft.OpenResponsesRequest) -> response.LLMResponse:
         """Process LLM request and return mock response.
 
         Args:
@@ -55,11 +57,11 @@ class MockLLMClient:
             usage=response.Usage(prompt_tokens=100, generated_tokens=50),
         )
 
-    def get_last_request(self) -> open_responses.Request | None:
+    def get_last_request(self) -> lft.OpenResponsesRequest | None:
         """Get the most recent request, or None if no requests."""
         return self.requests[-1] if self.requests else None
 
-    def get_request_messages(self, index: int = -1) -> list[open_responses.InputItem]:
+    def get_request_messages(self, index: int = -1) -> list[lft.InputItem]:
         """Get input items from a specific request (default: last request)."""
         if not self.requests:
             return []

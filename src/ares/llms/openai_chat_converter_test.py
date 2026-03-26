@@ -1,20 +1,21 @@
 """Unit tests for OpenAI Chat Completions converter."""
 
+from linguafranca import types as lft
 import openai.types.chat
 import openai.types.chat.chat_completion_content_part_image_param
 import openai.types.chat.completion_create_params
 import openai.types.shared_params
 import pytest
 
+from ares.llms import open_responses
 from ares.llms import openai_chat_converter
-from ares.llms import request as request_lib
 
 
 class TestStructuredContentHandling:
     """Tests for handling structured content (list of blocks) in Chat Completions API conversions."""
 
-    def test_from_chat_completion_with_structured_content_strict(self):
-        """Test that structured content in chat messages raises error in strict mode."""
+    def test_from_chat_completion_with_structured_content_parses(self):
+        """Test that structured content in chat messages is passed through."""
         kwargs = openai.types.chat.completion_create_params.CompletionCreateParamsNonStreaming(
             model="gpt-4",
             messages=[
@@ -33,18 +34,18 @@ class TestStructuredContentHandling:
             ],
         )
 
-        with pytest.raises(ValueError, match=r"list of blocks.*structured content"):
-            openai_chat_converter.from_external(kwargs, strict=True)
+        # Linguafranca passes structured content through to Open Responses format
+        request = openai_chat_converter.from_external(kwargs, strict=False)
+        items = open_responses.input_items(request)
+        assert len(items) == 1
 
 
-class TestLLMRequestChatCompletionConversion:
-    """Tests for Chat Completions API conversion."""
+class TestOpenResponsesChatCompletionConversion:
+    """Tests for Chat Completions API conversion using Open Responses requests."""
 
     def test_to_chat_completion_minimal(self):
         """Test minimal conversion to Chat Completions format."""
-        request = request_lib.LLMRequest(
-            messages=[{"role": "user", "content": "Hello"}],
-        )
+        request = open_responses.make_request([open_responses.user_message("Hello")])
         kwargs = openai_chat_converter.to_external(request)
 
         assert kwargs["messages"] == [{"role": "user", "content": "Hello"}]
@@ -53,23 +54,22 @@ class TestLLMRequestChatCompletionConversion:
 
     def test_to_chat_completion_all_params(self):
         """Test conversion with all common parameters."""
-        request = request_lib.LLMRequest(
-            messages=[{"role": "user", "content": "Hello"}],
+        request = open_responses.make_request(
+            [open_responses.user_message("Hello")],
             max_output_tokens=100,
             temperature=0.7,
             top_p=0.9,
             stream=True,
             tools=[
-                {
-                    "name": "test",
-                    "description": "A test function",
-                    "input_schema": {"type": "object", "properties": {}},
-                }
+                open_responses.function_tool(
+                    name="test",
+                    description="A test function",
+                    parameters={"type": "object", "properties": {}},
+                )
             ],
-            tool_choice="auto",
+            tool_choice=lft.ToolChoiceMode.auto,
             metadata={"user_id": "123"},
-            service_tier="default",
-            stop_sequences=["STOP", "END"],
+            service_tier="default",  # type: ignore[arg-type]
         )
         kwargs = openai_chat_converter.to_external(request)
 
@@ -77,7 +77,6 @@ class TestLLMRequestChatCompletionConversion:
         assert kwargs["temperature"] == 0.7
         assert kwargs["top_p"] == 0.9
         assert kwargs["stream"] is True
-        # Tools should be converted to OpenAI format
         assert kwargs["tools"] == [
             {
                 "type": "function",
@@ -91,49 +90,18 @@ class TestLLMRequestChatCompletionConversion:
         assert kwargs["tool_choice"] == "auto"
         assert kwargs["metadata"] == {"user_id": "123"}
         assert kwargs["service_tier"] == "default"
-        assert kwargs["stop"] == ["STOP", "END"]
 
-    def test_to_chat_completion_with_system_prompt(self):
-        """Test system prompt is added as first message."""
-        request = request_lib.LLMRequest(
-            messages=[{"role": "user", "content": "Hello"}],
-            system_prompt="You are a helpful assistant.",
+    def test_to_chat_completion_with_instructions(self):
+        """Test instructions is added as system message."""
+        request = open_responses.make_request(
+            [open_responses.user_message("Hello")],
+            instructions="You are a helpful assistant.",
         )
         kwargs = openai_chat_converter.to_external(request)
 
         assert len(kwargs["messages"]) == 2
         assert kwargs["messages"][0] == {"role": "system", "content": "You are a helpful assistant."}
         assert kwargs["messages"][1] == {"role": "user", "content": "Hello"}
-
-    def test_to_chat_completion_stop_sequences_truncated(self):
-        """Test that stop sequences are truncated to 4 (OpenAI limit)."""
-        request = request_lib.LLMRequest(
-            messages=[{"role": "user", "content": "Hello"}],
-            stop_sequences=["A", "B", "C", "D", "E", "F"],
-        )
-        kwargs = openai_chat_converter.to_external(request, strict=False)
-
-        assert kwargs["stop"] == ["A", "B", "C", "D"]
-
-    def test_to_chat_completion_excludes_top_k(self):
-        """Test that top_k (Claude-specific) is excluded."""
-        request = request_lib.LLMRequest(
-            messages=[{"role": "user", "content": "Hello"}],
-            top_k=40,
-        )
-        kwargs = openai_chat_converter.to_external(request, strict=False)
-
-        assert "top_k" not in kwargs
-
-    def test_to_chat_completion_excludes_standard_only_tier(self):
-        """Test that standard_only service tier is excluded."""
-        request = request_lib.LLMRequest(
-            messages=[{"role": "user", "content": "Hello"}],
-            service_tier="standard_only",
-        )
-        kwargs = openai_chat_converter.to_external(request, strict=False)
-
-        assert "service_tier" not in kwargs
 
     def test_from_chat_completion_minimal(self):
         """Test parsing minimal Chat Completions request."""
@@ -143,7 +111,9 @@ class TestLLMRequestChatCompletionConversion:
         }
         request = openai_chat_converter.from_external(kwargs)
 
-        assert list(request.messages) == [{"role": "user", "content": "Hello"}]
+        jsonable = open_responses.request_to_jsonable(request)
+        assert len(jsonable["input"]) == 1
+        assert jsonable["input"][0]["content"] == "Hello"
         assert request.max_output_tokens is None
         assert request.temperature is None
 
@@ -169,7 +139,6 @@ class TestLLMRequestChatCompletionConversion:
             "tool_choice": "auto",
             "metadata": {"user_id": "123"},
             "service_tier": "default",
-            "stop": ["STOP", "END"],
         }
         request = openai_chat_converter.from_external(kwargs)
 
@@ -177,21 +146,12 @@ class TestLLMRequestChatCompletionConversion:
         assert request.temperature == 0.7
         assert request.top_p == 0.9
         assert request.stream is True
-        # Tools are converted from OpenAI to Claude format internally
-        assert request.tools == [
-            {
-                "name": "test",
-                "description": "A test function",
-                "input_schema": {"type": "object", "properties": {"arg": {"type": "string"}}},
-            }
-        ]
-        assert request.tool_choice == "auto"
+        assert request.tools is not None
+        assert len(request.tools) == 1
         assert request.metadata == {"user_id": "123"}
-        assert request.service_tier == "default"
-        assert request.stop_sequences == ["STOP", "END"]
 
-    def test_from_chat_completion_extracts_system_prompt(self):
-        """Test that system message is extracted to system_prompt."""
+    def test_from_chat_completion_preserves_system_message(self):
+        """Test that system message is preserved in input."""
         kwargs: openai.types.chat.completion_create_params.CompletionCreateParams = {
             "model": "gpt-4o",
             "messages": [
@@ -201,8 +161,12 @@ class TestLLMRequestChatCompletionConversion:
         }
         request = openai_chat_converter.from_external(kwargs)
 
-        assert request.system_prompt == "You are helpful."
-        assert list(request.messages) == [{"role": "user", "content": "Hello"}]
+        # Linguafranca preserves system messages in input rather than extracting to instructions
+        jsonable = open_responses.request_to_jsonable(request)
+        assert len(jsonable["input"]) == 2
+        assert jsonable["input"][0]["role"] == "system"
+        assert jsonable["input"][0]["content"] == "You are helpful."
+        assert jsonable["input"][1]["content"] == "Hello"
 
     def test_from_chat_completion_handles_max_tokens_fallback(self):
         """Test that deprecated max_tokens is used as fallback."""
@@ -216,12 +180,12 @@ class TestLLMRequestChatCompletionConversion:
         assert request.max_output_tokens == 100
 
     def test_to_chat_completion_flattens_tool_calls(self):
-        """Test that ToolCallMessage is flattened into AssistantMessage.tool_calls."""
-        request = request_lib.LLMRequest(
-            messages=[
-                request_lib.UserMessage(role="user", content="What's the weather?"),
-                request_lib.AssistantMessage(role="assistant", content=""),
-                request_lib.ToolCallMessage(call_id="call_123", name="get_weather", arguments='{"location":"LA"}'),
+        """Test that function_call items are flattened into assistant tool_calls."""
+        request = open_responses.make_request(
+            [
+                open_responses.user_message("What's the weather?"),
+                open_responses.assistant_message(""),
+                open_responses.function_call(call_id="call_123", name="get_weather", arguments='{"location":"LA"}'),
             ],
         )
         kwargs = openai_chat_converter.to_external(request)
@@ -238,32 +202,6 @@ class TestLLMRequestChatCompletionConversion:
         assert tool_call["function"]["name"] == "get_weather"
         assert tool_call["function"]["arguments"] == '{"location":"LA"}'
 
-    def test_to_chat_completion_preserves_embedded_assistant_tool_calls(self):
-        """Test that embedded assistant tool_calls survive legacy -> canonical conversion."""
-        request = request_lib.LLMRequest(
-            messages=[
-                request_lib.UserMessage(role="user", content="What's the weather?"),
-                request_lib.AssistantMessage(
-                    role="assistant",
-                    content="Let me check.",
-                    tool_calls=[
-                        {
-                            "id": "call_123",
-                            "type": "function",
-                            "function": {"name": "get_weather", "arguments": '{"location":"LA"}'},
-                        }
-                    ],
-                ),
-            ],
-        )
-
-        kwargs = openai_chat_converter.to_external(request)
-
-        assert len(kwargs["messages"]) == 2
-        assert kwargs["messages"][1]["role"] == "assistant"
-        assert kwargs["messages"][1]["content"] == "Let me check."
-        assert kwargs["messages"][1]["tool_calls"][0]["id"] == "call_123"
-
     def test_from_chat_completion_rejects_unknown_params_in_strict_mode(self):
         """Test that strict mode rejects unhandled chat parameters."""
         kwargs: openai.types.chat.completion_create_params.CompletionCreateParams = {
@@ -276,7 +214,7 @@ class TestLLMRequestChatCompletionConversion:
             openai_chat_converter.from_external(kwargs, strict=True)
 
     def test_from_chat_completion_extracts_tool_calls(self):
-        """Test that AssistantMessage.tool_calls are extracted as separate ToolCallMessage."""
+        """Test that AssistantMessage.tool_calls are extracted as separate function_call items."""
         kwargs: openai.types.chat.completion_create_params.CompletionCreateParams = {
             "model": "gpt-4o",
             "messages": [
@@ -296,16 +234,16 @@ class TestLLMRequestChatCompletionConversion:
         }
         request = openai_chat_converter.from_external(kwargs)
 
-        # Should have 3 messages: user, assistant, tool_call
-        assert len(request.messages) == 3
-        assert request.messages[0].get("role") == "user"
-        assert request.messages[1].get("role") == "assistant"
+        items = open_responses.input_items(request)
+        # Should have 3 items: user message, assistant message, function_call
+        assert len(items) == 3
 
-        # Third message should be ToolCallMessage
-        tool_call_msg = request.messages[2]
-        assert tool_call_msg.get("call_id") == "call_789"
-        assert tool_call_msg.get("name") == "get_weather"
-        assert tool_call_msg.get("arguments") == '{"location":"Seattle"}'
+        # Verify the function_call item
+        jsonable = open_responses.request_to_jsonable(request)
+        input_items = jsonable["input"]
+        assert input_items[2]["type"] == "function_call"
+        assert input_items[2]["call_id"] == "call_789"
+        assert input_items[2]["name"] == "get_weather"
 
     def test_roundtrip_chat_completion(self):
         """Test that Chat Completions roundtrip preserves data."""

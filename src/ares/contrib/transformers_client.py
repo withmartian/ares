@@ -31,6 +31,7 @@ import json
 import logging
 from typing import Literal, cast
 
+from linguafranca import types as lft
 import torch
 import transformers
 
@@ -83,7 +84,7 @@ def _render_value_to_text(value: object) -> str:
     return json.dumps(value, ensure_ascii=True, sort_keys=True)
 
 
-def _render_request_to_chat_messages(request: open_responses.Request) -> list[dict[str, str]]:
+def _render_request_to_chat_messages(request: lft.OpenResponsesRequest) -> list[dict[str, str]]:
     """Convert an Open Responses request to simple ``{role, content}`` chat dicts.
 
     We use a custom renderer instead of ``open_responses.to_chat_messages()`` because
@@ -235,7 +236,7 @@ class TransformersLLMClient(llm_clients.LLMClient):
     temperature: float = 1.0
 
     @functools.cached_property
-    def _request_queue(self) -> asyncio.Queue[ValueAndFuture[open_responses.Request, response.LLMResponse]]:
+    def _request_queue(self) -> asyncio.Queue[ValueAndFuture[lft.OpenResponsesRequest, response.LLMResponse]]:
         """Lazy-initialized queue for batching requests."""
         return asyncio.Queue()
 
@@ -287,7 +288,7 @@ class TransformersLLMClient(llm_clients.LLMClient):
             tokenizer.pad_token = tokenizer.eos_token
         return tokenizer
 
-    async def __call__(self, req: open_responses.Request) -> response.LLMResponse:
+    async def __call__(self, req: lft.OpenResponsesRequest) -> response.LLMResponse:
         """Queue request and wait for batched inference.
 
         The background inference task is started automatically on first call.
@@ -329,7 +330,7 @@ class TransformersLLMClient(llm_clients.LLMClient):
         and timer, allowing truly independent batching per parameter set.
         """
         while True:
-            collected_items: list[ValueAndFuture[open_responses.Request, response.LLMResponse]] = []
+            collected_items: list[ValueAndFuture[lft.OpenResponsesRequest, response.LLMResponse]] = []
             try:
                 first_item = await self._request_queue.get()
                 collected_items.append(first_item)
@@ -344,7 +345,7 @@ class TransformersLLMClient(llm_clients.LLMClient):
 
                 groups: dict[
                     tuple[float, int, float | None],
-                    list[ValueAndFuture[open_responses.Request, response.LLMResponse]],
+                    list[ValueAndFuture[lft.OpenResponsesRequest, response.LLMResponse]],
                 ] = collections.defaultdict(list)
                 groups[first_params].append(first_item)
 
@@ -384,7 +385,7 @@ class TransformersLLMClient(llm_clients.LLMClient):
 
     async def _process_batch(
         self,
-        batch: list[ValueAndFuture[open_responses.Request, response.LLMResponse]],
+        batch: list[ValueAndFuture[lft.OpenResponsesRequest, response.LLMResponse]],
         params: tuple[float, int, float | None],
     ) -> None:
         """Process a batch of requests with homogeneous parameters.

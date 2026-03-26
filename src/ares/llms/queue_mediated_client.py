@@ -3,9 +3,10 @@
 import asyncio
 import dataclasses
 
+from linguafranca import types as lft
+
 from ares import async_utils
 from ares.llms import llm_clients
-from ares.llms import open_responses
 from ares.llms import response
 
 
@@ -40,11 +41,11 @@ class QueueMediatedLLMClient(llm_clients.LLMClient):
             awaiting __call__ will block forever.
     """
 
-    q: asyncio.Queue[async_utils.ValueAndFuture[open_responses.Request, response.LLMResponse]] = dataclasses.field(
+    q: asyncio.Queue[async_utils.ValueAndFuture[lft.OpenResponsesRequest, response.LLMResponse]] = dataclasses.field(
         default_factory=asyncio.Queue
     )
 
-    async def __call__(self, req: open_responses.Request) -> response.LLMResponse:
+    async def __call__(self, req: lft.OpenResponsesRequest) -> response.LLMResponse:
         future = asyncio.Future[response.LLMResponse]()
         await self.q.put(async_utils.ValueAndFuture(value=req, future=future))
         return await future

@@ -4,12 +4,12 @@ from collections.abc import Sequence
 import dataclasses
 from typing import Any
 
+from linguafranca import types as lft
 import torch
 import transformer_lens
 
 from ares import llms
 from ares.contrib import transformers_client
-from ares.llms import open_responses
 
 
 @dataclasses.dataclass
@@ -60,7 +60,7 @@ class HookedTransformerLLMClient:
 
     async def __call__(
         self,
-        request: open_responses.Request,
+        request: lft.OpenResponsesRequest,
         max_output_tokens: int | None = None,
     ) -> llms.LLMResponse:
         """Generate a completion using the HookedTransformer.

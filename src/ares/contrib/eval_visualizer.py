@@ -26,6 +26,7 @@ import sys
 import time
 from typing import ClassVar
 
+from linguafranca import types as lft
 import rich.markup
 import rich.text
 from textual import app
@@ -33,7 +34,6 @@ from textual import containers
 from textual import widgets
 
 from ares.environments import base
-from ares.llms import open_responses
 from ares.llms import response
 
 
@@ -90,7 +90,7 @@ class TrackedEnvironment[RewardType: base.Scalar, DiscountType: base.Scalar]:
 
     def __init__(
         self,
-        env: base.Environment[response.LLMResponse, open_responses.Request, RewardType, DiscountType],
+        env: base.Environment[response.LLMResponse, lft.OpenResponsesRequest, RewardType, DiscountType],
         task_id: int,
         dashboard: "EvaluationDashboard",
     ):
@@ -107,7 +107,7 @@ class TrackedEnvironment[RewardType: base.Scalar, DiscountType: base.Scalar]:
         self._step_count = 0
         self._total_cost = 0.0
 
-    async def reset(self) -> base.TimeStep[open_responses.Request, RewardType, DiscountType]:
+    async def reset(self) -> base.TimeStep[lft.OpenResponsesRequest, RewardType, DiscountType]:
         """Reset the environment and update dashboard."""
         self._dashboard.update_task(self._task_id, status=TaskStatus.RUNNING, log="Resetting environment")
         ts = await self._env.reset()
@@ -118,7 +118,7 @@ class TrackedEnvironment[RewardType: base.Scalar, DiscountType: base.Scalar]:
 
     async def step(
         self, action: response.LLMResponse
-    ) -> base.TimeStep[open_responses.Request, RewardType, DiscountType]:
+    ) -> base.TimeStep[lft.OpenResponsesRequest, RewardType, DiscountType]:
         """Step the environment and update dashboard."""
         self._step_count += 1
 
@@ -699,7 +699,7 @@ class EvaluationDashboard(app.App):
     def wrap[RewardType: base.Scalar, DiscountType: base.Scalar](
         self,
         task_id: int,
-        env: base.Environment[response.LLMResponse, open_responses.Request, RewardType, DiscountType],
+        env: base.Environment[response.LLMResponse, lft.OpenResponsesRequest, RewardType, DiscountType],
     ) -> TrackedEnvironment[RewardType, DiscountType]:
         """Wrap an ARES LLM environment with automatic dashboard tracking.
 

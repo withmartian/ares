@@ -35,6 +35,7 @@ import dataclasses
 import functools
 import logging
 
+from linguafranca import types as lft
 import llama_cpp
 import openai.types.chat.chat_completion
 
@@ -74,7 +75,7 @@ class LlamaCppLLMClient(llm_clients.LLMClient):
             n_ctx=self.n_ctx,
         )
 
-    async def __call__(self, req: open_responses.Request) -> response.LLMResponse:
+    async def __call__(self, req: lft.OpenResponsesRequest) -> response.LLMResponse:
         """Generate a response using llama.cpp.
 
         Args:

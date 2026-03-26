@@ -19,6 +19,7 @@ import re
 from typing import Literal, assert_never
 
 import jinja2
+from linguafranca import types as lft
 import yaml
 
 from ares.code_agents import code_agent_base
@@ -147,7 +148,7 @@ class MiniSWECodeAgent(code_agent_base.CodeAgent):
         self._cost_limit = self._agent_config.get("cost_limit", 0.0)
 
         self._system_prompt = _render_system_template(self._agent_config["system_template"])
-        self._messages: list[open_responses.InputItemMessage] = []
+        self._messages: list[lft.InputItemMessage] = []
         _LOGGER.debug("[%d] Initialized MiniSWECodeAgent.", id(self))
 
     def _add_message(self, role: Literal["user", "assistant"], content: str) -> None:

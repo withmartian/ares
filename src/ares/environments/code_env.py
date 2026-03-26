@@ -21,6 +21,7 @@ from harbor.models import registry as harbor_registry
 from harbor.models.task import task as harbor_task
 from harbor.models.trial import paths as harbor_paths
 from harbor.registry import client as harbor_dataset_client
+from linguafranca import types as lft
 
 from ares.code_agents import code_agent_base
 from ares.code_agents import mini_swe_agent
@@ -28,7 +29,6 @@ from ares.containers import containers
 from ares.containers import daytona as ares_daytona
 from ares.environments import base
 from ares.experiment_tracking import stat_tracker
-from ares.llms import open_responses
 from ares.llms import queue_mediated_client
 from ares.llms import response
 
@@ -55,7 +55,7 @@ def list_harbor_datasets() -> tuple[harbor_registry.DatasetSpec, ...]:
     return tuple(client.get_datasets())
 
 
-class CodeEnvironment(base.Environment[response.LLMResponse, open_responses.Request | None, float, float]):
+class CodeEnvironment(base.Environment[response.LLMResponse, lft.OpenResponsesRequest | None, float, float]):
     """Environment for code agent datasets that computes reward at the end of an episode."""
 
     def __init__(
@@ -92,7 +92,7 @@ class CodeEnvironment(base.Environment[response.LLMResponse, open_responses.Requ
         # Register for cleanup on exit.
         _ENVIRONMENT_JANITOR.register_for_cleanup(self)
 
-    async def reset(self) -> base.TimeStep[open_responses.Request, float, float]:
+    async def reset(self) -> base.TimeStep[lft.OpenResponsesRequest, float, float]:
         reset_start_time = time.time()
         self._assert_active()
 
@@ -126,7 +126,7 @@ class CodeEnvironment(base.Environment[response.LLMResponse, open_responses.Requ
         self._tracker.scalar(f"{self._prefix}/reset", reset_end_time - reset_start_time)
         return result
 
-    async def step(self, action: response.LLMResponse) -> base.TimeStep[open_responses.Request | None, float, float]:
+    async def step(self, action: response.LLMResponse) -> base.TimeStep[lft.OpenResponsesRequest | None, float, float]:
         step_start_time = time.time()
         self._assert_active()
 
@@ -162,7 +162,7 @@ class CodeEnvironment(base.Environment[response.LLMResponse, open_responses.Requ
 
     async def _get_time_step(
         self,
-    ) -> base.TimeStep[open_responses.Request | None, float, float]:
+    ) -> base.TimeStep[lft.OpenResponsesRequest | None, float, float]:
         # Wait for the code agent to send another request or complete.
         _LOGGER.debug("[%d] Waiting for code agent or LLM request.", id(self))
         with self._tracker.timeit(f"{self._prefix}/get_from_queue"):

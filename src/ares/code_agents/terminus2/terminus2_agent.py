@@ -26,6 +26,8 @@ import re
 import shlex
 from typing import Literal, cast
 
+from linguafranca import types as lft
+
 from ares.code_agents import code_agent_base
 from ares.code_agents.terminus2 import json_parser
 from ares.code_agents.terminus2 import xml_parser
@@ -174,7 +176,7 @@ class Terminus2Agent(code_agent_base.CodeAgent):
         self._summarize_template = _load_template(template_dir / "summarize.txt")
 
         # Conversation history
-        self._messages: list[open_responses.InputItemMessage] = []
+        self._messages: list[lft.InputItemMessage] = []
         self._system_prompt: str | None = None  # Set during run()
 
         # State tracking

@@ -2,7 +2,8 @@
 
 from typing import Protocol
 
-from ares.llms import open_responses
+from linguafranca import types as lft
+
 from ares.llms import response
 
 
@@ -18,4 +19,4 @@ class OutputLengthExceededError(Exception):
 
 
 class LLMClient(Protocol):
-    async def __call__(self, request: open_responses.Request) -> response.LLMResponse: ...
+    async def __call__(self, request: lft.OpenResponsesRequest) -> response.LLMResponse: ...

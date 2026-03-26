@@ -4,10 +4,10 @@ import logging
 from typing import Any, cast
 
 import linguafranca as lf
+from linguafranca import types as lft
 import openai.types.responses.response_create_params
 
 from ares.llms import open_responses
-from ares.llms import request as legacy_request
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -28,23 +28,13 @@ _SUPPORTED_RESPONSES_FIELDS = frozenset(
 )
 
 
-def _raise_or_log(messages: list[str], *, strict: bool) -> None:
-    if not messages:
-        return
-    joined = "; ".join(messages)
-    if strict:
-        raise ValueError(f"Converting to Responses will lose information: {joined}")
-    for message in messages:
-        _LOGGER.warning("Open Responses identity warning: %s", message)
-
-
 def _sanitize_payload_for_conversion(
     payload: dict[str, Any],
     *,
     strict: bool,
-) -> tuple[dict[str, Any], list[legacy_request.Message]]:
+) -> dict[str, Any]:
+    """Sanitize the payload by filtering unsupported tools and validating inputs."""
     sanitized = dict(payload)
-    fallback_messages: list[legacy_request.Message] = []
 
     tools = sanitized.get("tools")
     if isinstance(tools, list):
@@ -57,6 +47,7 @@ def _sanitize_payload_for_conversion(
             message = f"Unsupported tool type for conversion: {tool_type}"
             if strict:
                 raise ValueError(message)
+            _LOGGER.warning("Skipping unsupported tool type: %s", tool_type)
         if valid_tools:
             sanitized["tools"] = valid_tools
         else:
@@ -74,27 +65,18 @@ def _sanitize_payload_for_conversion(
                         "Tool result (function_call_output) missing required 'call_id' field for routing. "
                         f"Output: {output_str[:50]}..."
                     )
-                fallback_messages.append(cast(legacy_request.Message, {"role": "tool", "content": output_str}))
+                _LOGGER.warning("Skipping function_call_output without call_id")
                 continue
             valid_inputs.append(item)
         sanitized["input"] = valid_inputs
 
-    return sanitized, fallback_messages
+    return sanitized
 
 
-def to_external(request: legacy_request.LLMRequest, *, strict: bool = True) -> dict[str, Any]:
-    loss_messages = []
-    if request.stop_sequences:
-        loss_messages.append(f"stop_sequences={request.stop_sequences} (not supported by Responses API)")
-    if request.top_k is not None:
-        loss_messages.append(f"top_k={request.top_k} (Claude-specific, not supported)")
-    if request.service_tier == "standard_only":
-        loss_messages.append("service_tier='standard_only' (not supported by Responses API)")
-    _raise_or_log(loss_messages, strict=strict)
-
-    canonical = open_responses.from_legacy_request(request, strict=strict)
+def to_external(request: lft.OpenResponsesRequest, *, strict: bool = True) -> dict[str, Any]:
+    """Convert an Open Responses request to the external format (identity conversion)."""
     result = lf.convert_request_json(
-        open_responses.request_to_jsonable(canonical),
+        open_responses.request_to_jsonable(request),
         source_format=lf.FormatName.OPEN_RESPONSES,
         target_format=lf.FormatName.OPEN_RESPONSES,
     )
@@ -102,8 +84,6 @@ def to_external(request: legacy_request.LLMRequest, *, strict: bool = True) -> d
 
     payload = cast(dict[str, Any], result.value)
     payload.pop("model", None)
-    if request.service_tier and request.service_tier != "standard_only":
-        payload["service_tier"] = request.service_tier
     return payload
 
 
@@ -111,7 +91,8 @@ def from_external(
     kwargs: openai.types.responses.response_create_params.ResponseCreateParamsBase,
     *,
     strict: bool = True,
-) -> legacy_request.LLMRequest:
+) -> lft.OpenResponsesRequest:
+    """Convert an external Responses request to Open Responses format."""
     payload = open_responses.validate_external_fields(
         dict(kwargs),
         allowed_fields=_SUPPORTED_RESPONSES_FIELDS,
@@ -119,7 +100,7 @@ def from_external(
         context="Open Responses identity",
     )
     payload.setdefault("model", open_responses.MODEL_STUB)
-    payload, fallback_messages = _sanitize_payload_for_conversion(payload, strict=strict)
+    payload = _sanitize_payload_for_conversion(payload, strict=strict)
 
     result = lf.convert_request_json(
         payload,
@@ -128,21 +109,4 @@ def from_external(
     )
     open_responses.handle_conversion_warnings(result.warnings, strict=strict, context="Open Responses identity")
 
-    request = open_responses.to_legacy_request(cast(dict[str, Any], result.value), strict=strict)
-    if not fallback_messages:
-        return request
-
-    return legacy_request.LLMRequest(
-        messages=[*request.messages, *fallback_messages],
-        max_output_tokens=request.max_output_tokens,
-        temperature=request.temperature,
-        top_p=request.top_p,
-        stream=request.stream,
-        tools=request.tools,
-        tool_choice=request.tool_choice,
-        metadata=request.metadata,
-        service_tier=request.service_tier,
-        stop_sequences=request.stop_sequences,
-        system_prompt=request.system_prompt,
-        top_k=request.top_k,
-    )
+    return lft.OpenResponsesRequest(**cast(dict[str, Any], result.value))

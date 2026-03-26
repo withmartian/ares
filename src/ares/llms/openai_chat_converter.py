@@ -1,15 +1,12 @@
 """Converter for OpenAI Chat Completions request format."""
 
-import logging
 from typing import Any, cast
 
 import linguafranca as lf
+from linguafranca import types as lft
 import openai.types.chat.completion_create_params
 
 from ares.llms import open_responses
-from ares.llms import request as legacy_request
-
-_LOGGER = logging.getLogger(__name__)
 
 _SUPPORTED_CHAT_FIELDS = frozenset(
     {
@@ -29,33 +26,14 @@ _SUPPORTED_CHAT_FIELDS = frozenset(
 )
 
 
-def _raise_or_log(messages: list[str], *, strict: bool) -> None:
-    if not messages:
-        return
-    joined = "; ".join(messages)
-    if strict:
-        raise ValueError(f"Converting to Chat Completions will lose information: {joined}")
-    for message in messages:
-        _LOGGER.warning("Open Responses -> Chat warning: %s", message)
-
-
 def _filtered_warnings(warnings: list[lf.ConversionWarning]) -> list[lf.ConversionWarning]:
     return [warning for warning in warnings if warning.field not in {"stop"}]
 
 
-def to_external(request: legacy_request.LLMRequest, *, strict: bool = True) -> dict[str, Any]:
-    loss_messages = []
-    if request.top_k is not None:
-        loss_messages.append(f"top_k={request.top_k} (Claude-specific, not supported)")
-    if request.service_tier == "standard_only":
-        loss_messages.append("service_tier='standard_only' (not supported by Chat API)")
-    if request.stop_sequences and len(request.stop_sequences) > 4:
-        loss_messages.append(f"stop_sequences truncated from {len(request.stop_sequences)} to 4 (Chat API limit)")
-    _raise_or_log(loss_messages, strict=strict)
-
-    canonical = open_responses.from_legacy_request(request, strict=strict)
+def to_external(request: lft.OpenResponsesRequest, *, strict: bool = True) -> dict[str, Any]:
+    """Convert an Open Responses request to Chat Completions format."""
     result = lf.convert_request_json(
-        open_responses.request_to_jsonable(canonical),
+        open_responses.request_to_jsonable(request),
         source_format=lf.FormatName.OPEN_RESPONSES,
         target_format=lf.FormatName.OPENAI_CHAT_COMPLETIONS,
     )
@@ -63,10 +41,6 @@ def to_external(request: legacy_request.LLMRequest, *, strict: bool = True) -> d
 
     payload = open_responses.normalize_chat_completions_payload(cast(dict[str, Any], result.value))
     payload.pop("model", None)
-    if request.service_tier and request.service_tier != "standard_only":
-        payload["service_tier"] = request.service_tier
-    if request.stop_sequences:
-        payload["stop"] = request.stop_sequences[:4]
     return payload
 
 
@@ -74,7 +48,8 @@ def from_external(
     kwargs: openai.types.chat.completion_create_params.CompletionCreateParams,
     *,
     strict: bool = True,
-) -> legacy_request.LLMRequest:
+) -> lft.OpenResponsesRequest:
+    """Convert a Chat Completions request to Open Responses format."""
     payload = open_responses.validate_external_fields(
         dict(kwargs),
         allowed_fields=_SUPPORTED_CHAT_FIELDS,
@@ -92,26 +67,4 @@ def from_external(
         _filtered_warnings(result.warnings), strict=strict, context="Chat -> Open Responses"
     )
 
-    request = open_responses.to_legacy_request(cast(dict[str, Any], result.value), strict=strict)
-
-    stop = payload.get("stop")
-    stop_sequences: list[str] | None = None
-    if isinstance(stop, list):
-        stop_sequences = cast(list[str], stop)
-    elif isinstance(stop, str):
-        stop_sequences = [stop]
-
-    return legacy_request.LLMRequest(
-        messages=request.messages,
-        max_output_tokens=request.max_output_tokens,
-        temperature=request.temperature,
-        top_p=request.top_p,
-        stream=request.stream,
-        tools=request.tools,
-        tool_choice=request.tool_choice,
-        metadata=request.metadata,
-        service_tier=request.service_tier,
-        stop_sequences=stop_sequences,
-        system_prompt=request.system_prompt,
-        top_k=request.top_k,
-    )
+    return lft.OpenResponsesRequest(**cast(dict[str, Any], result.value))

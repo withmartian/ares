@@ -2,6 +2,7 @@
 
 from typing import cast
 
+from linguafranca import types as lft
 import pytest
 
 from ares.llms import open_responses
@@ -58,7 +59,7 @@ async def test_mock_llm_client_configured_responses():
 async def test_mock_llm_client_response_handler():
     """Test that mock LLM client uses custom response handler."""
 
-    def handler(req: open_responses.Request) -> str:
+    def handler(req: lft.OpenResponsesRequest) -> str:
         # Echo back the user's message
         user_msg = open_responses.message_text(open_responses.message_items(req)[-1])
         return f"You said: {user_msg}"
@@ -115,7 +116,7 @@ async def test_mock_llm_client_get_request_messages():
 
     messages = client.get_request_messages()
     assert len(messages) == 1
-    assert open_responses.message_text(cast(open_responses.InputItemMessage, messages[0])) == "Hello"
+    assert open_responses.message_text(cast(lft.InputItemMessage, messages[0])) == "Hello"
 
 
 @pytest.mark.asyncio

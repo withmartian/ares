@@ -5,6 +5,7 @@ import logging
 import threading
 
 import httpx
+from linguafranca import types as lft
 import openai
 import openai.types.chat.chat_completion
 import tenacity
@@ -46,7 +47,7 @@ def _get_llm_client(base_url: str, api_key: str) -> openai.AsyncClient:
     before_sleep=tenacity.before_sleep_log(_LOGGER, logging.INFO),
 )
 async def _query_llm_with_retry(
-    llm_client: openai.AsyncClient, req: open_responses.Request
+    llm_client: openai.AsyncClient, req: lft.OpenResponsesRequest
 ) -> openai.types.chat.chat_completion.ChatCompletion:
     response = await llm_client.chat.completions.create(**open_responses.to_chat_completions_kwargs(req))
     return response
@@ -58,7 +59,7 @@ class ChatCompletionCompatibleLLMClient(llm_clients.LLMClient):
     base_url: str = config.CONFIG.chat_completion_api_base_url
     api_key: str = config.CONFIG.chat_completion_api_key
 
-    async def __call__(self, request: open_responses.Request) -> response.LLMResponse:
+    async def __call__(self, request: lft.OpenResponsesRequest) -> response.LLMResponse:
         _LOGGER.debug("[%d] Requesting LLM.", id(self))
 
         request = open_responses.with_model(request, self.model)

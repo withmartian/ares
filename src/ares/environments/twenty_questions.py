@@ -11,6 +11,7 @@ from types import TracebackType
 from typing import Self
 
 import frozendict
+from linguafranca import types as lft
 
 from ares.environments import base
 from ares.experiment_tracking import stat_tracker
@@ -168,7 +169,7 @@ DEFAULT_OBJECT_LIST = tuple(obj for objects in DEFAULT_OBJECT_DICT.values() for 
 SIMPLE_OBJECT_LIST = ("Football", "Dog", "Banana", "Truck", "Pants", "Computer", "Piano", "Chair", "Pen", "Scissors")
 
 
-class TwentyQuestionsEnvironment(base.Environment[response.LLMResponse, open_responses.Request, float, float]):
+class TwentyQuestionsEnvironment(base.Environment[response.LLMResponse, lft.OpenResponsesRequest, float, float]):
     """Environment for twenty questions game using an LLM-based oracle."""
 
     def __init__(
@@ -209,7 +210,7 @@ class TwentyQuestionsEnvironment(base.Environment[response.LLMResponse, open_res
         self._step_count = 0
         self._requires_reset = False
 
-    async def reset(self) -> base.TimeStep[open_responses.Request, float, float]:
+    async def reset(self) -> base.TimeStep[lft.OpenResponsesRequest, float, float]:
         """Start a new episode by selecting a random object."""
         reset_start_time = time.time()
         self._assert_active()
@@ -242,7 +243,7 @@ class TwentyQuestionsEnvironment(base.Environment[response.LLMResponse, open_res
 
         return base.TimeStep(step_type="FIRST", reward=None, discount=None, observation=observation)
 
-    async def step(self, action: response.LLMResponse) -> base.TimeStep[open_responses.Request, float, float]:
+    async def step(self, action: response.LLMResponse) -> base.TimeStep[lft.OpenResponsesRequest, float, float]:
         """Process agent's question and get oracle's answer."""
         step_start_time = time.time()
         self._assert_active()
