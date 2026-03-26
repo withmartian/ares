@@ -84,6 +84,13 @@ def _render_value_to_text(value: object) -> str:
 
 
 def _render_request_to_chat_messages(request: open_responses.Request) -> list[dict[str, str]]:
+    """Convert an Open Responses request to simple ``{role, content}`` chat dicts.
+
+    We use a custom renderer instead of ``open_responses.to_chat_messages()`` because
+    local model tokenizers (via ``apply_chat_template``) generally don't handle OpenAI-
+    format ``tool_calls`` arrays or ``role="tool"`` messages.  This function flattens
+    tool interactions into plain user/assistant text that any chat template can process.
+    """
     payload = open_responses.request_to_jsonable(request)
 
     dropped_fields = sorted(

@@ -8,6 +8,7 @@ import torch
 import transformer_lens
 
 from ares import llms
+from ares.contrib import transformers_client
 from ares.llms import open_responses
 
 
@@ -72,7 +73,11 @@ class HookedTransformerLLMClient:
         """
         max_output_tokens = max_output_tokens or request.max_output_tokens or self.max_new_tokens
 
-        messages_list = open_responses.to_chat_messages(request, strict=True)
+        # Use the custom renderer instead of open_responses.to_chat_messages() because
+        # local model tokenizers (via apply_chat_template) generally don't handle OpenAI-
+        # format tool_calls arrays or role="tool" messages.  The custom renderer flattens
+        # tool interactions into plain user/assistant text that any chat template can process.
+        messages_list = transformers_client._render_request_to_chat_messages(request)
 
         # Tokenize input
         # TODO: Need to support various truncation methods

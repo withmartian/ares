@@ -99,13 +99,25 @@ def to_external(request: legacy_request.LLMRequest, *, strict: bool = True) -> d
 
     payload = cast(dict[str, Any], result.value)
     payload.pop("model", None)
+
+    # --- Claude-specific overrides that linguafranca does not handle ---
+    # linguafranca converts the format but does not apply Claude's semantic quirks.
+
+    # linguafranca sets max_tokens to its own default (32768); ARES defaults to 1024.
     payload.pop("service_tier", None)
     if request.max_output_tokens is None:
         payload["max_tokens"] = 1024
+
+    # ARES stores temperature in OpenAI range (0-2); Claude expects (0-1).
+    # linguafranca passes the value through unchanged, so we scale here.
     if request.temperature is not None:
         payload["temperature"] = min(request.temperature / 2.0, 1.0)
+
+    # Claude requires top_k as a top-level parameter (not supported by linguafranca).
     if request.top_k is not None:
         payload["top_k"] = request.top_k
+
+    # Claude tools require explicit type: "custom"; linguafranca omits this.
     if request.tools:
         payload["tools"] = [
             {
@@ -116,6 +128,8 @@ def to_external(request: legacy_request.LLMRequest, *, strict: bool = True) -> d
             }
             for tool in request.tools
         ]
+
+    # Pass through fields that linguafranca drops or doesn't map for Anthropic.
     if request.metadata:
         payload["metadata"] = request.metadata
     if request.stop_sequences:

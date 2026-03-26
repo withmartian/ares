@@ -643,6 +643,10 @@ def to_chat_completions_kwargs(request: Request, *, model: str | None = None, st
     )
     handle_conversion_warnings(result.warnings, strict=strict, context="Open Responses -> Chat Completions")
     payload = cast(dict[str, Any], result.value)
+    # Guard against the MODEL_STUB leaking into API calls.
+    if payload.get("model") == MODEL_STUB:
+        _LOGGER.warning("MODEL_STUB is still set on request; stripping from Chat Completions payload.")
+        payload.pop("model", None)
     return normalize_chat_completions_payload(payload)
 
 
@@ -650,6 +654,11 @@ def to_chat_messages(request: Request, *, model: str | None = None, strict: bool
     kwargs = to_chat_completions_kwargs(request, model=model, strict=strict)
     return cast(list[dict[str, Any]], kwargs["messages"])
 
+
+# NOTE: The following helpers are intentionally excluded from __all__ because they are
+# internal plumbing used only by the converter modules:
+#   extract_text_content, handle_conversion_warnings, normalize_chat_completions_payload,
+#   to_jsonable, validate_external_fields
 
 __all__ = [
     "MODEL_STUB",
@@ -665,24 +674,19 @@ __all__ = [
     "ToolChoice",
     "assistant_message",
     "ensure_request",
-    "extract_text_content",
     "from_legacy_request",
     "function_call",
     "function_call_output",
     "function_tool",
-    "handle_conversion_warnings",
     "input_items",
     "make_request",
     "message_items",
     "message_text",
-    "normalize_chat_completions_payload",
     "request_to_jsonable",
     "specific_tool_choice",
     "to_chat_completions_kwargs",
     "to_chat_messages",
-    "to_jsonable",
     "to_legacy_request",
     "user_message",
-    "validate_external_fields",
     "with_model",
 ]
