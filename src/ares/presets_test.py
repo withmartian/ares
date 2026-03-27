@@ -24,13 +24,8 @@ async def test_make_twenty_questions_preset_uses_open_responses_observations():
             initial_observation = open_responses.ensure_request(ts.observation)
             assert open_responses.request_to_jsonable(initial_observation)["input"][0]["role"] == "user"
 
-            ts = await env.step(
-                response.LLMResponse(
-                    data=[response.TextData(content="Is it Basketball?")],
-                    cost=0.0,
-                    usage=response.Usage(prompt_tokens=1, generated_tokens=1),
-                )
-            )
+            lf_response = response.make_response("Is it Basketball?", input_tokens=1, output_tokens=1)
+            ts = await env.step(response.InferenceResult(response=lf_response, cost=0.0))
 
             assert ts.last()
             assert ts.reward == 0.0

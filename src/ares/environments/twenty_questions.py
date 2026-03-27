@@ -169,7 +169,7 @@ DEFAULT_OBJECT_LIST = tuple(obj for objects in DEFAULT_OBJECT_DICT.values() for 
 SIMPLE_OBJECT_LIST = ("Football", "Dog", "Banana", "Truck", "Pants", "Computer", "Piano", "Chair", "Pen", "Scissors")
 
 
-class TwentyQuestionsEnvironment(base.Environment[response.LLMResponse, lft.OpenResponsesRequest, float, float]):
+class TwentyQuestionsEnvironment(base.Environment[response.InferenceResult, lft.OpenResponsesRequest, float, float]):
     """Environment for twenty questions game using an LLM-based oracle."""
 
     def __init__(
@@ -243,7 +243,7 @@ class TwentyQuestionsEnvironment(base.Environment[response.LLMResponse, lft.Open
 
         return base.TimeStep(step_type="FIRST", reward=None, discount=None, observation=observation)
 
-    async def step(self, action: response.LLMResponse) -> base.TimeStep[lft.OpenResponsesRequest, float, float]:
+    async def step(self, action: response.InferenceResult) -> base.TimeStep[lft.OpenResponsesRequest, float, float]:
         """Process agent's question and get oracle's answer."""
         step_start_time = time.time()
         self._assert_active()
@@ -346,18 +346,16 @@ class TwentyQuestionsEnvironment(base.Environment[response.LLMResponse, lft.Open
         with self._tracker.timeit(f"{self._prefix}/oracle_call"):
             oracle_response = await self._oracle_client(oracle_request)
 
-        # Extract answer from response - LLMResponse has data: list[TextData]
-        answer_text = oracle_response.data[0].content.strip()
+        # Extract answer from response
+        answer_text = response.extract_text_content(oracle_response.response).strip()
 
         _LOGGER.debug("[%d] Raw oracle response: %s", id(self), answer_text)
 
         return answer_text
 
-    def _extract_question_from_response(self, action: response.LLMResponse) -> str:
+    def _extract_question_from_response(self, action: response.InferenceResult) -> str:
         """Extract the question text from the agent's response."""
-        # Get the text content from the first data element
-        question = action.data[0].content if action.data else ""
-        return question.strip()
+        return response.extract_text_content(action.response).strip()
 
     def _check_if_correct_guess(self, question: str) -> bool:
         """Check if the question is a correct guess of the hidden object."""

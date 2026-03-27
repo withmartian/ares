@@ -55,7 +55,7 @@ def list_harbor_datasets() -> tuple[harbor_registry.DatasetSpec, ...]:
     return tuple(client.get_datasets())
 
 
-class CodeEnvironment(base.Environment[response.LLMResponse, lft.OpenResponsesRequest | None, float, float]):
+class CodeEnvironment(base.Environment[response.InferenceResult, lft.OpenResponsesRequest | None, float, float]):
     """Environment for code agent datasets that computes reward at the end of an episode."""
 
     def __init__(
@@ -79,7 +79,7 @@ class CodeEnvironment(base.Environment[response.LLMResponse, lft.OpenResponsesRe
         # we can return LLM requests in the reset and step methods.
         # We should never allow a user to pass a different LLM client.
         self._llm_client = queue_mediated_client.QueueMediatedLLMClient(q=asyncio.Queue())
-        self._llm_req_future: asyncio.Future[response.LLMResponse] | None = None
+        self._llm_req_future: asyncio.Future[response.InferenceResult] | None = None
 
         # State.
         self._is_active = False
@@ -126,7 +126,9 @@ class CodeEnvironment(base.Environment[response.LLMResponse, lft.OpenResponsesRe
         self._tracker.scalar(f"{self._prefix}/reset", reset_end_time - reset_start_time)
         return result
 
-    async def step(self, action: response.LLMResponse) -> base.TimeStep[lft.OpenResponsesRequest | None, float, float]:
+    async def step(
+        self, action: response.InferenceResult
+    ) -> base.TimeStep[lft.OpenResponsesRequest | None, float, float]:
         step_start_time = time.time()
         self._assert_active()
 

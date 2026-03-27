@@ -62,14 +62,14 @@ class HookedTransformerLLMClient:
         self,
         request: lft.OpenResponsesRequest,
         max_output_tokens: int | None = None,
-    ) -> llms.LLMResponse:
+    ) -> llms.InferenceResult:
         """Generate a completion using the HookedTransformer.
 
         Args:
             request: Open Responses request containing the model input.
 
         Returns:
-            LLM response with chat completion and cost information.
+            Inference result with response and cost information.
         """
         max_output_tokens = max_output_tokens or request.max_output_tokens or self.max_new_tokens
 
@@ -123,11 +123,9 @@ class HookedTransformerLLMClient:
         output_text = self.model.to_string(output_ids)
         assert isinstance(output_text, str)  # typing
 
-        return llms.LLMResponse(
-            data=[llms.TextData(content=output_text)],
-            cost=0.0,  # Local inference has no cost
-            usage=llms.Usage(
-                prompt_tokens=num_input_tokens,
-                generated_tokens=num_output_tokens,
-            ),
+        lf_response = llms.make_response(
+            output_text,
+            input_tokens=num_input_tokens,
+            output_tokens=num_output_tokens,
         )
+        return llms.InferenceResult(response=lf_response, cost=0.0)

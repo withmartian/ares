@@ -72,7 +72,7 @@ class TaskInfo:
 class TrackedEnvironment[RewardType: base.Scalar, DiscountType: base.Scalar]:
     """Wrapper around an ARES LLM environment that automatically tracks state and reports to dashboard.
 
-    This wrapper is specifically designed for environments that use LLMResponse as actions
+    This wrapper is specifically designed for environments that use InferenceResult as actions
     and Open Responses requests as observations. It automatically tracks LLM costs and step progress.
 
     This wrapper intercepts reset() and step() calls to automatically update the dashboard
@@ -90,14 +90,14 @@ class TrackedEnvironment[RewardType: base.Scalar, DiscountType: base.Scalar]:
 
     def __init__(
         self,
-        env: base.Environment[response.LLMResponse, lft.OpenResponsesRequest, RewardType, DiscountType],
+        env: base.Environment[response.InferenceResult, lft.OpenResponsesRequest, RewardType, DiscountType],
         task_id: int,
         dashboard: "EvaluationDashboard",
     ):
         """Initialize the tracked environment wrapper.
 
         Args:
-            env: The environment to wrap (must use Open Responses requests and LLMResponse).
+            env: The environment to wrap (must use Open Responses requests and InferenceResult).
             task_id: The task ID for dashboard tracking.
             dashboard: The dashboard to report to.
         """
@@ -117,7 +117,7 @@ class TrackedEnvironment[RewardType: base.Scalar, DiscountType: base.Scalar]:
         return ts
 
     async def step(
-        self, action: response.LLMResponse
+        self, action: response.InferenceResult
     ) -> base.TimeStep[lft.OpenResponsesRequest, RewardType, DiscountType]:
         """Step the environment and update dashboard."""
         self._step_count += 1
@@ -699,16 +699,16 @@ class EvaluationDashboard(app.App):
     def wrap[RewardType: base.Scalar, DiscountType: base.Scalar](
         self,
         task_id: int,
-        env: base.Environment[response.LLMResponse, lft.OpenResponsesRequest, RewardType, DiscountType],
+        env: base.Environment[response.InferenceResult, lft.OpenResponsesRequest, RewardType, DiscountType],
     ) -> TrackedEnvironment[RewardType, DiscountType]:
         """Wrap an ARES LLM environment with automatic dashboard tracking.
 
         This method is specifically for environments that use Open Responses requests as observations
-        and LLMResponse as actions (all ARES code agent environments).
+        and InferenceResult as actions (all ARES code agent environments).
 
         Args:
             task_id: The task ID for this environment.
-            env: The environment to wrap (must use Open Responses requests and LLMResponse).
+            env: The environment to wrap (must use Open Responses requests and InferenceResult).
 
         Returns:
             A tracked environment that automatically updates the dashboard with

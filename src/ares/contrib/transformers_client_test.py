@@ -255,7 +255,7 @@ class TestTransformersLLMClientLifecycle:
                 # Task should now be cached
                 assert "_inference_task" in client.__dict__
                 assert isinstance(client._inference_task, asyncio.Task)
-                assert isinstance(resp, response_lib.LLMResponse)
+                assert isinstance(resp, response_lib.InferenceResult)
 
 
 class TestTransformersLLMClientBatching:
@@ -279,12 +279,12 @@ class TestTransformersLLMClientBatching:
 
                 resp = await client(req)
 
-                assert isinstance(resp, response_lib.LLMResponse)
-                assert len(resp.data) == 1
-                assert resp.data[0].content == "Response text"
+                assert isinstance(resp, response_lib.InferenceResult)
+                assert response_lib.extract_text_content(resp.response) == "Response text"
                 assert resp.cost == 0.0
-                assert resp.usage.prompt_tokens > 0
-                assert resp.usage.generated_tokens > 0
+                assert resp.usage is not None
+                assert resp.usage.input_tokens > 0
+                assert resp.usage.output_tokens > 0
 
     @pytest.mark.asyncio
     async def test_batch_multiple_requests(self):
@@ -320,8 +320,8 @@ class TestTransformersLLMClientBatching:
 
                 assert len(responses) == 3
                 for i, resp in enumerate(responses):
-                    assert isinstance(resp, response_lib.LLMResponse)
-                    assert resp.data[0].content == f"Response {i + 1}"
+                    assert isinstance(resp, response_lib.InferenceResult)
+                    assert response_lib.extract_text_content(resp.response) == f"Response {i + 1}"
 
                 # Verify generate was called once with batch
                 mock_model.generate.assert_called_once()
@@ -413,9 +413,9 @@ async def test_integration_with_minimal_model():
 
             resp = await client(req)
 
-            assert isinstance(resp, response_lib.LLMResponse)
-            assert len(resp.data) == 1
-            assert isinstance(resp.data[0].content, str)
+            assert isinstance(resp, response_lib.InferenceResult)
+            assert isinstance(response_lib.extract_text_content(resp.response), str)
             assert resp.cost == 0.0
-            assert resp.usage.prompt_tokens > 0
-            assert resp.usage.generated_tokens > 0
+            assert resp.usage is not None
+            assert resp.usage.input_tokens > 0
+            assert resp.usage.output_tokens > 0

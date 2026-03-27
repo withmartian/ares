@@ -529,10 +529,8 @@ class Terminus2Agent(code_agent_base.CodeAgent):
             try:
                 # Query the LLM
                 try:
-                    response = await self._query_llm()
-                    assert len(response.data) == 1
-                    assistant_message = response.data[0].content
-                    assert assistant_message is not None
+                    llm_response = await self._query_llm()
+                    assistant_message = response.extract_text_content(llm_response.response)
 
                     self._add_message("assistant", assistant_message)
 
@@ -652,7 +650,7 @@ class Terminus2Agent(code_agent_base.CodeAgent):
             self._system_prompt or ""
         )
 
-    async def _query_llm(self) -> response.LLMResponse:
+    async def _query_llm(self) -> response.InferenceResult:
         """Query the LLM with the current conversation history.
 
         Returns:
@@ -880,24 +878,22 @@ class Terminus2Agent(code_agent_base.CodeAgent):
         else:
             self._messages.append(open_responses.assistant_message(sanitized))
 
-    def _unwrap_single_response(self, llm_response: response.LLMResponse) -> str:
-        """Unwrap a single-item LLMResponse and update metrics.
+    def _unwrap_single_response(self, llm_response: response.InferenceResult) -> str:
+        """Unwrap an InferenceResult text content and update metrics.
 
         Args:
-            llm_response: The LLM response with a single data item.
+            llm_response: The LLM response.
 
         Returns:
             The content string from the response.
         """
-        assert len(llm_response.data) == 1
-        content = llm_response.data[0].content
-        assert content is not None
+        content = response.extract_text_content(llm_response.response)
 
         # Track subagent metrics
         usage = llm_response.usage
         if usage:
-            self._subagent_metrics.total_prompt_tokens += usage.prompt_tokens or 0
-            self._subagent_metrics.total_completion_tokens += usage.generated_tokens or 0
+            self._subagent_metrics.total_prompt_tokens += usage.input_tokens or 0
+            self._subagent_metrics.total_completion_tokens += usage.output_tokens or 0
 
         return content
 

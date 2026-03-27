@@ -59,7 +59,7 @@ class ChatCompletionCompatibleLLMClient(llm_clients.LLMClient):
     base_url: str = config.CONFIG.chat_completion_api_base_url
     api_key: str = config.CONFIG.chat_completion_api_key
 
-    async def __call__(self, request: lft.OpenResponsesRequest) -> response.LLMResponse:
+    async def __call__(self, request: lft.OpenResponsesRequest) -> response.InferenceResult:
         _LOGGER.debug("[%d] Requesting LLM.", id(self))
 
         request = open_responses.with_model(request, self.model)
@@ -75,8 +75,11 @@ class ChatCompletionCompatibleLLMClient(llm_clients.LLMClient):
         cost = float(cost)
 
         content = resp.choices[0].message.content or ""
-        usage = response.Usage(
-            prompt_tokens=resp.usage.prompt_tokens if resp.usage else 0,
-            generated_tokens=resp.usage.completion_tokens if resp.usage else 0,
+        lf_response = response.make_response(
+            content,
+            model=self.model,
+            input_tokens=resp.usage.prompt_tokens if resp.usage else 0,
+            output_tokens=resp.usage.completion_tokens if resp.usage else 0,
+            response_id=resp.id,
         )
-        return response.LLMResponse(data=[response.TextData(content=content)], cost=cost, usage=usage)
+        return response.InferenceResult(response=lf_response, cost=cost)

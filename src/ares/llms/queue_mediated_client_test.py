@@ -17,16 +17,11 @@ async def test_queue_mediated_client_roundtrips_canonical_requests():
     async def answer_request() -> None:
         queued = await client.q.get()
         assert queued.value == request
-        queued.future.set_result(
-            response.LLMResponse(
-                data=[response.TextData(content="Hi")],
-                cost=0.0,
-                usage=response.Usage(prompt_tokens=1, generated_tokens=1),
-            )
-        )
+        lf_response = response.make_response("Hi", input_tokens=1, output_tokens=1)
+        queued.future.set_result(response.InferenceResult(response=lf_response, cost=0.0))
 
     answer_task = asyncio.create_task(answer_request())
     llm_response = await client(request)
     await answer_task
 
-    assert llm_response.data[0].content == "Hi"
+    assert response.extract_text_content(llm_response.response) == "Hi"

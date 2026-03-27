@@ -6,6 +6,7 @@ from linguafranca import types as lft
 import pytest
 
 from ares.llms import open_responses
+from ares.llms import response
 from ares.testing import mock_llm
 
 
@@ -31,10 +32,10 @@ async def test_mock_llm_client_default_response():
     client = mock_llm.MockLLMClient()
 
     req = open_responses.make_request([open_responses.user_message("test")])
-    response = await client(req)
+    llm_response = await client(req)
 
-    assert response.data[0].content == "Mock LLM response"
-    assert response.cost == 0.0
+    assert response.extract_text_content(llm_response.response) == "Mock LLM response"
+    assert llm_response.cost == 0.0
 
 
 @pytest.mark.asyncio
@@ -49,10 +50,10 @@ async def test_mock_llm_client_configured_responses():
     response3 = await client(req)
     response4 = await client(req)  # Should cycle back to first
 
-    assert response1.data[0].content == "First"
-    assert response2.data[0].content == "Second"
-    assert response3.data[0].content == "Third"
-    assert response4.data[0].content == "First"
+    assert response.extract_text_content(response1.response) == "First"
+    assert response.extract_text_content(response2.response) == "Second"
+    assert response.extract_text_content(response3.response) == "Third"
+    assert response.extract_text_content(response4.response) == "First"
 
 
 @pytest.mark.asyncio
@@ -67,9 +68,9 @@ async def test_mock_llm_client_response_handler():
     client = mock_llm.MockLLMClient(response_handler=handler)
 
     req = open_responses.make_request([open_responses.user_message("Hello AI")])
-    response = await client(req)
+    llm_response = await client(req)
 
-    assert response.data[0].content == "You said: Hello AI"
+    assert response.extract_text_content(llm_response.response) == "You said: Hello AI"
 
 
 @pytest.mark.asyncio
@@ -163,19 +164,18 @@ async def test_mock_llm_response_structure():
     client = mock_llm.MockLLMClient()
 
     req = open_responses.make_request([open_responses.user_message("test")])
-    response = await client(req)
+    llm_response = await client(req)
 
     # Check response structure
-    assert hasattr(response, "data")
-    assert hasattr(response, "cost")
-    assert hasattr(response, "usage")
+    assert hasattr(llm_response, "response")
+    assert hasattr(llm_response, "cost")
+    assert hasattr(llm_response, "usage")
 
-    # Check data structure
-    assert len(response.data) == 1
-    assert hasattr(response.data[0], "content")
-    assert response.data[0].content == "Mock LLM response"
+    # Check text content extraction
+    assert response.extract_text_content(llm_response.response) == "Mock LLM response"
 
     # Check usage structure
-    assert response.usage.prompt_tokens == 100
-    assert response.usage.generated_tokens == 50
-    assert response.usage.total_tokens == 150
+    assert llm_response.usage is not None
+    assert llm_response.usage.input_tokens == 100
+    assert llm_response.usage.output_tokens == 50
+    assert llm_response.usage.total_tokens == 150

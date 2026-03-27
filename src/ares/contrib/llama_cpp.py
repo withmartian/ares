@@ -75,14 +75,14 @@ class LlamaCppLLMClient(llm_clients.LLMClient):
             n_ctx=self.n_ctx,
         )
 
-    async def __call__(self, req: lft.OpenResponsesRequest) -> response.LLMResponse:
+    async def __call__(self, req: lft.OpenResponsesRequest) -> response.InferenceResult:
         """Generate a response using llama.cpp.
 
         Args:
             request: The Open Responses request to run.
 
         Returns:
-            LLMResponse with the generated completion
+            InferenceResult with the generated completion
         """
         _LOGGER.debug("[%d] Requesting LLM.", id(self))
 
@@ -99,11 +99,14 @@ class LlamaCppLLMClient(llm_clients.LLMClient):
         _LOGGER.debug("[%d] LLM response received.", id(self))
 
         content = chat_completion.choices[0].message.content or ""
-        usage = response.Usage(
-            prompt_tokens=chat_completion.usage.prompt_tokens if chat_completion.usage else 0,
-            generated_tokens=chat_completion.usage.completion_tokens if chat_completion.usage else 0,
+        lf_response = response.make_response(
+            content,
+            model=self.model_name,
+            input_tokens=chat_completion.usage.prompt_tokens if chat_completion.usage else 0,
+            output_tokens=chat_completion.usage.completion_tokens if chat_completion.usage else 0,
+            response_id=chat_completion.id,
         )
-        return response.LLMResponse(data=[response.TextData(content=content)], cost=0.0, usage=usage)
+        return response.InferenceResult(response=lf_response, cost=0.0)
 
 
 create_qwen2_0_5b_instruct_llama_cpp_client = functools.partial(

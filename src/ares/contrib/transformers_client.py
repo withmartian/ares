@@ -236,7 +236,7 @@ class TransformersLLMClient(llm_clients.LLMClient):
     temperature: float = 1.0
 
     @functools.cached_property
-    def _request_queue(self) -> asyncio.Queue[ValueAndFuture[lft.OpenResponsesRequest, response.LLMResponse]]:
+    def _request_queue(self) -> asyncio.Queue[ValueAndFuture[lft.OpenResponsesRequest, response.InferenceResult]]:
         """Lazy-initialized queue for batching requests."""
         return asyncio.Queue()
 
@@ -288,7 +288,7 @@ class TransformersLLMClient(llm_clients.LLMClient):
             tokenizer.pad_token = tokenizer.eos_token
         return tokenizer
 
-    async def __call__(self, req: lft.OpenResponsesRequest) -> response.LLMResponse:
+    async def __call__(self, req: lft.OpenResponsesRequest) -> response.InferenceResult:
         """Queue request and wait for batched inference.
 
         The background inference task is started automatically on first call.
@@ -297,10 +297,10 @@ class TransformersLLMClient(llm_clients.LLMClient):
             req: The Open Responses request to run.
 
         Returns:
-            LLMResponse with the generated completion
+            InferenceResult with the generated completion
         """
         _ = self._inference_task  # Trigger lazy initialization
-        future: asyncio.Future[response.LLMResponse] = asyncio.Future()
+        future: asyncio.Future[response.InferenceResult] = asyncio.Future()
         await self._request_queue.put(ValueAndFuture(value=req, future=future))
         return await future
 
@@ -330,7 +330,7 @@ class TransformersLLMClient(llm_clients.LLMClient):
         and timer, allowing truly independent batching per parameter set.
         """
         while True:
-            collected_items: list[ValueAndFuture[lft.OpenResponsesRequest, response.LLMResponse]] = []
+            collected_items: list[ValueAndFuture[lft.OpenResponsesRequest, response.InferenceResult]] = []
             try:
                 first_item = await self._request_queue.get()
                 collected_items.append(first_item)
@@ -345,7 +345,7 @@ class TransformersLLMClient(llm_clients.LLMClient):
 
                 groups: dict[
                     tuple[float, int, float | None],
-                    list[ValueAndFuture[lft.OpenResponsesRequest, response.LLMResponse]],
+                    list[ValueAndFuture[lft.OpenResponsesRequest, response.InferenceResult]],
                 ] = collections.defaultdict(list)
                 groups[first_params].append(first_item)
 
@@ -385,7 +385,7 @@ class TransformersLLMClient(llm_clients.LLMClient):
 
     async def _process_batch(
         self,
-        batch: list[ValueAndFuture[lft.OpenResponsesRequest, response.LLMResponse]],
+        batch: list[ValueAndFuture[lft.OpenResponsesRequest, response.InferenceResult]],
         params: tuple[float, int, float | None],
     ) -> None:
         """Process a batch of requests with homogeneous parameters.
@@ -424,7 +424,7 @@ class TransformersLLMClient(llm_clients.LLMClient):
         temperature: float,
         max_new_tokens: int,
         top_p: float | None,
-    ) -> list[response.LLMResponse]:
+    ) -> list[response.InferenceResult]:
         """Generate responses for a batch of chat conversations.
 
         Args:
@@ -434,7 +434,7 @@ class TransformersLLMClient(llm_clients.LLMClient):
             top_p: Optional top-p sampling parameter
 
         Returns:
-            List of LLMResponses
+            List of InferenceResults
         """
         input_texts: list[str] = []
         for conv in chat_conversations:
@@ -480,15 +480,12 @@ class TransformersLLMClient(llm_clients.LLMClient):
             prompt_tokens = inputs["input_ids"][i].ne(self._tokenizer.pad_token_id).sum().item()  # type: ignore[union-attr]
             generated_tokens = generated_ids[i].ne(self._tokenizer.pad_token_id).sum().item()  # type: ignore[arg-type]
 
-            responses.append(
-                response.LLMResponse(
-                    data=[response.TextData(content=text)],
-                    cost=0.0,  # Local inference has no API cost
-                    usage=response.Usage(
-                        prompt_tokens=prompt_tokens,
-                        generated_tokens=generated_tokens,
-                    ),
-                )
+            lf_response = response.make_response(
+                text,
+                model=self.model_name,
+                input_tokens=prompt_tokens,
+                output_tokens=generated_tokens,
             )
+            responses.append(response.InferenceResult(response=lf_response, cost=0.0))
 
         return responses

@@ -5,6 +5,8 @@ from collections.abc import Awaitable
 import logging
 from typing import Any
 
+from linguafranca import types as lft
+
 import ares
 from ares import llms
 from ares.llms import open_responses
@@ -15,8 +17,8 @@ _LOGGER = logging.getLogger(__name__)
 
 def print_step(
     step_count: int,
-    observation: open_responses.Request | None,
-    action: llms.LLMResponse,
+    observation: lft.OpenResponsesRequest | None,
+    action: llms.InferenceResult,
 ) -> None:
     """Print a step in the RL loop.
 
@@ -40,8 +42,8 @@ def print_step(
             observation_preview += "..."
         print(f"Observation (from environment): {observation_preview}")
 
-    action_content = action.data[0].content
-    action_preview = str(action_content)[:200]
+    action_content = llms.extract_text_content(action.response)
+    action_preview = action_content[:200]
     if len(action_content) > 200:
         action_preview += "..."
     print(f"Action (from LLM): {action_preview}")
