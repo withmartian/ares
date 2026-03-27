@@ -129,12 +129,7 @@ class MiniSWECodeAgent(code_agent_base.CodeAgent):
         # Somewhat frustratingly, minisweagent uses kwargs.
         # We handle this by inspecting whether an argument will be accepted by the agent config.
         agent_config_dict = self._config.get("agent", {})
-        agent_config = default_agent.AgentConfig(
-            system_template=agent_config_dict["system_template"],
-            instance_template=agent_config_dict["instance_template"],
-            step_limit=agent_config_dict.get("step_limit", 0),
-            cost_limit=agent_config_dict.get("cost_limit", 0.0),
-        )
+        agent_config = default_agent.AgentConfig()
         for k, v in agent_config_dict.items():
             if hasattr(default_agent.AgentConfig, k):
                 setattr(agent_config, k, v)

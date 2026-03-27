@@ -73,20 +73,21 @@ def make_response(
     Returns:
         A fully-formed lft.OpenResponsesResponse.
     """
+    output: list[lft.OutputItem] = [
+        lft.OutputItemMessage(
+            content=[lft.ContentPartOutputText(text=content, type="output_text", annotations=None, logprobs=None)],
+            id=f"msg_{uuid.uuid4().hex}",
+            role=lft.MessageRole.assistant,
+            status=lft.ItemStatus.completed,
+            type="message",
+        )
+    ]
     return lft.OpenResponsesResponse(
         created_at=int(time.time()),
         id=response_id or f"resp_{uuid.uuid4().hex}",
         model=model,
         object="response",
-        output=[
-            lft.OutputItemMessage(
-                content=[lft.ContentPartOutputText(text=content, type="output_text", annotations=None, logprobs=None)],
-                id=f"msg_{uuid.uuid4().hex}",
-                role=lft.MessageRole.assistant,
-                status=lft.ItemStatus.completed,
-                type="message",
-            )
-        ],
+        output=output,
         status=lft.ResponseStatus.completed,
         usage=lft.Usage(
             input_tokens=input_tokens,
