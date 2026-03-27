@@ -5,11 +5,10 @@ from collections.abc import Awaitable
 import logging
 from typing import Any
 
-from linguafranca import types as lft
-
 import ares
 from ares import llms
 from ares.llms import open_responses
+from linguafranca import types as lft
 import tqdm
 
 _LOGGER = logging.getLogger(__name__)

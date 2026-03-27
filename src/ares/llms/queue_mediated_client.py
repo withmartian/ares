@@ -41,9 +41,9 @@ class QueueMediatedLLMClient(llm_clients.LLMClient):
             awaiting __call__ will block forever.
     """
 
-    q: asyncio.Queue[
-        async_utils.ValueAndFuture[lft.OpenResponsesRequest, response.InferenceResult]
-    ] = dataclasses.field(default_factory=asyncio.Queue)
+    q: asyncio.Queue[async_utils.ValueAndFuture[lft.OpenResponsesRequest, response.InferenceResult]] = (
+        dataclasses.field(default_factory=asyncio.Queue)
+    )
 
     async def __call__(self, req: lft.OpenResponsesRequest) -> response.InferenceResult:
         future = asyncio.Future[response.InferenceResult]()
