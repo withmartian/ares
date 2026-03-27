@@ -5,7 +5,6 @@ import time
 import uuid
 
 from linguafranca import types as lft
-from linguafranca.generated import open_responses_stream_event as orse
 
 
 @dataclasses.dataclass(frozen=True)
@@ -27,11 +26,11 @@ class InferenceResult:
 
 
 _TEXT_CONTENT_TYPES = (
-    orse.ContentPartInputText,
-    orse.ContentPartOutputText,
-    orse.ContentPartText,
-    orse.ContentPartSummaryText,
-    orse.ContentPartReasoningText,
+    lft.ContentPartInputText,
+    lft.ContentPartOutputText,
+    lft.ContentPartText,
+    lft.ContentPartSummaryText,
+    lft.ContentPartReasoningText,
 )
 
 
@@ -43,7 +42,7 @@ def extract_text_content(response: lft.OpenResponsesResponse) -> str:
     """
     text_parts: list[str] = []
     for item in response.output:
-        if not isinstance(item, orse.OutputItemMessage):
+        if not isinstance(item, lft.OutputItemMessage):
             continue
         for part in item.content:
             if isinstance(part, _TEXT_CONTENT_TYPES):
@@ -80,11 +79,11 @@ def make_response(
         model=model,
         object="response",
         output=[
-            orse.OutputItemMessage(
-                content=[orse.ContentPartOutputText(text=content, type="output_text", annotations=None, logprobs=None)],
+            lft.OutputItemMessage(
+                content=[lft.ContentPartOutputText(text=content, type="output_text", annotations=None, logprobs=None)],
                 id=f"msg_{uuid.uuid4().hex}",
-                role=orse.MessageRole.assistant,
-                status=orse.ItemStatus.completed,
+                role=lft.MessageRole.assistant,
+                status=lft.ItemStatus.completed,
                 type="message",
             )
         ],
