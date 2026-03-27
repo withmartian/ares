@@ -173,9 +173,9 @@ class Container(Protocol):
 #### 4. LLM Clients (`src/ares/llms/`)
 
 **Core Abstractions:**
-- `open_responses.Request` - Canonical Open Responses request dataclass used for observations and client inputs
-- `LLMResponse` - Dataclass with ChatCompletion and cost tracking
-- `LLMClient` Protocol - `async def __call__(request: open_responses.Request) -> LLMResponse`
+- `lft.OpenResponsesRequest` - Canonical Open Responses request (from linguafranca) used for observations and client inputs
+- `InferenceResult` - Dataclass wrapping `lft.OpenResponsesResponse` with cost tracking
+- `LLMClient` Protocol - `async def __call__(request: lft.OpenResponsesRequest) -> InferenceResult`
 
 **Key Pattern: Queue-Mediated LLM Client (`queue_mediated_client.py`):**
 

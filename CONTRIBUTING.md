@@ -113,7 +113,7 @@ from ares.llms import open_responses
 from ares.llms import response
 
 req = open_responses.make_request([open_responses.user_message("Hello")])
-resp = response.LLMResponse(data=[...], cost=0.0, usage=...)
+resp = response.InferenceResult(response=response.make_response("Hello!"), cost=0.0)
 
 # Avoid ❌
 from ares.llms import OpenResponsesRequest, TextData

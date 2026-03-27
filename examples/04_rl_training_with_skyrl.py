@@ -50,6 +50,7 @@ import ares
 from ares import llms
 from ares.llms import open_responses
 import hydra
+from linguafranca import types as lft
 import omegaconf
 import ray
 import skyrl_gym
@@ -92,7 +93,7 @@ class ARESSkyRLGymEnv(base_text_env.BaseTextEnv):
         self.preset_name = extras.get("preset_name", kwargs.get("preset_name"))
         if not self.preset_name:
             raise ValueError("preset_name must be provided in extras or kwargs")
-        self.env: ares.Environment[llms.LLMResponse, open_responses.Request, float, float] | None = None
+        self.env: ares.Environment[llms.InferenceResult, lft.OpenResponsesRequest, float, float] | None = None
 
     async def init(
         self, prompt: base_text_env.ConversationType
@@ -121,10 +122,9 @@ class ARESSkyRLGymEnv(base_text_env.BaseTextEnv):
         """
         assert self.env is not None
 
-        llm_resp = llms.LLMResponse(
-            data=[llms.TextData(content=action)],
+        llm_resp = llms.InferenceResult(
+            response=llms.make_response(action),
             cost=0.0,
-            usage=llms.Usage(prompt_tokens=-1, generated_tokens=-1),
         )
         ts = await self.env.step(llm_resp)
 

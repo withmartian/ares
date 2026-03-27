@@ -39,12 +39,14 @@ The core implementation is simple:
 
 .. code-block:: python
 
+    from linguafranca import types as lft
+
     @dataclass(frozen=True)
     class QueueMediatedLLMClient(LLMClient):
-        q: asyncio.Queue[ValueAndFuture[open_responses.Request, LLMResponse]]
+        q: asyncio.Queue[ValueAndFuture[lft.OpenResponsesRequest, InferenceResult]]
 
-        async def __call__(self, request: open_responses.Request) -> LLMResponse:
-            future = asyncio.Future[LLMResponse]()
+        async def __call__(self, request: lft.OpenResponsesRequest) -> InferenceResult:
+            future = asyncio.Future[InferenceResult]()
             await self.q.put(ValueAndFuture(value=request, future=future))
             return await future  # Blocks until env provides response
 
@@ -65,7 +67,7 @@ The environment side:
             self._llm_req_future = value_and_future.future
             return TimeStep(step_type="MID", observation=value_and_future.value, ...)
 
-    async def step(self, action: LLMResponse) -> TimeStep:
+    async def step(self, action: InferenceResult) -> TimeStep:
         # Unblock the code agent by providing response
         self._llm_req_future.set_result(action)
         return await self._get_time_step()
