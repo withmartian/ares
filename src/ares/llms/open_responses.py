@@ -11,24 +11,13 @@ from linguafranca import types as lft
 
 _LOGGER = logging.getLogger(__name__)
 
+# Placeholder model identifier used when the actual model isn't known at request creation time.
+# In ARES's RL loop, code agents create requests without knowing which model will handle them -
+# the model is determined later by the policy/LLM client. This stub is replaced via with_model()
+# or stripped with a warning if it leaks into API calls (see to_chat_completions_kwargs).
 MODEL_STUB = "__ARES_MODEL_UNSET__"
-
-
-def ensure_request(request: object) -> lft.OpenResponsesRequest:
-    """Validate and return an OpenResponsesRequest.
-
-    Args:
-        request: Object to validate.
-
-    Returns:
-        The validated request.
-
-    Raises:
-        TypeError: If request is not an OpenResponsesRequest.
-    """
-    if not isinstance(request, lft.OpenResponsesRequest):
-        raise TypeError(f"Expected OpenResponsesRequest, got {type(request).__name__}")
-    return request
+_JSON_VALUE = int | float | str | bool | None
+_JSONABLE = dict[str, "_JSONABLE"] | list["_JSONABLE"] | _JSON_VALUE
 
 
 def user_message(content: str) -> lft.InputItemMessage:
@@ -186,7 +175,6 @@ def with_model(request: lft.OpenResponsesRequest, model: str) -> lft.OpenRespons
     Returns:
         A new request with the updated model field.
     """
-    request = ensure_request(request)
     return dataclasses.replace(request, model=model)
 
 
@@ -200,7 +188,6 @@ def input_items(request: lft.OpenResponsesRequest) -> list[lft.InputItem]:
         List of input items. If the request input was a string, returns a single-element
         list containing a user message with that content.
     """
-    request = ensure_request(request)
     if isinstance(request.input, str):
         return [user_message(request.input)]
     return list(request.input)
@@ -276,7 +263,10 @@ def handle_conversion_warnings(
         _LOGGER.warning("%s warning for %s: %s", context, warning.field, warning.message)
 
 
-def to_jsonable(value: Any) -> Any:
+def to_jsonable(value: Any) -> _JSONABLE:
+    # TODO: Replace this with frfr.
+    # The issue is that OpenResponsesRequest has enum values, which frfr doesn't handle correctly yet.
+    # It won't, in general, either. So we should make sure OpenResposnesRequest enums are StrEnums where appropriate.
     if dataclasses.is_dataclass(value):
         return {field.name: to_jsonable(getattr(value, field.name)) for field in dataclasses.fields(value)}
     if isinstance(value, enum.Enum):
@@ -299,7 +289,6 @@ def request_to_jsonable(request: lft.OpenResponsesRequest) -> dict[str, Any]:
     Returns:
         A dictionary suitable for JSON serialization.
     """
-    request = ensure_request(request)
     return cast(dict[str, Any], to_jsonable(request))
 
 
@@ -356,7 +345,6 @@ def to_chat_completions_kwargs(
     Raises:
         ValueError: If strict=True and the conversion would lose information.
     """
-    request = ensure_request(request)
     request_with_model = with_model(request, model) if model is not None else request
     result = lf.convert_request_json(
         request_to_jsonable(request_with_model),
