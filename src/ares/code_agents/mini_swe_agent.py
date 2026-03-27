@@ -19,14 +19,15 @@ import re
 from typing import Literal, assert_never
 
 import jinja2
+from linguafranca import types as lft
 import yaml
 
 from ares.code_agents import code_agent_base
 from ares.containers import containers
 from ares.experiment_tracking import stat_tracker
 from ares.llms import llm_clients
-from ares.llms import request
-from ares.llms import response
+from ares.llms import open_responses
+from ares.llms import response as response_lib
 
 # Ensure that MSWEA doesn't log its startup message on import.
 os.environ["MSWEA_SILENT_STARTUP"] = "1"
@@ -142,14 +143,14 @@ class MiniSWECodeAgent(code_agent_base.CodeAgent):
         self._cost_limit = self._agent_config.get("cost_limit", 0.0)
 
         self._system_prompt = _render_system_template(self._agent_config["system_template"])
-        self._messages: list[request.Message] = []
+        self._messages: list[lft.InputItemMessage] = []
         _LOGGER.debug("[%d] Initialized MiniSWECodeAgent.", id(self))
 
     def _add_message(self, role: Literal["user", "assistant"], content: str) -> None:
         if role == "user":
-            self._messages.append(request.UserMessage(role="user", content=content))
+            self._messages.append(open_responses.user_message(content))
         elif role == "assistant":
-            self._messages.append(request.AssistantMessage(role="assistant", content=content))
+            self._messages.append(open_responses.assistant_message(content))
         else:
             assert_never(role)
 
@@ -195,7 +196,7 @@ class MiniSWECodeAgent(code_agent_base.CodeAgent):
         llm_response = await self.query()
         await self.execute_action(llm_response)
 
-    async def query(self) -> response.LLMResponse:
+    async def query(self) -> response_lib.InferenceResult:
         """Query the model and return the response."""
         # Check step limit before making LLM call
         if 0 < self._step_limit <= self._n_calls:
@@ -207,30 +208,28 @@ class MiniSWECodeAgent(code_agent_base.CodeAgent):
         _LOGGER.debug("[%d] Querying LLM.", id(self))
 
         with self.tracker.timeit("mswea/llm_request"):
-            response = await self.llm_client(
-                request.LLMRequest(
-                    messages=self._messages,
-                    system_prompt=self._system_prompt,
+            llm_response = await self.llm_client(
+                open_responses.make_request(
+                    self._messages,
+                    instructions=self._system_prompt,
                     temperature=0.0,
                 )
             )
         _LOGGER.debug("[%d] LLM response received.", id(self))
 
         self._n_calls += 1
-        self._total_cost += response.cost
+        self._total_cost += llm_response.cost
 
-        message_content = response.data[0].content
-        assert message_content is not None
+        message_content = response_lib.extract_text_content(llm_response.response)
 
         self._add_message("assistant", message_content)
 
-        return response
+        return llm_response
 
-    async def execute_action(self, response: response.LLMResponse) -> None:
+    async def execute_action(self, llm_response: response_lib.InferenceResult) -> None:
         """Execute the action and return the observation."""
         _LOGGER.debug("[%d] Executing action.", id(self))
-        response_text = response.data[0].content
-        assert response_text is not None
+        response_text = response_lib.extract_text_content(llm_response.response)
 
         action = self.parse_action(response_text)
 

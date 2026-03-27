@@ -1,31 +1,21 @@
-"""LLM client interfaces and data types."""
+"""LLM client interfaces and data types.
 
-# Request types
-# Client protocol
+Canonical request builders and request types live in :mod:`ares.llms.open_responses`.
+
+Prefer ``from ares.llms import open_responses`` to access request types and builders
+rather than importing individual type aliases from this package.
+"""
+
 from ares.llms.chat_completions_compatible import ChatCompletionCompatibleLLMClient
 from ares.llms.llm_clients import LLMClient
-from ares.llms.request import AssistantMessage
-from ares.llms.request import LLMRequest
-from ares.llms.request import Message
-from ares.llms.request import ToolCallMessage
-from ares.llms.request import ToolCallResponseMessage
-from ares.llms.request import UserMessage
-
-# Response types
-from ares.llms.response import LLMResponse
-from ares.llms.response import TextData
-from ares.llms.response import Usage
+from ares.llms.response import InferenceResult
+from ares.llms.response import extract_text_content
+from ares.llms.response import make_response
 
 __all__ = [
-    "AssistantMessage",
     "ChatCompletionCompatibleLLMClient",
+    "InferenceResult",
     "LLMClient",
-    "LLMRequest",
-    "LLMResponse",
-    "Message",
-    "TextData",
-    "ToolCallMessage",
-    "ToolCallResponseMessage",
-    "Usage",
-    "UserMessage",
+    "extract_text_content",
+    "make_response",
 ]

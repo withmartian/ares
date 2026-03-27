@@ -10,7 +10,7 @@ Required dependency group:
 
 Example usage:
     from ares.contrib import transformers_client
-    from ares.llms import request
+    from ares.llms import open_responses
 
     client = transformers_client.TransformersLLMClient(
         model_name="Qwen/Qwen2.5-0.5B-Instruct",
@@ -18,7 +18,7 @@ Example usage:
         max_batch_size=8,
     )
 
-    req = request.LLMRequest(messages=[{"role": "user", "content": "Hello!"}])
+    req = open_responses.make_request([open_responses.user_message("Hello!")])
     response = await client(req)
 """
 
@@ -27,25 +27,144 @@ import collections
 import contextlib
 import dataclasses
 import functools
+import json
 import logging
 from typing import Literal, cast
 
+from linguafranca import types as lft
 import torch
 import transformers
 
 from ares.async_utils import ValueAndFuture
 from ares.llms import llm_clients
-from ares.llms import openai_chat_converter
-from ares.llms import request
+from ares.llms import open_responses
 from ares.llms import response
 
 _LOGGER = logging.getLogger(__name__)
+_SUPPORTED_RENDER_FIELDS = frozenset({"input", "instructions", "max_output_tokens", "model", "temperature", "top_p"})
 
 
 # This is defined in transformers, but not exposed.
 # We re-create it here to enable better type hints.
 class _BaseModelWithGenerate(transformers.PreTrainedModel, transformers.GenerationMixin):
     pass
+
+
+def _render_content_to_text(content: object, *, context: str) -> str:
+    if isinstance(content, str):
+        return content
+    if content is None:
+        return ""
+    if not isinstance(content, list):
+        return str(content)
+
+    text_parts: list[str] = []
+    dropped_parts: list[str] = []
+    for part in content:
+        if isinstance(part, dict) and part.get("type") in {"input_text", "text"}:
+            text_parts.append(str(part.get("text", "")))
+            continue
+        dropped_parts.append(
+            str(part.get("type", type(part).__name__)) if isinstance(part, dict) else type(part).__name__
+        )
+
+    if dropped_parts:
+        _LOGGER.warning(
+            "TransformersLLMClient dropped unsupported %s parts: %s",
+            context,
+            ", ".join(dropped_parts),
+        )
+
+    return "".join(text_parts)
+
+
+def _render_value_to_text(value: object) -> str:
+    if isinstance(value, str):
+        return value
+    return json.dumps(value, ensure_ascii=True, sort_keys=True)
+
+
+def _render_request_to_chat_messages(request: lft.OpenResponsesRequest) -> list[dict[str, str]]:
+    """Convert an Open Responses request to simple ``{role, content}`` chat dicts.
+
+    We use a custom renderer instead of ``open_responses.to_chat_messages()`` because
+    local model tokenizers (via ``apply_chat_template``) generally don't handle OpenAI-
+    format ``tool_calls`` arrays or ``role="tool"`` messages.  This function flattens
+    tool interactions into plain user/assistant text that any chat template can process.
+    """
+    payload = open_responses.request_to_jsonable(request)
+
+    dropped_fields = sorted(
+        field
+        for field, value in payload.items()
+        if field not in _SUPPORTED_RENDER_FIELDS and value not in (None, False, [], {})
+    )
+    if dropped_fields:
+        _LOGGER.warning(
+            "TransformersLLMClient dropped unsupported Open Responses fields: %s",
+            ", ".join(dropped_fields),
+        )
+
+    system_parts: list[str] = []
+    instructions = payload.get("instructions")
+    if instructions:
+        system_parts.append(str(instructions))
+
+    rendered_messages: list[dict[str, str]] = []
+    input_value = payload["input"]
+    if isinstance(input_value, str):
+        rendered_messages.append({"role": "user", "content": input_value})
+    else:
+        for item in input_value:
+            if not isinstance(item, dict):
+                _LOGGER.warning(
+                    "TransformersLLMClient dropped unsupported input item type: %s",
+                    type(item).__name__,
+                )
+                continue
+
+            item_type = item.get("type")
+            if item_type == "message":
+                role = str(item.get("role", "user"))
+                content = _render_content_to_text(item.get("content"), context=f"{role} message")
+                if role in {"developer", "system"}:
+                    system_parts.append(content)
+                elif role in {"assistant", "user"}:
+                    rendered_messages.append({"role": role, "content": content})
+                else:
+                    _LOGGER.warning("TransformersLLMClient dropped unsupported message role: %s", role)
+                continue
+
+            if item_type == "function_call":
+                rendered_messages.append(
+                    {
+                        "role": "assistant",
+                        "content": (
+                            f"Called tool {item.get('name', '')} with call_id {item.get('call_id', '')}:\n"
+                            f"{item.get('arguments', '')}"
+                        ),
+                    }
+                )
+                continue
+
+            if item_type == "function_call_output":
+                rendered_messages.append(
+                    {
+                        "role": "user",
+                        "content": (
+                            f"Tool result for call_id {item.get('call_id', '')}:\n"
+                            f"{_render_value_to_text(item.get('output', ''))}"
+                        ),
+                    }
+                )
+                continue
+
+            _LOGGER.warning("TransformersLLMClient dropped unsupported input item type: %s", item_type)
+
+    if system_parts:
+        rendered_messages.insert(0, {"role": "system", "content": "\n\n".join(system_parts)})
+
+    return rendered_messages
 
 
 def _detect_device() -> str:
@@ -117,7 +236,7 @@ class TransformersLLMClient(llm_clients.LLMClient):
     temperature: float = 1.0
 
     @functools.cached_property
-    def _request_queue(self) -> asyncio.Queue[ValueAndFuture[request.LLMRequest, response.LLMResponse]]:
+    def _request_queue(self) -> asyncio.Queue[ValueAndFuture[lft.OpenResponsesRequest, response.InferenceResult]]:
         """Lazy-initialized queue for batching requests."""
         return asyncio.Queue()
 
@@ -169,19 +288,19 @@ class TransformersLLMClient(llm_clients.LLMClient):
             tokenizer.pad_token = tokenizer.eos_token
         return tokenizer
 
-    async def __call__(self, req: request.LLMRequest) -> response.LLMResponse:
+    async def __call__(self, req: lft.OpenResponsesRequest) -> response.InferenceResult:
         """Queue request and wait for batched inference.
 
         The background inference task is started automatically on first call.
 
         Args:
-            req: The LLM request containing messages and optional temperature
+            req: The Open Responses request to run.
 
         Returns:
-            LLMResponse with the generated completion
+            InferenceResult with the generated completion
         """
         _ = self._inference_task  # Trigger lazy initialization
-        future: asyncio.Future[response.LLMResponse] = asyncio.Future()
+        future: asyncio.Future[response.InferenceResult] = asyncio.Future()
         await self._request_queue.put(ValueAndFuture(value=req, future=future))
         return await future
 
@@ -202,7 +321,7 @@ class TransformersLLMClient(llm_clients.LLMClient):
     async def _inference_loop(self) -> None:
         """Background task that batches and processes requests.
 
-        Groups requests by (temperature, max_tokens) during collection to preserve per-request
+        Groups requests by (temperature, max_tokens, top_p) during collection to preserve per-request
         semantics. Collects until batch_wait_ms elapses OR any group reaches max_batch_size.
 
         Tradeoff: Grouping at collection time is more efficient than collecting mixed batches
@@ -211,21 +330,23 @@ class TransformersLLMClient(llm_clients.LLMClient):
         and timer, allowing truly independent batching per parameter set.
         """
         while True:
-            collected_items: list[ValueAndFuture[request.LLMRequest, response.LLMResponse]] = []
+            collected_items: list[ValueAndFuture[lft.OpenResponsesRequest, response.InferenceResult]] = []
             try:
                 first_item = await self._request_queue.get()
                 collected_items.append(first_item)
-                kwargs = openai_chat_converter.to_external(first_item.value, strict=False)
-                temp = kwargs.get("temperature")
-                max_tokens = kwargs.get("max_completion_tokens")
+                temp = first_item.value.temperature
+                max_tokens = first_item.value.max_output_tokens
+                top_p = first_item.value.top_p
                 first_params = (
                     self.temperature if temp is None else temp,
                     self.max_new_tokens if max_tokens is None else max_tokens,
+                    top_p,
                 )
 
-                groups: dict[tuple[float, int], list[ValueAndFuture[request.LLMRequest, response.LLMResponse]]] = (
-                    collections.defaultdict(list)
-                )
+                groups: dict[
+                    tuple[float, int, float | None],
+                    list[ValueAndFuture[lft.OpenResponsesRequest, response.InferenceResult]],
+                ] = collections.defaultdict(list)
                 groups[first_params].append(first_item)
 
                 deadline = asyncio.get_event_loop().time() + (self.batch_wait_ms / 1000.0)
@@ -239,12 +360,13 @@ class TransformersLLMClient(llm_clients.LLMClient):
                     try:
                         item = await asyncio.wait_for(self._request_queue.get(), timeout=timeout)
                         collected_items.append(item)
-                        kwargs = openai_chat_converter.to_external(item.value, strict=False)
-                        temp = kwargs.get("temperature")
-                        max_tokens = kwargs.get("max_completion_tokens")
+                        temp = item.value.temperature
+                        max_tokens = item.value.max_output_tokens
+                        top_p = item.value.top_p
                         params = (
                             self.temperature if temp is None else temp,
                             self.max_new_tokens if max_tokens is None else max_tokens,
+                            top_p,
                         )
                         groups[params].append(item)
                     except TimeoutError:
@@ -263,28 +385,28 @@ class TransformersLLMClient(llm_clients.LLMClient):
 
     async def _process_batch(
         self,
-        batch: list[ValueAndFuture[request.LLMRequest, response.LLMResponse]],
-        params: tuple[float, int],
+        batch: list[ValueAndFuture[lft.OpenResponsesRequest, response.InferenceResult]],
+        params: tuple[float, int, float | None],
     ) -> None:
         """Process a batch of requests with homogeneous parameters.
 
         Args:
             batch: List of request-future pairs (all with same temperature/max_tokens)
-            params: (temperature, max_new_tokens) for this batch
+            params: (temperature, max_new_tokens, top_p) for this batch
         """
         try:
-            temperature, max_new_tokens = params
+            temperature, max_new_tokens, top_p = params
 
             chat_conversations = []
             for item in batch:
-                kwargs = openai_chat_converter.to_external(item.value, strict=False)
-                chat_conversations.append(kwargs["messages"])
+                chat_conversations.append(_render_request_to_chat_messages(item.value))
 
             responses = await asyncio.to_thread(  # transformers is not async
                 self._generate_batch,
                 chat_conversations,
                 temperature=temperature,
                 max_new_tokens=max_new_tokens,
+                top_p=top_p,
             )
 
             for item, resp in zip(batch, responses, strict=True):
@@ -301,16 +423,18 @@ class TransformersLLMClient(llm_clients.LLMClient):
         chat_conversations: list[list[dict[str, str]]],
         temperature: float,
         max_new_tokens: int,
-    ) -> list[response.LLMResponse]:
+        top_p: float | None,
+    ) -> list[response.InferenceResult]:
         """Generate responses for a batch of chat conversations.
 
         Args:
             chat_conversations: List of chat message lists
             temperature: Sampling temperature
             max_new_tokens: Maximum tokens to generate
+            top_p: Optional top-p sampling parameter
 
         Returns:
-            List of LLMResponses
+            List of InferenceResults
         """
         input_texts: list[str] = []
         for conv in chat_conversations:
@@ -334,12 +458,18 @@ class TransformersLLMClient(llm_clients.LLMClient):
         input_lengths = inputs["input_ids"].shape[1]  # type: ignore[union-attr]
 
         with torch.no_grad():
+            generation_kwargs = {
+                "max_new_tokens": max_new_tokens,
+                "temperature": temperature,
+                "do_sample": temperature > 0,
+                "pad_token_id": self._tokenizer.pad_token_id,
+            }
+            if top_p is not None:
+                generation_kwargs["top_p"] = top_p
+
             outputs = self._model.generate(
                 **inputs,  # type: ignore[arg-type]
-                max_new_tokens=max_new_tokens,
-                temperature=temperature,
-                do_sample=temperature > 0,
-                pad_token_id=self._tokenizer.pad_token_id,
+                **generation_kwargs,  # type: ignore[arg-type]
             )
 
         generated_ids = outputs[:, input_lengths:]
@@ -350,15 +480,12 @@ class TransformersLLMClient(llm_clients.LLMClient):
             prompt_tokens = inputs["input_ids"][i].ne(self._tokenizer.pad_token_id).sum().item()  # type: ignore[union-attr]
             generated_tokens = generated_ids[i].ne(self._tokenizer.pad_token_id).sum().item()  # type: ignore[arg-type]
 
-            responses.append(
-                response.LLMResponse(
-                    data=[response.TextData(content=text)],
-                    cost=0.0,  # Local inference has no API cost
-                    usage=response.Usage(
-                        prompt_tokens=prompt_tokens,
-                        generated_tokens=generated_tokens,
-                    ),
-                )
+            lf_response = response.make_response(
+                text,
+                model=self.model_name,
+                input_tokens=prompt_tokens,
+                output_tokens=generated_tokens,
             )
+            responses.append(response.InferenceResult(response=lf_response, cost=0.0))
 
         return responses

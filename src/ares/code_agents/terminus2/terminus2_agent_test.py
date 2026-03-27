@@ -16,6 +16,39 @@ from ares.llms import llm_clients
 from ares.llms import response
 from ares.testing.mock_container import MockContainer
 
+# Test response JSON payloads
+_RESPONSE_EXECUTE_COMMAND = """
+{
+  "analysis": "Need to list files",
+  "plan": "Run ls command",
+  "commands": [
+    {
+      "keystrokes": "ls -la\\n",
+      "duration": 0.1
+    }
+  ],
+  "task_complete": false
+}
+""".strip()
+
+_RESPONSE_MARK_COMPLETE = """
+{
+  "analysis": "Files listed",
+  "plan": "Task is done",
+  "commands": [],
+  "task_complete": true
+}
+""".strip()
+
+_RESPONSE_CONFIRM_COMPLETE = """
+{
+  "analysis": "Confirming completion",
+  "plan": "Done",
+  "commands": [],
+  "task_complete": true
+}
+""".strip()
+
 
 class TmuxSimulator:
     """Helper class to simulate tmux behavior for testing."""
@@ -222,56 +255,21 @@ class TestTerminus2AgentIntegration:
         llm_client = mock.AsyncMock(spec=llm_clients.LLMClient)
 
         # First response: execute a command
-        response1 = response.LLMResponse(
-            data=[
-                response.TextData(
-                    content="""{
-  "analysis": "Need to list files",
-  "plan": "Run ls command",
-  "commands": [
-    {
-      "keystrokes": "ls -la\\n",
-      "duration": 0.1
-    }
-  ],
-  "task_complete": false
-}"""
-                )
-            ],
+        response1 = response.InferenceResult(
+            response=response.make_response(_RESPONSE_EXECUTE_COMMAND, input_tokens=100, output_tokens=50),
             cost=0.0,
-            usage=response.Usage(prompt_tokens=100, generated_tokens=50),
         )
 
         # Second response: mark complete
-        response2 = response.LLMResponse(
-            data=[
-                response.TextData(
-                    content="""{
-  "analysis": "Files listed",
-  "plan": "Task is done",
-  "commands": [],
-  "task_complete": true
-}"""
-                )
-            ],
+        response2 = response.InferenceResult(
+            response=response.make_response(_RESPONSE_MARK_COMPLETE, input_tokens=100, output_tokens=50),
             cost=0.0,
-            usage=response.Usage(prompt_tokens=100, generated_tokens=50),
         )
 
         # Third response: confirm completion
-        response3 = response.LLMResponse(
-            data=[
-                response.TextData(
-                    content="""{
-  "analysis": "Confirming completion",
-  "plan": "Done",
-  "commands": [],
-  "task_complete": true
-}"""
-                )
-            ],
+        response3 = response.InferenceResult(
+            response=response.make_response(_RESPONSE_CONFIRM_COMPLETE, input_tokens=100, output_tokens=50),
             cost=0.0,
-            usage=response.Usage(prompt_tokens=100, generated_tokens=50),
         )
 
         llm_client.side_effect = [response1, response2, response3]

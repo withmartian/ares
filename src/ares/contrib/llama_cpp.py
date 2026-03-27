@@ -14,7 +14,7 @@ Required dependency group:
 Example usage:
     from ares.contrib import llama_cpp
     from ares.llms import llm_clients
-from ares.llms import request
+    from ares.llms import open_responses
 
     # Initialize with a local GGUF model file
     client = llama_cpp.LlamaCppLLMClient(
@@ -23,7 +23,7 @@ from ares.llms import request
     )
 
     # Use like any other LLM client
-    request = request.LLMRequest(messages=[{"role": "user", "content": "Hello!"}])
+    request = open_responses.make_request([open_responses.user_message("Hello!")])
     response = await client(request)
 
 Note: Download GGUF models from HuggingFace. For example:
@@ -35,12 +35,12 @@ import dataclasses
 import functools
 import logging
 
+from linguafranca import types as lft
 import llama_cpp
 import openai.types.chat.chat_completion
 
 from ares.llms import llm_clients
-from ares.llms import openai_chat_converter
-from ares.llms import request
+from ares.llms import open_responses
 from ares.llms import response
 
 _LOGGER = logging.getLogger(__name__)
@@ -75,18 +75,19 @@ class LlamaCppLLMClient(llm_clients.LLMClient):
             n_ctx=self.n_ctx,
         )
 
-    async def __call__(self, req: request.LLMRequest) -> response.LLMResponse:
+    async def __call__(self, req: lft.OpenResponsesRequest) -> response.InferenceResult:
         """Generate a response using llama.cpp.
 
         Args:
-            request: The LLM request containing messages and optional temperature
+            request: The Open Responses request to run.
 
         Returns:
-            LLMResponse with the generated completion
+            InferenceResult with the generated completion
         """
         _LOGGER.debug("[%d] Requesting LLM.", id(self))
 
-        completion_kwargs = openai_chat_converter.to_external(req)
+        completion_kwargs = open_responses.to_chat_completions_kwargs(req, model=self.model_name, strict=True)
+        completion_kwargs.pop("model", None)
         # Since llama-cpp-python sets default temperature to 0.2, we explicitly
         # override it to 1.0 if it's not provided by the request.
         completion_kwargs.setdefault("temperature", 1.0)
@@ -98,11 +99,14 @@ class LlamaCppLLMClient(llm_clients.LLMClient):
         _LOGGER.debug("[%d] LLM response received.", id(self))
 
         content = chat_completion.choices[0].message.content or ""
-        usage = response.Usage(
-            prompt_tokens=chat_completion.usage.prompt_tokens if chat_completion.usage else 0,
-            generated_tokens=chat_completion.usage.completion_tokens if chat_completion.usage else 0,
+        lf_response = response.make_response(
+            content,
+            model=self.model_name,
+            input_tokens=chat_completion.usage.prompt_tokens if chat_completion.usage else 0,
+            output_tokens=chat_completion.usage.completion_tokens if chat_completion.usage else 0,
+            response_id=chat_completion.id,
         )
-        return response.LLMResponse(data=[response.TextData(content=content)], cost=0.0, usage=usage)
+        return response.InferenceResult(response=lf_response, cost=0.0)
 
 
 create_qwen2_0_5b_instruct_llama_cpp_client = functools.partial(

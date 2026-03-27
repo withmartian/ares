@@ -4,10 +4,12 @@ from collections.abc import Sequence
 import dataclasses
 from typing import Any
 
+from linguafranca import types as lft
 import torch
 import transformer_lens
 
 from ares import llms
+from ares.contrib import transformers_client
 
 
 @dataclasses.dataclass
@@ -58,24 +60,24 @@ class HookedTransformerLLMClient:
 
     async def __call__(
         self,
-        request: llms.LLMRequest,
+        request: lft.OpenResponsesRequest,
         max_output_tokens: int | None = None,
-    ) -> llms.LLMResponse:
+    ) -> llms.InferenceResult:
         """Generate a completion using the HookedTransformer.
 
         Args:
-            request: LLM request containing messages and optional temperature.
+            request: Open Responses request containing the model input.
 
         Returns:
-            LLM response with chat completion and cost information.
+            Inference result with response and cost information.
         """
         max_output_tokens = max_output_tokens or request.max_output_tokens or self.max_new_tokens
 
-        # Format messages into text
-        messages_list = []
-        if request.system_prompt:
-            messages_list.append({"role": "system", "content": request.system_prompt})
-        messages_list.extend(request.messages)
+        # Use the custom renderer instead of open_responses.to_chat_messages() because
+        # local model tokenizers (via apply_chat_template) generally don't handle OpenAI-
+        # format tool_calls arrays or role="tool" messages.  The custom renderer flattens
+        # tool interactions into plain user/assistant text that any chat template can process.
+        messages_list = transformers_client._render_request_to_chat_messages(request)
 
         # Tokenize input
         # TODO: Need to support various truncation methods
@@ -121,11 +123,9 @@ class HookedTransformerLLMClient:
         output_text = self.model.to_string(output_ids)
         assert isinstance(output_text, str)  # typing
 
-        return llms.LLMResponse(
-            data=[llms.TextData(content=output_text)],
-            cost=0.0,  # Local inference has no cost
-            usage=llms.Usage(
-                prompt_tokens=num_input_tokens,
-                generated_tokens=num_output_tokens,
-            ),
+        lf_response = llms.make_response(
+            output_text,
+            input_tokens=num_input_tokens,
+            output_tokens=num_output_tokens,
         )
+        return llms.InferenceResult(response=lf_response, cost=0.0)

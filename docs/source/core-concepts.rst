@@ -11,7 +11,7 @@ It's important to understand two different concepts in ARES:
     The orchestration logic that uses a Container and LLM to solve tasks (e.g., MiniSWECodeAgent). This is **part of the environment** and remains fixed during training. Think of it as the scaffold that defines how an LLM interacts with code.
 
 * Agent/Policy (Trained)
-    The component you're actually training - a function that maps ``LLMRequest → LLMResponse``. This could be a fine-tuned LLM, a prompt optimizer, or any policy that produces better responses. This is what improves through reinforcement learning.
+    The component you're actually training - a function that maps ``OpenResponsesRequest → InferenceResult``. This could be a fine-tuned LLM, a prompt optimizer, or any policy that produces better responses. This is what improves through reinforcement learning.
 
 System Architecture
 -------------------
@@ -30,13 +30,13 @@ Here's how the components fit together:
     |  generates response    |            │                                      │
     └──────────┬─────────────┘            │  ┌────────────────────────────────┐  │
         ^      │                          │  │   QueueMediatedLLMClient       │  │
-        |      │ LLMResponse (action)     │  │                                │  │
+        |      │ InferenceResult (action) │  │                                │  │
         |      └──────────────────────────┼─>│   Intercepts LLM calls         │  │
         |                                 │  │   from code agent via          │  │
         └─────────────────────────────────┼──│   QueueMediatedLLMClient       │  │
-                 LLMRequest (observation) │  └──────────────────┬─────────────┘  │
+           Open Responses observation     │  └──────────────────┬─────────────┘  │
                                           │                 ^   │                │
-                                          │      LLMRequest │   │ LLMResponse    │
+                                          │ Open Responses  │   │ InferenceResult│
                                           │                 │   v                │
                                           │  ┌──────────────└─────────────────┐  │
                                           │  │       CodeAgent                │  │
@@ -87,7 +87,7 @@ The key abstraction is ``CodeEnvironment``, which:
 * **Exposes LLM requests as observations** - Intercepts calls from the code agent
 * **Treats LLM responses as actions** - Your trainable agent/policy provides responses
 
-Crucially, the **CodeAgent is part of the environment**, not what you're training. Your training loop optimizes an agent/policy that produces better ``LLMResponse`` outputs given ``LLMRequest`` observations.
+Crucially, the **CodeAgent is part of the environment**, not what you're training. Your training loop optimizes an agent/policy that produces better ``InferenceResult`` outputs given canonical Open Responses observations.
 
 Standard RL Loop
 ~~~~~~~~~~~~~~~~
@@ -101,10 +101,10 @@ Every environment follows the standard RL pattern:
         timestep = await env.reset()
 
         while not timestep.last():
-            # timestep.observation is an LLMRequest from the code agent
+            # timestep.observation is an Open Responses request from the code agent
             action = await your_policy(timestep.observation)
 
-            # action is an LLMResponse that continues the agent's execution
+            # action is an InferenceResult that continues the agent's execution
             timestep = await env.step(action)
 
         # timestep.reward contains the reward for the final step
@@ -116,7 +116,7 @@ TimeStep Structure
 Each call to ``reset()`` or ``step()`` returns a ``TimeStep`` with:
 
 * ``step_type``: One of ``"FIRST"``, ``"MID"``, or ``"LAST"``
-* ``observation``: An ``LLMRequest`` object (or ``None`` on termination)
+* ``observation``: An Open Responses request object (or ``None`` on termination)
 * ``reward``: A float reward for each step
 * ``discount``: A float discount factor for RL algorithms
 
@@ -160,7 +160,7 @@ Example structure:
         async def run(self, task: str) -> None:
             while not self.is_done():
                 # Ask LLM what to do next
-                request = LLMRequest(messages=[...])
+                request = open_responses.make_request([open_responses.user_message(...)])
                 response = await self._llm_client(request)
 
                 # Parse and execute commands from LLM response
@@ -234,8 +234,8 @@ Which you will need to rewrite into something like:
                 # Decide what to ask LLM next
                 ...
                 llm_response = await self.llm_client(
-                    LLMRequest(
-                        messages=[...],
+                    open_responses.make_request(
+                        [open_responses.user_message(...)],
                         ...  # Other request params
                     )
                 )
@@ -293,30 +293,27 @@ Core Interface
 
 .. code-block:: python
 
+    from linguafranca import types as lft
+
     class LLMClient(Protocol):
-        async def __call__(self, request: LLMRequest) -> LLMResponse:
+        async def __call__(self, request: lft.OpenResponsesRequest) -> InferenceResult:
             ...
 
     @dataclass(frozen=True)
-    class LLMRequest:
-        messages: Iterable[ChatCompletionMessageParam]
-        temperature: float | None = None
-
-    @dataclass(frozen=True)
-    class LLMResponse:
-        chat_completion_response: ChatCompletion
+    class InferenceResult:
+        response: lft.OpenResponsesResponse
         cost: float
 
-This simple interface wraps OpenAI-style chat completion APIs. The ``messages`` field follows the OpenAI format with ``role`` (system/user/assistant) and ``content``.
+ARES uses linguafranca's ``OpenResponsesRequest`` as the canonical request type for observations and client inputs. Edge adapters convert to Chat/Responses/Anthropic formats only when needed.
 
 Why LLMClient?
 ~~~~~~~~~~~~~~
 
 The ``LLMClient`` abstraction serves two purposes:
 
-1. **Observations = LLM Requests**: In the RL loop, ``timestep.observation`` is an ``LLMRequest`` containing the messages the code agent wants to send to the LLM. This is the "state" your policy observes.
+1. **Observations = Open Responses requests**: In the RL loop, ``timestep.observation`` is a canonical Open Responses request containing what the code agent wants to send to the LLM. This is the "state" your policy observes.
 
-2. **Actions = LLM Responses**: In the RL loop, the ``action`` you pass to ``env.step()`` is an ``LLMResponse`` containing the LLM's reply. This is how your policy controls the agent's behavior.
+2. **Actions = LLM Responses**: In the RL loop, the ``action`` you pass to ``env.step()`` is an ``InferenceResult`` containing the LLM's reply. This is how your policy controls the agent's behavior.
 
 This framing makes it natural to think about code agent training as an RL problem: you're learning a policy that maps agent requests to helpful responses.
 

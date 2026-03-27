@@ -21,6 +21,7 @@ from harbor.models import registry as harbor_registry
 from harbor.models.task import task as harbor_task
 from harbor.models.trial import paths as harbor_paths
 from harbor.registry import client as harbor_dataset_client
+from linguafranca import types as lft
 
 from ares.code_agents import code_agent_base
 from ares.code_agents import mini_swe_agent
@@ -29,7 +30,6 @@ from ares.containers import daytona as ares_daytona
 from ares.environments import base
 from ares.experiment_tracking import stat_tracker
 from ares.llms import queue_mediated_client
-from ares.llms import request
 from ares.llms import response
 
 _LOGGER = logging.getLogger(__name__)
@@ -55,7 +55,7 @@ def list_harbor_datasets() -> tuple[harbor_registry.DatasetSpec, ...]:
     return tuple(client.get_datasets())
 
 
-class CodeEnvironment(base.Environment[response.LLMResponse, request.LLMRequest | None, float, float]):
+class CodeEnvironment(base.Environment[response.InferenceResult, lft.OpenResponsesRequest | None, float, float]):
     """Environment for code agent datasets that computes reward at the end of an episode."""
 
     def __init__(
@@ -79,7 +79,7 @@ class CodeEnvironment(base.Environment[response.LLMResponse, request.LLMRequest 
         # we can return LLM requests in the reset and step methods.
         # We should never allow a user to pass a different LLM client.
         self._llm_client = queue_mediated_client.QueueMediatedLLMClient(q=asyncio.Queue())
-        self._llm_req_future: asyncio.Future[response.LLMResponse] | None = None
+        self._llm_req_future: asyncio.Future[response.InferenceResult] | None = None
 
         # State.
         self._is_active = False
@@ -92,7 +92,7 @@ class CodeEnvironment(base.Environment[response.LLMResponse, request.LLMRequest 
         # Register for cleanup on exit.
         _ENVIRONMENT_JANITOR.register_for_cleanup(self)
 
-    async def reset(self) -> base.TimeStep[request.LLMRequest, float, float]:
+    async def reset(self) -> base.TimeStep[lft.OpenResponsesRequest, float, float]:
         reset_start_time = time.time()
         self._assert_active()
 
@@ -126,7 +126,9 @@ class CodeEnvironment(base.Environment[response.LLMResponse, request.LLMRequest 
         self._tracker.scalar(f"{self._prefix}/reset", reset_end_time - reset_start_time)
         return result
 
-    async def step(self, action: response.LLMResponse) -> base.TimeStep[request.LLMRequest | None, float, float]:
+    async def step(
+        self, action: response.InferenceResult
+    ) -> base.TimeStep[lft.OpenResponsesRequest | None, float, float]:
         step_start_time = time.time()
         self._assert_active()
 
@@ -162,7 +164,7 @@ class CodeEnvironment(base.Environment[response.LLMResponse, request.LLMRequest 
 
     async def _get_time_step(
         self,
-    ) -> base.TimeStep[request.LLMRequest | None, float, float]:
+    ) -> base.TimeStep[lft.OpenResponsesRequest | None, float, float]:
         # Wait for the code agent to send another request or complete.
         _LOGGER.debug("[%d] Waiting for code agent or LLM request.", id(self))
         with self._tracker.timeit(f"{self._prefix}/get_from_queue"):

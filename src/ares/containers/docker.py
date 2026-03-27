@@ -101,6 +101,9 @@ class DockerContainer(containers.Container):
         env: dict[str, str] | None = None,
         timeout_s: float | None = None,
     ) -> containers.ExecResult:
+        if self._container is None:
+            raise RuntimeError("Container not started. Call start() first.")
+
         # Use default_workdir if workdir is not explicitly provided
         if workdir is None:
             workdir = self.default_workdir
@@ -129,6 +132,8 @@ class DockerContainer(containers.Container):
 
     async def upload_files(self, local_paths: list[pathlib.Path], remote_paths: list[str]) -> None:
         """Upload files to the container."""
+        if self._container is None:
+            raise RuntimeError("Container not started. Call start() first.")
         if len(local_paths) != len(remote_paths):
             raise ValueError("local_paths and remote_paths must have the same length")
 
@@ -157,6 +162,8 @@ class DockerContainer(containers.Container):
 
     async def download_files(self, remote_paths: list[str], local_paths: list[pathlib.Path]) -> None:
         """Download files from the container."""
+        if self._container is None:
+            raise RuntimeError("Container not started. Call start() first.")
         if len(remote_paths) != len(local_paths):
             raise ValueError("remote_paths and local_paths must have the same length")
 

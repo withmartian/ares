@@ -49,8 +49,10 @@ from typing import Any, Literal
 import ares
 from ares import containers
 from ares import llms
+from ares.llms import open_responses
 import chz
 import frozendict
+from linguafranca import types as lft
 import numpy as np
 import tinker
 from tinker_cookbook import cli_utils
@@ -109,8 +111,8 @@ class TinkerCompatibleEnv(tinker_types.Env):
     """Adapter wrapping ARES environments to work with Tinker's RL training loop.
 
     Handles bidirectional conversion:
-    - ARES LLMRequest -> Tinker ModelInput (tokenized prompts)
-    - Tinker Action (text) -> ARES LLMResponse
+    - ARES Open Responses request -> Tinker ModelInput (tokenized prompts)
+    - Tinker Action (text) -> ARES InferenceResult
     - ARES TimeStep -> Tinker StepResult
 
     This enables using any ARES environment with Tinker's training infrastructure.
@@ -121,7 +123,7 @@ class TinkerCompatibleEnv(tinker_types.Env):
 
     def __init__(
         self,
-        env: ares.Environment[llms.LLMResponse, llms.LLMRequest, float, float],
+        env: ares.Environment[llms.InferenceResult, lft.OpenResponsesRequest, float, float],
         renderer: renderers.Renderer,
         convo_prefix: list[renderers.Message] | None,
         max_tokens: int,
@@ -132,14 +134,14 @@ class TinkerCompatibleEnv(tinker_types.Env):
         self.max_tokens = max_tokens
 
     def _get_tinker_observation(
-        self, ts: ares.TimeStep[llms.LLMRequest | None, float, float]
+        self, ts: ares.TimeStep[lft.OpenResponsesRequest | None, float, float]
     ) -> tinker_types.Observation:
         if ts.observation is None:
             return tinker.ModelInput.empty()
 
         messages = self.convo_prefix + [
             renderers.Message(role=message["role"], content=message["content"])  # type: ignore
-            for message in ts.observation.messages
+            for message in open_responses.to_chat_messages(ts.observation, strict=True)
         ]
         model_input = self.renderer.build_generation_prompt(messages)
 
@@ -149,15 +151,14 @@ class TinkerCompatibleEnv(tinker_types.Env):
 
         return model_input
 
-    def _get_ares_action(self, action: tinker_types.Action) -> llms.LLMResponse:
+    def _get_ares_action(self, action: tinker_types.Action) -> llms.InferenceResult:
         message, parse_success = self.renderer.parse_response(action)
         if not parse_success:
             _LOGGER.warning("Failed to parse response: %s", message)
 
-        return llms.LLMResponse(
-            data=[llms.TextData(content=_get_text_content(message))],
+        return llms.InferenceResult(
+            response=llms.make_response(_get_text_content(message)),
             cost=0.0,
-            usage=llms.Usage(prompt_tokens=-1, generated_tokens=-1),
         )
 
     @property

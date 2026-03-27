@@ -7,6 +7,8 @@ from typing import Any
 
 import ares
 from ares import llms
+from ares.llms import open_responses
+from linguafranca import types as lft
 import tqdm
 
 _LOGGER = logging.getLogger(__name__)
@@ -14,8 +16,8 @@ _LOGGER = logging.getLogger(__name__)
 
 def print_step(
     step_count: int,
-    observation: llms.LLMRequest | None,
-    action: llms.LLMResponse,
+    observation: lft.OpenResponsesRequest | None,
+    action: llms.InferenceResult,
 ) -> None:
     """Print a step in the RL loop.
 
@@ -28,19 +30,19 @@ def print_step(
     print("-" * 80)
 
     if observation is not None:
-        messages = list(observation.messages)
+        messages = open_responses.to_chat_messages(observation, strict=False)
         if len(messages) > 0:
             observation_content = messages[-1].get("content", "")
         else:
-            observation_content = str(observation.system_prompt) or "(no messages)"
+            observation_content = str(observation.instructions) or "(no messages)"
 
         observation_preview = str(observation_content)[:200]
         if len(str(observation_content)) > 200:
             observation_preview += "..."
         print(f"Observation (from environment): {observation_preview}")
 
-    action_content = action.data[0].content
-    action_preview = str(action_content)[:200]
+    action_content = llms.extract_text_content(action.response)
+    action_preview = action_content[:200]
     if len(action_content) > 200:
         action_preview += "..."
     print(f"Action (from LLM): {action_preview}")

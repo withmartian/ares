@@ -173,9 +173,9 @@ class Container(Protocol):
 #### 4. LLM Clients (`src/ares/llms/`)
 
 **Core Abstractions:**
-- `LLMRequest` - Dataclass with messages and optional temperature
-- `LLMResponse` - Dataclass with ChatCompletion and cost tracking
-- `LLMClient` Protocol - `async def __call__(request: LLMRequest) -> LLMResponse`
+- `lft.OpenResponsesRequest` - Canonical Open Responses request (from linguafranca) used for observations and client inputs
+- `InferenceResult` - Dataclass wrapping `lft.OpenResponsesResponse` with cost tracking
+- `LLMClient` Protocol - `async def __call__(request: lft.OpenResponsesRequest) -> InferenceResult`
 
 **Key Pattern: Queue-Mediated LLM Client (`queue_mediated_client.py`):**
 
@@ -281,12 +281,13 @@ Follow Google-style isort configuration:
 - **Always import modules, not classes or functions**
 - **External consumers** (examples, docs):
   - ✅ Good: `import ares` → use `ares.make(...)`
-  - ✅ Good: `from ares import llms` → use `llms.LLMRequest`, `llms.TextData`
-  - ❌ Avoid: `from ares.llms import LLMRequest, TextData`
+  - ✅ Good: `from ares.llms import open_responses` → use `open_responses.make_request(...)`
+  - ✅ Good: `from ares import llms` → use `llms.TextData`, `llms.Usage`
+  - ❌ Avoid: `from ares.llms import OpenResponsesRequest, TextData`
 - **Internal code**:
-  - ✅ Good: `from ares.llms import request` → use `request.LLMRequest`
+  - ✅ Good: `from ares.llms import open_responses` → use `open_responses.make_request(...)`
   - ✅ Good: `from ares.llms import response` → use `response.TextData`, `response.Usage`
-  - ❌ Avoid: `from ares.llms.request import LLMRequest`
+  - ❌ Avoid: `from ares.llms.open_responses import Request`
   - ❌ Avoid: `from ares.llms.response import TextData, Usage`
 - Rationale: Makes code more readable and explicit about where objects come from
 

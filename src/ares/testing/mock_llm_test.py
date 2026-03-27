@@ -1,8 +1,12 @@
 """Tests for mock LLM client implementation."""
 
+from typing import cast
+
+from linguafranca import types as lft
 import pytest
 
-from ares.llms import request
+from ares.llms import open_responses
+from ares.llms import response
 from ares.testing import mock_llm
 
 
@@ -11,8 +15,8 @@ async def test_mock_llm_client_records_requests():
     """Test that mock LLM client records all requests."""
     client = mock_llm.MockLLMClient()
 
-    request1 = request.LLMRequest(messages=[{"role": "user", "content": "Hello"}])
-    request2 = request.LLMRequest(messages=[{"role": "user", "content": "World"}])
+    request1 = open_responses.make_request([open_responses.user_message("Hello")])
+    request2 = open_responses.make_request([open_responses.user_message("World")])
 
     await client(request1)
     await client(request2)
@@ -27,11 +31,11 @@ async def test_mock_llm_client_default_response():
     """Test that mock LLM client returns default response."""
     client = mock_llm.MockLLMClient()
 
-    req = request.LLMRequest(messages=[{"role": "user", "content": "test"}])
-    response = await client(req)
+    req = open_responses.make_request([open_responses.user_message("test")])
+    llm_response = await client(req)
 
-    assert response.data[0].content == "Mock LLM response"
-    assert response.cost == 0.0
+    assert response.extract_text_content(llm_response.response) == "Mock LLM response"
+    assert llm_response.cost == 0.0
 
 
 @pytest.mark.asyncio
@@ -39,34 +43,34 @@ async def test_mock_llm_client_configured_responses():
     """Test that mock LLM client cycles through configured responses."""
     client = mock_llm.MockLLMClient(responses=["First", "Second", "Third"])
 
-    req = request.LLMRequest(messages=[{"role": "user", "content": "test"}])
+    req = open_responses.make_request([open_responses.user_message("test")])
 
     response1 = await client(req)
     response2 = await client(req)
     response3 = await client(req)
     response4 = await client(req)  # Should cycle back to first
 
-    assert response1.data[0].content == "First"
-    assert response2.data[0].content == "Second"
-    assert response3.data[0].content == "Third"
-    assert response4.data[0].content == "First"
+    assert response.extract_text_content(response1.response) == "First"
+    assert response.extract_text_content(response2.response) == "Second"
+    assert response.extract_text_content(response3.response) == "Third"
+    assert response.extract_text_content(response4.response) == "First"
 
 
 @pytest.mark.asyncio
 async def test_mock_llm_client_response_handler():
     """Test that mock LLM client uses custom response handler."""
 
-    def handler(req: request.LLMRequest) -> str:
+    def handler(req: lft.OpenResponsesRequest) -> str:
         # Echo back the user's message
-        user_msg = req.messages[-1].get("content", "")
+        user_msg = open_responses.message_text(open_responses.message_items(req)[-1])
         return f"You said: {user_msg}"
 
     client = mock_llm.MockLLMClient(response_handler=handler)
 
-    req = request.LLMRequest(messages=[{"role": "user", "content": "Hello AI"}])
-    response = await client(req)
+    req = open_responses.make_request([open_responses.user_message("Hello AI")])
+    llm_response = await client(req)
 
-    assert response.data[0].content == "You said: Hello AI"
+    assert response.extract_text_content(llm_response.response) == "You said: Hello AI"
 
 
 @pytest.mark.asyncio
@@ -74,7 +78,7 @@ async def test_mock_llm_client_call_count():
     """Test that mock LLM client tracks call count."""
     client = mock_llm.MockLLMClient()
 
-    req = request.LLMRequest(messages=[{"role": "user", "content": "test"}])
+    req = open_responses.make_request([open_responses.user_message("test")])
 
     assert client.call_count == 0
 
@@ -92,8 +96,8 @@ async def test_mock_llm_client_get_last_request():
 
     assert client.get_last_request() is None
 
-    request1 = request.LLMRequest(messages=[{"role": "user", "content": "First"}])
-    request2 = request.LLMRequest(messages=[{"role": "user", "content": "Second"}])
+    request1 = open_responses.make_request([open_responses.user_message("First")])
+    request2 = open_responses.make_request([open_responses.user_message("Second")])
 
     await client(request1)
     assert client.get_last_request() == request1
@@ -107,17 +111,33 @@ async def test_mock_llm_client_get_request_messages():
     """Test getting messages from specific requests."""
     client = mock_llm.MockLLMClient()
 
-    req = request.LLMRequest(
-        messages=[
-            {"role": "user", "content": "Hello"},
-        ],
-    )
+    req = open_responses.make_request([open_responses.user_message("Hello")])
 
     await client(req)
 
     messages = client.get_request_messages()
     assert len(messages) == 1
-    assert messages[0].get("content", "") == "Hello"
+    assert open_responses.message_text(cast(lft.InputItemMessage, messages[0])) == "Hello"
+
+
+@pytest.mark.asyncio
+async def test_mock_llm_client_get_request_messages_includes_tool_items():
+    """Test that request item helper returns tool call items too."""
+    client = mock_llm.MockLLMClient()
+
+    req = open_responses.make_request(
+        [
+            open_responses.function_call(call_id="call_1", name="search", arguments="{}"),
+            open_responses.function_call_output(call_id="call_1", output="done"),
+        ]
+    )
+
+    await client(req)
+
+    items = client.get_request_messages()
+    assert len(items) == 2
+    assert items[0].type == "function_call"
+    assert items[1].type == "function_call_output"
 
 
 @pytest.mark.asyncio
@@ -125,7 +145,7 @@ async def test_mock_llm_client_reset():
     """Test that reset() clears all data."""
     client = mock_llm.MockLLMClient()
 
-    req = request.LLMRequest(messages=[{"role": "user", "content": "test"}])
+    req = open_responses.make_request([open_responses.user_message("test")])
     await client(req)
     await client(req)
 
@@ -143,20 +163,19 @@ async def test_mock_llm_response_structure():
     """Test that mock response has correct structure."""
     client = mock_llm.MockLLMClient()
 
-    req = request.LLMRequest(messages=[{"role": "user", "content": "test"}])
-    response = await client(req)
+    req = open_responses.make_request([open_responses.user_message("test")])
+    llm_response = await client(req)
 
     # Check response structure
-    assert hasattr(response, "data")
-    assert hasattr(response, "cost")
-    assert hasattr(response, "usage")
+    assert hasattr(llm_response, "response")
+    assert hasattr(llm_response, "cost")
+    assert hasattr(llm_response, "usage")
 
-    # Check data structure
-    assert len(response.data) == 1
-    assert hasattr(response.data[0], "content")
-    assert response.data[0].content == "Mock LLM response"
+    # Check text content extraction
+    assert response.extract_text_content(llm_response.response) == "Mock LLM response"
 
     # Check usage structure
-    assert response.usage.prompt_tokens == 100
-    assert response.usage.generated_tokens == 50
-    assert response.usage.total_tokens == 150
+    assert llm_response.usage is not None
+    assert llm_response.usage.input_tokens == 100
+    assert llm_response.usage.output_tokens == 50
+    assert llm_response.usage.total_tokens == 150
