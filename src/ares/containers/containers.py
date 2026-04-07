@@ -62,11 +62,11 @@ class Container(Protocol):
 
     @abc.abstractmethod
     async def upload_files(self, local_paths: list[pathlib.Path], remote_paths: list[str]) -> None:
-        """Upload a file to the container.
+        """Upload files to the container.
 
         Args:
-            local_path: The path to the local file.
-            remote_path: The path to the remote file.
+            local_paths: The paths to the local files.
+            remote_paths: The paths to the remote files.
         """
 
     @abc.abstractmethod
@@ -74,8 +74,8 @@ class Container(Protocol):
         """Download files from the container.
 
         Args:
-            remote_paths: The path to the remote files.
-            local_paths: The path to the local files.
+            remote_paths: The paths to the remote files.
+            local_paths: The paths to the local files.
         """
 
     async def upload_file(self, local_path: pathlib.Path, remote_path: str) -> None:
@@ -90,9 +90,9 @@ class Container(Protocol):
         for file_path in local_path.rglob("*"):
             if file_path.is_file():
                 relative_path = file_path.relative_to(local_path)
-                destination_path = str(remote_path / relative_path)
+                destination_path = str(pathlib.Path(remote_path) / relative_path)
 
-                local_path_uploads.append(str(file_path))
+                local_path_uploads.append(file_path)
                 remote_path_uploads.append(destination_path)
 
         await self.upload_files(local_path_uploads, remote_path_uploads)
