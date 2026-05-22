@@ -4,6 +4,7 @@
 # Client protocol
 from ares.llms.chat_completions_compatible import ChatCompletionCompatibleLLMClient
 from ares.llms.llm_clients import LLMClient
+from ares.llms.openai_responses_compatible import OpenAIResponsesCompatibleLLMClient
 from ares.llms.request import AssistantMessage
 from ares.llms.request import LLMRequest
 from ares.llms.request import Message
@@ -23,6 +24,7 @@ __all__ = [
     "LLMRequest",
     "LLMResponse",
     "Message",
+    "OpenAIResponsesCompatibleLLMClient",
     "TextData",
     "ToolCallMessage",
     "ToolCallResponseMessage",

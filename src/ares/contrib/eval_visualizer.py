@@ -55,6 +55,9 @@ class TaskInfo:
     current_step: int = 0
     reward: base.Scalar | None = None
     cost: float = 0.0
+    prompt_tokens: int = 0
+    cached_prompt_tokens: int = 0
+    generated_tokens: int = 0
     start_time: float | None = None
     end_time: float | None = None
     error: str | None = None
@@ -106,6 +109,9 @@ class TrackedEnvironment[RewardType: base.Scalar, DiscountType: base.Scalar]:
         self._dashboard = dashboard
         self._step_count = 0
         self._total_cost = 0.0
+        self._prompt_tokens = 0
+        self._cached_prompt_tokens = 0
+        self._generated_tokens = 0
 
     async def reset(self) -> base.TimeStep[request.LLMRequest, RewardType, DiscountType]:
         """Reset the environment and update dashboard."""
@@ -122,6 +128,9 @@ class TrackedEnvironment[RewardType: base.Scalar, DiscountType: base.Scalar]:
 
         # Track LLM cost from the action
         self._total_cost += action.cost
+        self._prompt_tokens += action.usage.prompt_tokens
+        self._cached_prompt_tokens += action.usage.cached_prompt_tokens
+        self._generated_tokens += action.usage.generated_tokens
 
         ts = await self._env.step(action)
 
@@ -130,6 +139,9 @@ class TrackedEnvironment[RewardType: base.Scalar, DiscountType: base.Scalar]:
             self._task_id,
             current_step=self._step_count,
             cost=self._total_cost,
+            prompt_tokens=self._prompt_tokens,
+            cached_prompt_tokens=self._cached_prompt_tokens,
+            generated_tokens=self._generated_tokens,
             log=f"Step {self._step_count} completed",
         )
 
@@ -241,6 +253,7 @@ class EvaluationDashboard(app.App):
         total_tasks: int,
         preset_name: str | None = None,
         max_parallel: int | None = None,
+        nogui: bool = False,
     ):
         """Initialize the dashboard.
 
@@ -248,6 +261,7 @@ class EvaluationDashboard(app.App):
             total_tasks: Total number of tasks to evaluate.
             preset_name: Optional preset name to display in header.
             max_parallel: Optional max parallel workers to display in header.
+            nogui: If true, collect task state without starting the Textual app.
         """
         super().__init__()
         self.total_tasks = total_tasks
@@ -280,6 +294,8 @@ class EvaluationDashboard(app.App):
 
         # Track selected task for detail view
         self._selected_task_id: int | None = None
+
+        self._nogui = nogui
 
     def compose(self) -> app.ComposeResult:
         """Compose the dashboard layout."""
@@ -654,6 +670,9 @@ class EvaluationDashboard(app.App):
         current_step: int | None = None,
         reward: base.Scalar | None = None,
         cost: float | None = None,
+        prompt_tokens: int | None = None,
+        cached_prompt_tokens: int | None = None,
+        generated_tokens: int | None = None,
         error: str | None = None,
         log: str | None = None,
     ) -> None:
@@ -685,6 +704,15 @@ class EvaluationDashboard(app.App):
 
         if cost is not None:
             task.cost = cost
+
+        if prompt_tokens is not None:
+            task.prompt_tokens = prompt_tokens
+
+        if cached_prompt_tokens is not None:
+            task.cached_prompt_tokens = cached_prompt_tokens
+
+        if generated_tokens is not None:
+            task.generated_tokens = generated_tokens
 
         if error is not None:
             task.error = error
@@ -723,6 +751,9 @@ class EvaluationDashboard(app.App):
 
     async def __aenter__(self):
         """Async context manager entry - starts the dashboard."""
+        if self._nogui:
+            return self
+
         # Start the app in the background
         # We use create_task so it runs concurrently with the evaluation
         self._app_task = asyncio.create_task(self.run_async())
@@ -734,6 +765,9 @@ class EvaluationDashboard(app.App):
 
     async def __aexit__(self, *_args):
         """Async context manager exit - stops the dashboard."""
+        if self._nogui:
+            return None
+
         # Request the app to exit
         self.exit()
 

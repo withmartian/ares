@@ -9,11 +9,16 @@ class Usage:
 
     prompt_tokens: int
     generated_tokens: int
+    cached_prompt_tokens: int = 0
 
     @property
     def total_tokens(self) -> int:
         """Total tokens used (prompt + generated)."""
         return self.prompt_tokens + self.generated_tokens
+
+    @property
+    def uncached_prompt_tokens(self) -> int:
+        return self.prompt_tokens - self.cached_prompt_tokens
 
 
 @dataclasses.dataclass(frozen=True)

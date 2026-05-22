@@ -2,6 +2,8 @@
 
 import decimal
 import functools
+import re
+from typing import Protocol
 
 import frozendict
 import httpx
@@ -9,6 +11,15 @@ from openai.types.chat import chat_completion as chat_completion_types
 import pydantic
 
 from ares import config
+
+
+_RACING_MODEL_PATTERN = re.compile(r"^(?P<base_model>.+):racing-(?P<num_racers>[1-9][0-9]*)@(?P<multiplier>[1-9][0-9]*)$")
+
+
+class Usage(Protocol):
+    prompt_tokens: int
+    completion_tokens: int
+    cached_prompt_tokens: int
 
 
 class ModelPricing(pydantic.BaseModel, frozen=True):
@@ -74,13 +85,33 @@ def get_llm_cost(
     cost_mapping: frozendict.frozendict[str, ModelCost],
 ) -> decimal.Decimal:
     """Get the cost of an LLM call."""
-    if model_id not in cost_mapping:
-        raise ValueError(f"Model {model_id} not found in cost mapping.")
-    model_pricing = cost_mapping[model_id].pricing
-
     usage = completion.usage
     if usage is None:
         raise ValueError("Cannot compute cost of a completion with no usage.")
+
+    return get_usage_cost(model_id, usage, cost_mapping=cost_mapping)
+
+
+def get_usage_cost(
+    model_id: str,
+    usage: Usage,
+    *,
+    cost_mapping: frozendict.frozendict[str, ModelCost],
+) -> decimal.Decimal:
+    """Get model cost from token usage.
+
+    Racing model aliases use `<base-model>:racing-<m>@<k>` and cost k times the base model call cost.
+    """
+    cost_multiplier = decimal.Decimal(1)
+    priced_model_id = model_id
+    racing_match = _RACING_MODEL_PATTERN.match(model_id)
+    if racing_match is not None:
+        priced_model_id = racing_match.group("base_model")
+        cost_multiplier = decimal.Decimal(racing_match.group("multiplier"))
+
+    if priced_model_id not in cost_mapping:
+        raise ValueError(f"Model {priced_model_id} not found in cost mapping.")
+    model_pricing = cost_mapping[priced_model_id].pricing
 
     # Note: This doesn't take into account:
     # - completion_tokens_details.reasoning_tokens
@@ -89,9 +120,12 @@ def get_llm_cost(
     # and just considers them all output tokens.
 
     zero = decimal.Decimal("0")
+    cached_prompt_tokens = min(usage.cached_prompt_tokens, usage.prompt_tokens)
+    uncached_prompt_tokens = usage.prompt_tokens - cached_prompt_tokens
 
-    return (
+    return cost_multiplier * (
         (model_pricing.request or zero)
-        + (model_pricing.prompt or zero) * usage.prompt_tokens
+        + (model_pricing.prompt or zero) * uncached_prompt_tokens
+        + decimal.Decimal("0.1") * (model_pricing.prompt or zero) * cached_prompt_tokens
         + (model_pricing.completion or zero) * usage.completion_tokens
     )

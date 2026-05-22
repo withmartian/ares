@@ -75,6 +75,7 @@ class _LimitsExceededError(_TerminatingError):
 class _MiniSWEAgentOutput:
     returncode: int
     output: str
+    exception_info: str | None = None
 
 
 def _render_system_template(system_template: str) -> str:
@@ -99,9 +100,14 @@ def _render_action_observation_template(action_observation_template: str, output
     )
 
 
-def _render_format_error_template(format_error_template: str, actions: list[str]) -> str:
+def _render_format_error_template(format_error_template: str, actions: list[str], response_text: str) -> str:
+    if not actions:
+        error = f"Expected exactly one fenced bash block, found none. Response preview: {response_text[:1_000]}"
+    else:
+        error = f"Expected exactly one fenced bash block, found {len(actions)}."
     return jinja2.Template(format_error_template, undefined=jinja2.StrictUndefined).render(
         actions=actions,
+        error=error,
     )
 
 
@@ -118,6 +124,8 @@ class MiniSWECodeAgent(code_agent_base.CodeAgent):
 
     def __post_init__(self):
         config_path = pathlib.Path(minisweagent.config.builtin_config_dir) / "extra" / "swebench.yaml"
+        if not config_path.exists():
+            config_path = pathlib.Path(minisweagent.config.builtin_config_dir) / "benchmarks" / "swebench.yaml"
         self._config = yaml.safe_load(config_path.read_text())
         self._agent_config = self._config.get("agent", {})
 
@@ -128,7 +136,10 @@ class MiniSWECodeAgent(code_agent_base.CodeAgent):
         # Somewhat frustratingly, minisweagent uses kwargs.
         # We handle this by inspecting whether an argument will be accepted by the agent config.
         agent_config_dict = self._config.get("agent", {})
-        agent_config = default_agent.AgentConfig()
+        agent_config = default_agent.AgentConfig(
+            system_template=agent_config_dict["system_template"],
+            instance_template=agent_config_dict["instance_template"],
+        )
         for k, v in agent_config_dict.items():
             if hasattr(default_agent.AgentConfig, k):
                 setattr(agent_config, k, v)
@@ -139,7 +150,12 @@ class MiniSWECodeAgent(code_agent_base.CodeAgent):
         self._n_calls = 0
         self._total_cost = 0.0
         self._step_limit = self._agent_config.get("step_limit", 0)
-        self._cost_limit = self._agent_config.get("cost_limit", 0.0)
+        self._cost_limit = 500.0
+        model_config = self._config.get("model", {})
+        if "action_observation_template" not in self._agent_config and "observation_template" in model_config:
+            self._agent_config["action_observation_template"] = model_config["observation_template"]
+        if "format_error_template" not in self._agent_config and "format_error_template" in model_config:
+            self._agent_config["format_error_template"] = model_config["format_error_template"]
 
         self._system_prompt = _render_system_template(self._agent_config["system_template"])
         self._messages: list[request.Message] = []
@@ -263,7 +279,9 @@ class MiniSWECodeAgent(code_agent_base.CodeAgent):
         if len(actions) == 1:
             return actions[0].strip()
 
-        format_error_str = _render_format_error_template(self._agent_config["format_error_template"], actions=actions)
+        format_error_str = _render_format_error_template(
+            self._agent_config["format_error_template"], actions=actions, response_text=response_text
+        )
         raise _FormatError(format_error_str)
 
     def _raise_if_finished(self, output: containers.ExecResult):

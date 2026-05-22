@@ -131,8 +131,12 @@ def _register_default_presets() -> None:
             ("terminus2", terminus2_agent.Terminus2Agent),
         ]:
             ds_id = _make_harbor_dataset_id(ds_spec.name, ds_spec.version)
+            preset_name = f"{ds_id}-{code_agent_id}"
+            if preset_name in registry._list_presets():
+                _LOGGER.info("Skipping duplicate preset '%s'.", preset_name)
+                continue
             registry.register_preset(
-                f"{ds_id}-{code_agent_id}",
+                preset_name,
                 HarborSpec(
                     ds_spec=ds_spec,
                     dataset_id=ds_id,
