@@ -8,6 +8,7 @@ Do not add the registry mechanism itself to this module - that belongs in regist
 This module only contains preset registrations to avoid circular imports.
 """
 
+import collections
 import dataclasses
 import functools
 import logging
@@ -28,12 +29,13 @@ from ares.experiment_tracking import stat_tracker
 _LOGGER = logging.getLogger(__name__)
 
 
-def _make_harbor_dataset_id(name: str, version: str) -> str:
-    """Small helper to make a shorter Dataset ID from the Harbor name and version"""
-    if name == "swe-lancer-diamond":
-        name = f"swe-lancer-diamond-{version}"
+def _make_harbor_dataset_id(name: str, version: str | None = None) -> str:
+    """Make a shorter Harbor dataset ID for ARES presets."""
+    dataset_id = name.replace("swebench-verified", "sbv").replace("terminal-bench", "tbench")
+    if version is None:
+        return dataset_id
 
-    return name.replace("swebench-verified", "sbv").replace("terminal-bench", "tbench")
+    return f"{dataset_id}-{version}"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -125,12 +127,17 @@ def _register_default_presets() -> None:
     This function is called automatically when the presets module is imported,
     ensuring built-in presets are always available.
     """
-    for ds_spec in code_env.list_harbor_datasets():
+    ds_specs = code_env.list_harbor_datasets()
+    alias_id_counts = collections.Counter(_make_harbor_dataset_id(ds_spec.name) for ds_spec in ds_specs)
+
+    for ds_spec in ds_specs:
+        ds_id = _make_harbor_dataset_id(ds_spec.name, ds_spec.version)
+        alias_ds_id = _make_harbor_dataset_id(ds_spec.name)
+
         for code_agent_id, code_agent_factory in [
             ("mswea", mini_swe_agent.MiniSWECodeAgent),
             ("terminus2", terminus2_agent.Terminus2Agent),
         ]:
-            ds_id = _make_harbor_dataset_id(ds_spec.name, ds_spec.version)
             registry.register_preset(
                 f"{ds_id}-{code_agent_id}",
                 HarborSpec(
@@ -140,6 +147,16 @@ def _register_default_presets() -> None:
                     code_agent_id=code_agent_id,
                 ),
             )
+            if alias_id_counts[alias_ds_id] == 1:
+                registry.register_preset(
+                    f"{alias_ds_id}-{code_agent_id}",
+                    HarborSpec(
+                        ds_spec=ds_spec,
+                        dataset_id=alias_ds_id,
+                        code_agent_factory=code_agent_factory,
+                        code_agent_id=code_agent_id,
+                    ),
+                )
 
     # Twenty Questions — lightweight, no Docker needed.
     registry.register_preset("20q", TwentyQuestionsSpec())

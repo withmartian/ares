@@ -49,6 +49,15 @@ class _MockEnvSpec:
         }
 
 
+@dataclasses.dataclass(frozen=True)
+class _FakeHarborDatasetSpec:
+    """Minimal fake for the Harbor DatasetSpec fields presets.py reads."""
+
+    name: str
+    version: str
+    tasks: tuple[object, ...] = ()
+
+
 def test_list_presets():
     """Test that default presets are registered."""
     presets = registry._list_presets()
@@ -70,6 +79,43 @@ def test_info_specific_preset():
     result = registry.info("sbv-mswea")
     assert isinstance(result, registry.EnvironmentInfo)
     assert result.name == "sbv-mswea"
+
+
+def test_register_default_presets_versions_and_unambiguous_aliases(monkeypatch):
+    """Test Harbor presets get versioned IDs plus unambiguous unversioned aliases."""
+    from ares import presets
+
+    fake_ds_specs = (
+        _FakeHarborDatasetSpec(name="kumo", version="parity", tasks=(object(),)),
+        _FakeHarborDatasetSpec(name="kumo", version="1.0", tasks=(object(),)),
+        _FakeHarborDatasetSpec(name="kumo", version="easy", tasks=(object(),)),
+        _FakeHarborDatasetSpec(name="swebench-verified", version="latest", tasks=(object(),)),
+        _FakeHarborDatasetSpec(name="terminal-bench", version="latest", tasks=(object(),)),
+    )
+    original_registry = dict(registry._REGISTRY)
+    monkeypatch.setattr(presets.code_env, "list_harbor_datasets", lambda: fake_ds_specs)
+
+    registry.clear_registry()
+    try:
+        presets._register_default_presets()
+        preset_names = set(registry._list_presets())
+
+        assert "kumo-parity-mswea" in preset_names
+        assert "kumo-1.0-mswea" in preset_names
+        assert "kumo-easy-mswea" in preset_names
+        assert "kumo-parity-terminus2" in preset_names
+        assert "kumo-1.0-terminus2" in preset_names
+        assert "kumo-easy-terminus2" in preset_names
+        assert "sbv-latest-mswea" in preset_names
+        assert "tbench-latest-mswea" in preset_names
+        assert "kumo-mswea" not in preset_names
+        assert "kumo-terminus2" not in preset_names
+        assert "sbv-mswea" in preset_names
+        assert "tbench-mswea" in preset_names
+        assert "20q" in preset_names
+    finally:
+        registry._REGISTRY.clear()
+        registry._REGISTRY.update(original_registry)
 
 
 def test_info_missing_preset():
