@@ -8,6 +8,7 @@ Do not add the registry mechanism itself to this module - that belongs in regist
 This module only contains preset registrations to avoid circular imports.
 """
 
+from collections import Counter
 import dataclasses
 import functools
 import logging
@@ -28,10 +29,10 @@ from ares.experiment_tracking import stat_tracker
 _LOGGER = logging.getLogger(__name__)
 
 
-def _make_harbor_dataset_id(name: str, version: str) -> str:
-    """Small helper to make a shorter Dataset ID from the Harbor name and version"""
-    if name == "swe-lancer-diamond":
-        name = f"swe-lancer-diamond-{version}"
+def _make_harbor_dataset_id(name: str, version: str, *, include_version: bool = False) -> str:
+    """Make a shorter Harbor dataset ID for ARES presets."""
+    if include_version or name == "swe-lancer-diamond":
+        name = f"{name}-{version}"
 
     return name.replace("swebench-verified", "sbv").replace("terminal-bench", "tbench")
 
@@ -125,12 +126,20 @@ def _register_default_presets() -> None:
     This function is called automatically when the presets module is imported,
     ensuring built-in presets are always available.
     """
-    for ds_spec in code_env.list_harbor_datasets():
+    ds_specs = code_env.list_harbor_datasets()
+    dataset_name_counts = Counter(ds_spec.name for ds_spec in ds_specs)
+
+    for ds_spec in ds_specs:
+        ds_id = _make_harbor_dataset_id(
+            ds_spec.name,
+            ds_spec.version,
+            include_version=dataset_name_counts[ds_spec.name] > 1,
+        )
+
         for code_agent_id, code_agent_factory in [
             ("mswea", mini_swe_agent.MiniSWECodeAgent),
             ("terminus2", terminus2_agent.Terminus2Agent),
         ]:
-            ds_id = _make_harbor_dataset_id(ds_spec.name, ds_spec.version)
             registry.register_preset(
                 f"{ds_id}-{code_agent_id}",
                 HarborSpec(

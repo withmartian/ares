@@ -24,8 +24,8 @@ from ares.experiment_tracking import stat_tracker
 
 _LOGGER = logging.getLogger(__name__)
 
-# Valid preset name pattern: alphanumeric + hyphens, underscores, and forward slashes
-_PRESET_NAME_PATTERN = re.compile(r"^[a-zA-Z0-9_/-]+$")
+# Valid preset name pattern: alphanumeric + periods, hyphens, underscores, and forward slashes
+_PRESET_NAME_PATTERN = re.compile(r"^[a-zA-Z0-9_./-]+$")
 
 
 class TaskSelector(Protocol):
@@ -292,7 +292,7 @@ def register_preset(
     Args:
         name: Unique identifier for the preset. Convention is "dataset-variant" (e.g.,
             "swebench-lite", "harbor-easy"). Must not already exist in the registry.
-            Must contain only alphanumeric characters, hyphens, underscores, and forward slashes.
+            Must contain only alphanumeric characters, periods, hyphens, underscores, and forward slashes.
             Cannot contain colons or @ symbols as they are reserved for task selection syntax.
         spec: An EnvironmentSpec instance that provides both metadata (via get_info())
             and environment creation (via get_env()). The spec's get_env() method will
@@ -305,7 +305,8 @@ def register_preset(
     if not _PRESET_NAME_PATTERN.match(name):
         raise ValueError(
             f"Preset name '{name}' contains invalid characters. "
-            "Only alphanumeric characters, hyphens (-), underscores (_), and forward slashes (/) are allowed."
+            "Only alphanumeric characters, periods (.), hyphens (-), underscores (_), "
+            "and forward slashes (/) are allowed."
         )
 
     if name in _REGISTRY:
