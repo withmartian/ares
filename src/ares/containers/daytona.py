@@ -35,8 +35,11 @@ def _get_daytona_client_sync() -> daytona.Daytona:
     wait=tenacity.wait_exponential_jitter(max=60),
     before_sleep=tenacity.before_sleep_log(_LOGGER, logging.INFO),
 )
-async def _create_sandbox_with_retry(params: daytona.CreateSandboxFromImageParams) -> daytona.AsyncSandbox:
-    return await _get_daytona_client().create(params=params)
+async def _create_sandbox_with_retry(
+    client: daytona.AsyncDaytona,
+    params: daytona.CreateSandboxFromImageParams,
+) -> daytona.AsyncSandbox:
+    return await client.create(params=params)
 
 
 @tenacity.retry(
@@ -70,6 +73,7 @@ class DaytonaContainer(containers.Container):
     name: str | None = None
     resources: containers.Resources | None = None
     default_workdir: str | None = None
+    daytona_config: daytona.DaytonaConfig | None = dataclasses.field(default=None, repr=False)
 
     def __post_init__(self):
         self._sbx: daytona.AsyncSandbox | None = None
@@ -82,6 +86,20 @@ class DaytonaContainer(containers.Container):
                 disk=self.resources.disk,
                 gpu=self.resources.gpu,
             )
+
+    @functools.cached_property
+    def _daytona_client(self) -> daytona.AsyncDaytona:
+        if self.daytona_config is None:
+            return _get_daytona_client()
+
+        return daytona.AsyncDaytona(self.daytona_config)
+
+    @functools.cached_property
+    def _daytona_client_sync(self) -> daytona.Daytona:
+        if self.daytona_config is None:
+            return _get_daytona_client_sync()
+
+        return daytona.Daytona(self.daytona_config)
 
     async def start(self, env: dict[str, str] | None = None) -> None:
         """Start the container."""
@@ -104,7 +122,7 @@ class DaytonaContainer(containers.Container):
             labels={"user": config.CONFIG.user},
             resources=self._daytona_resources,
         )
-        self._sbx = await _create_sandbox_with_retry(params=params)
+        self._sbx = await _create_sandbox_with_retry(client=self._daytona_client, params=params)
 
     async def stop(self) -> None:
         """Stop the container."""
@@ -161,7 +179,7 @@ class DaytonaContainer(containers.Container):
             _LOGGER.info("Sandbox not started, stop_and_remove is a no-op.")
             return
 
-        client = _get_daytona_client_sync()
+        client = self._daytona_client_sync
 
         _LOGGER.info("Stopping and removing sandbox %s", self._sbx.id)
         try:
@@ -218,8 +236,15 @@ class DaytonaContainer(containers.Container):
         name: str | None = None,
         resources: containers.Resources | None = None,
         default_workdir: str | None = None,
+        daytona_config: daytona.DaytonaConfig | None = None,
     ) -> "DaytonaContainer":
-        return DaytonaContainer(image=image, name=name, resources=resources, default_workdir=default_workdir)
+        return DaytonaContainer(
+            image=image,
+            name=name,
+            resources=resources,
+            default_workdir=default_workdir,
+            daytona_config=daytona_config,
+        )
 
     @classmethod
     def from_dockerfile(
@@ -229,7 +254,12 @@ class DaytonaContainer(containers.Container):
         name: str | None = None,
         resources: containers.Resources | None = None,
         default_workdir: str | None = None,
+        daytona_config: daytona.DaytonaConfig | None = None,
     ) -> "DaytonaContainer":
         return DaytonaContainer(
-            dockerfile_path=dockerfile_path, name=name, resources=resources, default_workdir=default_workdir
+            dockerfile_path=dockerfile_path,
+            name=name,
+            resources=resources,
+            default_workdir=default_workdir,
+            daytona_config=daytona_config,
         )
