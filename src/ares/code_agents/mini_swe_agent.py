@@ -110,6 +110,23 @@ def _render_timeout_template(action: str, output: str) -> str:
     return _TIMEOUT_TEMPLATE.format(action=action, output=output)
 
 
+def _resolve_swebench_config_path(config_dir: pathlib.Path | str) -> pathlib.Path:
+    config_dir = pathlib.Path(config_dir)
+    config_paths = (
+        config_dir / "benchmarks" / "swebench.yaml",
+        config_dir / "extra" / "swebench.yaml",
+    )
+
+    for config_path in config_paths:
+        if config_path.is_file():
+            return config_path
+
+    raise FileNotFoundError(
+        "Could not find mini-swe-agent SWE-bench config. Looked for: "
+        + ", ".join(str(config_path) for config_path in config_paths)
+    )
+
+
 @dataclasses.dataclass(kw_only=True)
 class MiniSWECodeAgent(code_agent_base.CodeAgent):
     container: containers.Container
@@ -117,7 +134,7 @@ class MiniSWECodeAgent(code_agent_base.CodeAgent):
     tracker: stat_tracker.StatTracker = dataclasses.field(default_factory=stat_tracker.NullStatTracker)
 
     def __post_init__(self):
-        config_path = pathlib.Path(minisweagent.config.builtin_config_dir) / "extra" / "swebench.yaml"
+        config_path = _resolve_swebench_config_path(minisweagent.config.builtin_config_dir)
         self._config = yaml.safe_load(config_path.read_text())
         self._agent_config = self._config.get("agent", {})
 
@@ -127,12 +144,11 @@ class MiniSWECodeAgent(code_agent_base.CodeAgent):
 
         # Somewhat frustratingly, minisweagent uses kwargs.
         # We handle this by inspecting whether an argument will be accepted by the agent config.
-        agent_config_dict = self._config.get("agent", {})
-        agent_config = default_agent.AgentConfig()
-        for k, v in agent_config_dict.items():
-            if hasattr(default_agent.AgentConfig, k):
-                setattr(agent_config, k, v)
-            else:
+        accepted_agent_config_keys = set(getattr(default_agent.AgentConfig, "model_fields", {})) | set(
+            getattr(default_agent.AgentConfig, "__dataclass_fields__", {})
+        )
+        for k in self._config.get("agent", {}):
+            if k not in accepted_agent_config_keys and not hasattr(default_agent.AgentConfig, k):
                 _LOGGER.info("Ignoring argument %s in agent configuration.", k)
 
         # Initialize step and cost tracking
