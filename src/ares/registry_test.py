@@ -81,8 +81,8 @@ def test_info_specific_preset():
     assert result.name == "sbv-mswea"
 
 
-def test_register_default_presets_versions_duplicate_harbor_dataset_names(monkeypatch):
-    """Test duplicate Harbor dataset names get versioned preset IDs."""
+def test_register_default_presets_versions_and_unambiguous_aliases(monkeypatch):
+    """Test Harbor presets get versioned IDs plus unambiguous unversioned aliases."""
     from ares import presets
 
     fake_ds_specs = (
@@ -106,6 +106,10 @@ def test_register_default_presets_versions_duplicate_harbor_dataset_names(monkey
         assert "kumo-parity-terminus2" in preset_names
         assert "kumo-1.0-terminus2" in preset_names
         assert "kumo-easy-terminus2" in preset_names
+        assert "sbv-latest-mswea" in preset_names
+        assert "tbench-latest-mswea" in preset_names
+        assert "kumo-mswea" not in preset_names
+        assert "kumo-terminus2" not in preset_names
         assert "sbv-mswea" in preset_names
         assert "tbench-mswea" in preset_names
         assert "20q" in preset_names

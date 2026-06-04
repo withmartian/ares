@@ -29,12 +29,13 @@ from ares.experiment_tracking import stat_tracker
 _LOGGER = logging.getLogger(__name__)
 
 
-def _make_harbor_dataset_id(name: str, version: str, *, include_version: bool = False) -> str:
+def _make_harbor_dataset_id(name: str, version: str | None = None) -> str:
     """Make a shorter Harbor dataset ID for ARES presets."""
-    if include_version or name == "swe-lancer-diamond":
-        name = f"{name}-{version}"
+    dataset_id = name.replace("swebench-verified", "sbv").replace("terminal-bench", "tbench")
+    if version is None:
+        return dataset_id
 
-    return name.replace("swebench-verified", "sbv").replace("terminal-bench", "tbench")
+    return f"{dataset_id}-{version}"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -127,14 +128,11 @@ def _register_default_presets() -> None:
     ensuring built-in presets are always available.
     """
     ds_specs = code_env.list_harbor_datasets()
-    dataset_name_counts = collections.Counter(ds_spec.name for ds_spec in ds_specs)
+    alias_id_counts = collections.Counter(_make_harbor_dataset_id(ds_spec.name) for ds_spec in ds_specs)
 
     for ds_spec in ds_specs:
-        ds_id = _make_harbor_dataset_id(
-            ds_spec.name,
-            ds_spec.version,
-            include_version=dataset_name_counts[ds_spec.name] > 1,
-        )
+        ds_id = _make_harbor_dataset_id(ds_spec.name, ds_spec.version)
+        alias_ds_id = _make_harbor_dataset_id(ds_spec.name)
 
         for code_agent_id, code_agent_factory in [
             ("mswea", mini_swe_agent.MiniSWECodeAgent),
@@ -149,6 +147,16 @@ def _register_default_presets() -> None:
                     code_agent_id=code_agent_id,
                 ),
             )
+            if alias_id_counts[alias_ds_id] == 1:
+                registry.register_preset(
+                    f"{alias_ds_id}-{code_agent_id}",
+                    HarborSpec(
+                        ds_spec=ds_spec,
+                        dataset_id=alias_ds_id,
+                        code_agent_factory=code_agent_factory,
+                        code_agent_id=code_agent_id,
+                    ),
+                )
 
     # Twenty Questions — lightweight, no Docker needed.
     registry.register_preset("20q", TwentyQuestionsSpec())
