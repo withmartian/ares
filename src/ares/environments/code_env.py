@@ -62,7 +62,7 @@ class CodeEnvironment(base.Environment[response.LLMResponse, request.LLMRequest 
         self,
         tasks: Sequence[harbor_task.Task],
         *,
-        container_factory: containers.ContainerFactoryLike = ares_daytona.DaytonaContainer,
+        container_factory: containers.ContainerFactory = ares_daytona.DaytonaContainer,
         code_agent_factory: code_agent_base.CodeAgentFactory = mini_swe_agent.MiniSWECodeAgent,
         step_limit: int = 250,  # Same as mini-swe-agent default.
         prefix: str = "harbor_env",

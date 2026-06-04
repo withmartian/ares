@@ -259,7 +259,7 @@ class EnvironmentSpec(Protocol):
         self,
         *,
         selector: TaskSelector,
-        container_factory: containers.ContainerFactoryLike,
+        container_factory: containers.ContainerFactory,
         tracker: stat_tracker.StatTracker | None = None,
     ) -> base.Environment:
         """Create and return an environment instance.
@@ -406,7 +406,7 @@ def register_env(
                 self,
                 *,
                 selector: TaskSelector,
-                container_factory: containers.ContainerFactoryLike,
+                container_factory: containers.ContainerFactory,
                 tracker: stat_tracker.StatTracker | None = None,
             ) -> base.Environment:
                 """Delegate to the decorated function."""
@@ -528,7 +528,7 @@ def list_presets() -> str:
 def make(
     preset_id: str,
     *,
-    container_factory: containers.ContainerFactoryLike = docker.DockerContainer,
+    container_factory: containers.ContainerFactory = docker.DockerContainer,
     tracker: stat_tracker.StatTracker | None = None,
 ) -> base.Environment:
     """Create an environment instance from a registered preset.

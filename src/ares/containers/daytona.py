@@ -263,3 +263,42 @@ class DaytonaContainer(containers.Container):
             default_workdir=default_workdir,
             daytona_config=daytona_config,
         )
+
+
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class DaytonaContainerFactory:
+    """Container factory that creates Daytona containers with explicit config."""
+
+    daytona_config: daytona.DaytonaConfig = dataclasses.field(repr=False)
+
+    def from_image(
+        self,
+        *,
+        image: str,
+        name: str | None = None,
+        resources: containers.Resources | None = None,
+        default_workdir: str | None = None,
+    ) -> DaytonaContainer:
+        return DaytonaContainer.from_image(
+            image=image,
+            name=name,
+            resources=resources,
+            default_workdir=default_workdir,
+            daytona_config=self.daytona_config,
+        )
+
+    def from_dockerfile(
+        self,
+        *,
+        dockerfile_path: pathlib.Path | str,
+        name: str | None = None,
+        resources: containers.Resources | None = None,
+        default_workdir: str | None = None,
+    ) -> DaytonaContainer:
+        return DaytonaContainer.from_dockerfile(
+            dockerfile_path=dockerfile_path,
+            name=name,
+            resources=resources,
+            default_workdir=default_workdir,
+            daytona_config=self.daytona_config,
+        )

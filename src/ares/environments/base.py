@@ -8,7 +8,7 @@ import os
 import pathlib
 import time
 from types import TracebackType
-from typing import Literal, NamedTuple, Protocol, Self, cast
+from typing import Literal, NamedTuple, Protocol, Self
 import uuid
 
 from numpy.typing import NDArray
@@ -151,7 +151,7 @@ class Environment[ActionType, ObservationType, RewardType: Scalar, DiscountType:
 
 async def create_container(
     *,
-    container_factory: containers.ContainerFactoryLike,
+    container_factory: containers.ContainerFactory,
     container_prefix: str,
     image_name: str | None = None,
     dockerfile_path: pathlib.Path | str | None = None,
@@ -177,21 +177,11 @@ async def create_container(
 
     if image_name is not None:
         image_name_short = image_name.split("/")[-1].removesuffix(":latest").split(".")[-1]
-        if hasattr(container_factory, "from_image"):
-            factory = cast(containers.ContainerFactory, container_factory)
-            create_fn = functools.partial(factory.from_image, image=image_name)
-        else:
-            constructor = cast(containers.ContainerConstructor, container_factory)
-            create_fn = functools.partial(constructor, image=image_name)
+        create_fn = functools.partial(container_factory.from_image, image=image_name)
 
     elif dockerfile_path is not None:
         image_name_short = pathlib.Path(dockerfile_path).parent.name.split(".")[-1]
-        if hasattr(container_factory, "from_dockerfile"):
-            factory = cast(containers.ContainerFactory, container_factory)
-            create_fn = functools.partial(factory.from_dockerfile, dockerfile_path=dockerfile_path)
-        else:
-            constructor = cast(containers.ContainerConstructor, container_factory)
-            create_fn = functools.partial(constructor, dockerfile_path=dockerfile_path)
+        create_fn = functools.partial(container_factory.from_dockerfile, dockerfile_path=dockerfile_path)
 
     else:
         raise ValueError("Must specify one of image_name or dockerfile_path")

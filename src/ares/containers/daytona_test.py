@@ -1,6 +1,5 @@
 """Tests for Daytona container implementation."""
 
-import functools
 import pathlib
 import types
 from typing import cast
@@ -12,8 +11,8 @@ from ares.containers import daytona as ares_daytona
 from ares.environments import base
 
 
-def test_daytona_factory_methods_preserve_explicit_config() -> None:
-    """Test that Daytona factory methods pass explicit config to containers."""
+def test_daytona_container_methods_preserve_explicit_config() -> None:
+    """Test that Daytona container methods pass explicit config to containers."""
     daytona_config = daytona.DaytonaConfig(api_key="test-key", api_url="https://daytona.example")
 
     image_container = ares_daytona.DaytonaContainer.from_image(
@@ -27,6 +26,26 @@ def test_daytona_factory_methods_preserve_explicit_config() -> None:
 
     assert image_container.daytona_config is daytona_config
     assert dockerfile_container.daytona_config is daytona_config
+
+
+def test_daytona_container_factory_preserves_explicit_config() -> None:
+    """Test that DaytonaContainerFactory passes explicit config to containers."""
+    daytona_config = daytona.DaytonaConfig(api_key="test-key", api_url="https://daytona.example")
+    factory = ares_daytona.DaytonaContainerFactory(daytona_config=daytona_config)
+
+    image_container = factory.from_image(
+        image="python:3.12",
+        default_workdir="/workspace",
+    )
+    dockerfile_container = factory.from_dockerfile(
+        dockerfile_path=pathlib.Path("Dockerfile"),
+        default_workdir="/workspace",
+    )
+
+    assert image_container.daytona_config is daytona_config
+    assert image_container.default_workdir == "/workspace"
+    assert dockerfile_container.daytona_config is daytona_config
+    assert dockerfile_container.default_workdir == "/workspace"
 
 
 @pytest.mark.asyncio
@@ -94,13 +113,11 @@ def test_stop_and_remove_uses_explicit_daytona_config(monkeypatch: pytest.Monkey
 
 
 @pytest.mark.asyncio
-async def test_create_container_accepts_configured_daytona_constructor() -> None:
-    """Test that create_container accepts partial(DaytonaContainer, daytona_config=...)."""
+async def test_create_container_accepts_configured_daytona_factory() -> None:
+    """Test that create_container accepts DaytonaContainerFactory."""
     daytona_config = daytona.DaytonaConfig(api_key="test-key", api_url="https://daytona.example")
-    container_factory = functools.partial(
-        ares_daytona.DaytonaContainer,
+    container_factory = ares_daytona.DaytonaContainerFactory(
         daytona_config=daytona_config,
-        default_workdir="/workspace",
     )
 
     container = await base.create_container(
@@ -111,7 +128,6 @@ async def test_create_container_accepts_configured_daytona_constructor() -> None
 
     assert isinstance(container, ares_daytona.DaytonaContainer)
     assert container.image == "python:3.12"
-    assert container.default_workdir == "/workspace"
     assert container.daytona_config is daytona_config
     assert container.name is not None
     assert container.name.startswith("ares.test.12")

@@ -185,22 +185,3 @@ class ContainerFactory(Protocol):
             A Container instance.
         """
         ...
-
-
-class ContainerConstructor(Protocol):
-    """Protocol for callable container factories."""
-
-    def __call__(
-        self,
-        *,
-        image: str | None = None,
-        dockerfile_path: pathlib.Path | str | None = None,
-        name: str | None = None,
-        resources: Resources | None = None,
-        default_workdir: str | None = None,
-    ) -> Container:
-        """Create a container directly from constructor-style keyword arguments."""
-        ...
-
-
-type ContainerFactoryLike = ContainerFactory | ContainerConstructor
