@@ -75,6 +75,7 @@ class _LimitsExceededError(_TerminatingError):
 class _MiniSWEAgentOutput:
     returncode: int
     output: str
+    exception_info: str | None = None
 
 
 def _render_system_template(system_template: str) -> str:
@@ -99,9 +100,9 @@ def _render_action_observation_template(action_observation_template: str, output
     )
 
 
-def _render_format_error_template(format_error_template: str, actions: list[str]) -> str:
+def _render_format_error_template(format_error_template: str, error: str) -> str:
     return jinja2.Template(format_error_template, undefined=jinja2.StrictUndefined).render(
-        actions=actions,
+        error=error,
     )
 
 
@@ -112,19 +113,12 @@ def _render_timeout_template(action: str, output: str) -> str:
 
 def _resolve_swebench_config_path(config_dir: pathlib.Path | str) -> pathlib.Path:
     config_dir = pathlib.Path(config_dir)
-    config_paths = (
-        config_dir / "benchmarks" / "swebench.yaml",
-        config_dir / "extra" / "swebench.yaml",
-    )
+    config_path = config_dir / "benchmarks" / "swebench.yaml"
 
-    for config_path in config_paths:
-        if config_path.is_file():
-            return config_path
+    if config_path.is_file():
+        return config_path
 
-    raise FileNotFoundError(
-        "Could not find mini-swe-agent SWE-bench config. Looked for: "
-        + ", ".join(str(config_path) for config_path in config_paths)
-    )
+    raise FileNotFoundError(f"Could not find mini-swe-agent SWE-bench config: {config_path}")
 
 
 @dataclasses.dataclass(kw_only=True)
@@ -137,6 +131,7 @@ class MiniSWECodeAgent(code_agent_base.CodeAgent):
         config_path = _resolve_swebench_config_path(minisweagent.config.builtin_config_dir)
         self._config = yaml.safe_load(config_path.read_text())
         self._agent_config = self._config.get("agent", {})
+        self._model_config = self._config.get("model", {})
 
         environment_config = self._config.get("environment", {})
         self._env_timeout = environment_config.get("timeout", None)
@@ -144,11 +139,9 @@ class MiniSWECodeAgent(code_agent_base.CodeAgent):
 
         # Somewhat frustratingly, minisweagent uses kwargs.
         # We handle this by inspecting whether an argument will be accepted by the agent config.
-        accepted_agent_config_keys = set(getattr(default_agent.AgentConfig, "model_fields", {})) | set(
-            getattr(default_agent.AgentConfig, "__dataclass_fields__", {})
-        )
+        accepted_agent_config_keys = set(default_agent.AgentConfig.model_fields)
         for k in self._config.get("agent", {}):
-            if k not in accepted_agent_config_keys and not hasattr(default_agent.AgentConfig, k):
+            if k not in accepted_agent_config_keys:
                 _LOGGER.info("Ignoring argument %s in agent configuration.", k)
 
         # Initialize step and cost tracking
@@ -268,7 +261,7 @@ class MiniSWECodeAgent(code_agent_base.CodeAgent):
         self._raise_if_finished(output)
 
         observation = _render_action_observation_template(
-            self._agent_config["action_observation_template"],
+            self._model_config["observation_template"],
             output=_MiniSWEAgentOutput(returncode=output.exit_code, output=output.output),
         )
         self._add_message("user", observation)
@@ -279,7 +272,10 @@ class MiniSWECodeAgent(code_agent_base.CodeAgent):
         if len(actions) == 1:
             return actions[0].strip()
 
-        format_error_str = _render_format_error_template(self._agent_config["format_error_template"], actions=actions)
+        format_error_str = _render_format_error_template(
+            self._model_config["format_error_template"],
+            error=f"Expected exactly one bash command in triple backticks, found {len(actions)}.",
+        )
         raise _FormatError(format_error_str)
 
     def _raise_if_finished(self, output: containers.ExecResult):
