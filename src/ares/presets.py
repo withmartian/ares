@@ -8,7 +8,7 @@ Do not add the registry mechanism itself to this module - that belongs in regist
 This module only contains preset registrations to avoid circular imports.
 """
 
-from collections import Counter
+import collections
 import dataclasses
 import functools
 import logging
@@ -127,7 +127,7 @@ def _register_default_presets() -> None:
     ensuring built-in presets are always available.
     """
     ds_specs = code_env.list_harbor_datasets()
-    dataset_name_counts = Counter(ds_spec.name for ds_spec in ds_specs)
+    dataset_name_counts = collections.Counter(ds_spec.name for ds_spec in ds_specs)
 
     for ds_spec in ds_specs:
         ds_id = _make_harbor_dataset_id(
