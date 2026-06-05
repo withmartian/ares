@@ -62,20 +62,15 @@ class CodeEnvironment(base.Environment[response.LLMResponse, request.LLMRequest 
 
     def __init__(
         self,
-        tasks: Sequence[harbor_task.Task] | None = None,
+        tasks: Sequence[harbor_task.Task],
         *,
-        task_loader: TaskLoader | None = None,
         container_factory: containers.ContainerFactory = ares_daytona.DaytonaContainer,
         code_agent_factory: code_agent_base.CodeAgentFactory = mini_swe_agent.MiniSWECodeAgent,
         step_limit: int = 250,  # Same as mini-swe-agent default.
         prefix: str = "harbor_env",
         tracker: stat_tracker.StatTracker | None = None,
     ):
-        if (tasks is None) == (task_loader is None):
-            raise ValueError("Exactly one of tasks or task_loader must be provided.")
-
         self._tasks = tasks
-        self._task_loader = task_loader
         self._container_factory = container_factory
         self._code_agent_factory = code_agent_factory
         self._step_limit = step_limit
@@ -241,18 +236,9 @@ class CodeEnvironment(base.Environment[response.LLMResponse, request.LLMRequest 
         if not self._is_active:
             raise RuntimeError("Environment is not active.")
 
-    async def _ensure_tasks_downloaded(self) -> Sequence[harbor_task.Task]:
-        if self._tasks is None:
-            if self._task_loader is None:
-                raise RuntimeError("Task loader is not configured.")
-            self._tasks = tuple(await self._task_loader())
-
-        return self._tasks
-
     async def _reset_task(self) -> None:
         """Randomly select a task from the task list."""
-        tasks = await self._ensure_tasks_downloaded()
-        self._current_task = random.choice(tasks)
+        self._current_task = random.choice(self._tasks)
         _LOGGER.debug("[%d] Selected task %s.", id(self), self._current_task.name)
 
     async def _start_container(self) -> None:
@@ -359,6 +345,43 @@ class CodeEnvironment(base.Environment[response.LLMResponse, request.LLMRequest 
 
         else:
             raise ValueError(f"Unsupported reward file type: {remote_path}")
+
+
+class LazyTasksCodeEnvironment(CodeEnvironment):
+    """CodeEnvironment variant that downloads tasks on first reset."""
+
+    def __init__(
+        self,
+        *,
+        task_loader: TaskLoader,
+        container_factory: containers.ContainerFactory = ares_daytona.DaytonaContainer,
+        code_agent_factory: code_agent_base.CodeAgentFactory = mini_swe_agent.MiniSWECodeAgent,
+        step_limit: int = 250,
+        prefix: str = "harbor_env",
+        tracker: stat_tracker.StatTracker | None = None,
+    ):
+        super().__init__(
+            tasks=(),
+            container_factory=container_factory,
+            code_agent_factory=code_agent_factory,
+            step_limit=step_limit,
+            prefix=prefix,
+            tracker=tracker,
+        )
+        self._task_loader = task_loader
+
+    async def _ensure_tasks_downloaded(self) -> None:
+        if self._tasks:
+            return
+
+        tasks = tuple(await self._task_loader())
+        if not tasks:
+            raise ValueError("Task loader produced no tasks.")
+        self._tasks = tasks
+
+    async def _reset_task(self) -> None:
+        await self._ensure_tasks_downloaded()
+        await super()._reset_task()
 
 
 class _Janitor:

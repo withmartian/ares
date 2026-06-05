@@ -86,7 +86,7 @@ class HarborSpec:
 
             return selected_tasks
 
-        return code_env.CodeEnvironment(
+        return code_env.LazyTasksCodeEnvironment(
             task_loader=load_tasks,
             container_factory=container_factory,
             code_agent_factory=self.code_agent_factory,
