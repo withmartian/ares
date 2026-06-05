@@ -2,6 +2,7 @@ from unittest import mock
 
 from harbor.registry.client import factory as harbor_client_factory
 import pytest
+import yaml
 
 _harbor_client = mock.Mock()
 _harbor_client.get_datasets.return_value = ()
@@ -21,6 +22,12 @@ def test_swebench_config_is_repo_owned_v1_copy() -> None:
     assert "Copied from mini-swe-agent==1.17.5" in config_text
     assert "action_observation_template" in config_text
     assert "format_error_template" in config_text
+
+
+def test_agent_config_keys_match_v1_agent_section() -> None:
+    config = yaml.safe_load(mini_swe_agent._SWEBENCH_CONFIG_RESOURCE.read_text(encoding="utf-8"))
+
+    assert frozenset(config["agent"]) == mini_swe_agent._AGENT_CONFIG_KEYS
 
 
 def test_mini_swe_code_agent_initializes_from_repo_config() -> None:

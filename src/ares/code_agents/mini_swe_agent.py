@@ -14,7 +14,6 @@ Commit hash: 6ff7d26ac371e5bb9611ec37074fc1bedf400895
 import dataclasses
 import importlib.resources
 import logging
-import os
 import re
 from typing import Literal, assert_never
 
@@ -28,12 +27,18 @@ from ares.llms import llm_clients
 from ares.llms import request
 from ares.llms import response
 
-# Ensure that MSWEA doesn't log its startup message on import.
-os.environ["MSWEA_SILENT_STARTUP"] = "1"
-from minisweagent.agents import default as default_agent
-
 _LOGGER = logging.getLogger(__name__)
 _SWEBENCH_CONFIG_RESOURCE = importlib.resources.files("ares.code_agents") / "configs" / "swebench_v1.yaml"
+_AGENT_CONFIG_KEYS = frozenset(
+    {
+        "action_observation_template",
+        "cost_limit",
+        "format_error_template",
+        "instance_template",
+        "step_limit",
+        "system_template",
+    }
+)
 
 
 # Copied from minisweagent's default config.
@@ -124,11 +129,8 @@ class MiniSWECodeAgent(code_agent_base.CodeAgent):
         self._env_timeout = environment_config.get("timeout", None)
         self._environment_env_vars = environment_config.get("env", None)
 
-        # Somewhat frustratingly, minisweagent uses kwargs.
-        # We handle this by inspecting whether an argument will be accepted by the agent config.
-        accepted_agent_config_keys = set(default_agent.AgentConfig.model_fields)
         for k in self._config.get("agent", {}):
-            if k not in accepted_agent_config_keys:
+            if k not in _AGENT_CONFIG_KEYS:
                 _LOGGER.info("Ignoring argument %s in agent configuration.", k)
 
         # Initialize step and cost tracking
