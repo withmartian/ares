@@ -10,11 +10,7 @@ This module only contains preset registrations to avoid circular imports.
 
 import collections
 import dataclasses
-import functools
 import logging
-
-from harbor.models import registry as harbor_registry
-from harbor.models.task import task as harbor_task
 
 from ares import registry
 from ares.code_agents import code_agent_base
@@ -39,17 +35,29 @@ def _make_harbor_dataset_id(name: str, version: str | None = None) -> str:
 
 
 @dataclasses.dataclass(frozen=True)
+class HarborDatasetSummary:
+    """Static Harbor dataset metadata needed for ARES preset registration."""
+
+    name: str
+    version: str
+    task_count: int
+
+
+# Do not enumerate Harbor datasets during import: Harbor's registry API is async and network-backed.
+_DEFAULT_HARBOR_DATASETS: tuple[HarborDatasetSummary, ...] = (
+    HarborDatasetSummary(name="swebench-verified", version="1.0", task_count=500),
+    HarborDatasetSummary(name="terminal-bench", version="2.0", task_count=89),
+)
+
+
+@dataclasses.dataclass(frozen=True)
 class HarborSpec:
     """Environment spec for Harbor Verified with mini-swe-agent."""
 
-    ds_spec: harbor_registry.DatasetSpec
+    ds_spec: HarborDatasetSummary
     dataset_id: str
     code_agent_factory: code_agent_base.CodeAgentFactory
     code_agent_id: str
-
-    @functools.cached_property
-    def ds(self) -> list[harbor_task.Task]:
-        return code_env.load_harbor_dataset(name=self.ds_spec.name, version=self.ds_spec.version)
 
     def get_info(self) -> registry.EnvironmentInfo:
         """Return metadata about Harbor Verified."""
@@ -58,7 +66,7 @@ class HarborSpec:
             description=(
                 f"{self.ds_spec.name}@{self.ds_spec.version} (through Harbor registry) with {self.code_agent_id}"
             ),
-            num_tasks=len(self.ds_spec.tasks),
+            num_tasks=self.ds_spec.task_count,
         )
 
     def get_env(
@@ -69,14 +77,17 @@ class HarborSpec:
         tracker: stat_tracker.StatTracker | None = None,
     ) -> base.Environment:
         """Create Harbor Verified environment with mini-swe-agent."""
-        all_tasks = self.ds
-        selected_tasks = selector(all_tasks)
+        async def load_tasks():
+            all_tasks = await code_env.load_harbor_dataset(name=self.ds_spec.name, version=self.ds_spec.version)
+            selected_tasks = selector(all_tasks)
 
-        if not selected_tasks:
-            raise ValueError("Task selector produced no tasks.")
+            if not selected_tasks:
+                raise ValueError("Task selector produced no tasks.")
 
-        return code_env.CodeEnvironment(
-            tasks=selected_tasks,
+            return selected_tasks
+
+        return code_env.LazyTasksCodeEnvironment(
+            task_loader=load_tasks,
             container_factory=container_factory,
             code_agent_factory=self.code_agent_factory,
             step_limit=250,  # Same as mini-swe-agent default.
@@ -127,7 +138,7 @@ def _register_default_presets() -> None:
     This function is called automatically when the presets module is imported,
     ensuring built-in presets are always available.
     """
-    ds_specs = code_env.list_harbor_datasets()
+    ds_specs = _DEFAULT_HARBOR_DATASETS
     alias_id_counts = collections.Counter(_make_harbor_dataset_id(ds_spec.name) for ds_spec in ds_specs)
 
     for ds_spec in ds_specs:

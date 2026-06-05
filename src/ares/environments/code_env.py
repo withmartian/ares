@@ -6,7 +6,7 @@ This environment will use a new container for each instance at every reset.
 
 import asyncio
 import atexit
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 import contextlib
 import functools
 import json
@@ -40,19 +40,21 @@ def get_harbor_dataset_client() -> harbor_dataset_client.BaseRegistryClient:
     return harbor_dataset_client.RegistryClientFactory.create()
 
 
-@functools.lru_cache(maxsize=250)
-def load_harbor_dataset(name: str, version: str) -> list[harbor_task.Task]:
+async def load_harbor_dataset(name: str, version: str) -> list[harbor_task.Task]:
     client = get_harbor_dataset_client()
+    downloaded_tasks = await client.download_dataset(name=f"{name}@{version}")
     return [
         harbor_task.Task(task_dir=task_item.downloaded_path)
-        for task_item in client.download_dataset(name=name, version=version)
+        for task_item in downloaded_tasks
     ]
 
 
-@functools.lru_cache(maxsize=1)
-def list_harbor_datasets() -> tuple[harbor_registry.DatasetSpec, ...]:
+async def list_harbor_datasets() -> tuple[harbor_registry.DatasetSummary, ...]:
     client = get_harbor_dataset_client()
-    return tuple(client.get_datasets())
+    return tuple(await client.list_datasets())
+
+
+type TaskLoader = Callable[[], Awaitable[Sequence[harbor_task.Task]]]
 
 
 class CodeEnvironment(base.Environment[response.LLMResponse, request.LLMRequest | None, float, float]):
@@ -343,6 +345,43 @@ class CodeEnvironment(base.Environment[response.LLMResponse, request.LLMRequest 
 
         else:
             raise ValueError(f"Unsupported reward file type: {remote_path}")
+
+
+class LazyTasksCodeEnvironment(CodeEnvironment):
+    """CodeEnvironment variant that downloads tasks on first reset."""
+
+    def __init__(
+        self,
+        *,
+        task_loader: TaskLoader,
+        container_factory: containers.ContainerFactory = ares_daytona.DaytonaContainer,
+        code_agent_factory: code_agent_base.CodeAgentFactory = mini_swe_agent.MiniSWECodeAgent,
+        step_limit: int = 250,
+        prefix: str = "harbor_env",
+        tracker: stat_tracker.StatTracker | None = None,
+    ):
+        super().__init__(
+            tasks=(),
+            container_factory=container_factory,
+            code_agent_factory=code_agent_factory,
+            step_limit=step_limit,
+            prefix=prefix,
+            tracker=tracker,
+        )
+        self._task_loader = task_loader
+
+    async def _ensure_tasks_downloaded(self) -> None:
+        if self._tasks:
+            return
+
+        tasks = tuple(await self._task_loader())
+        if not tasks:
+            raise ValueError("Task loader produced no tasks.")
+        self._tasks = tasks
+
+    async def _reset_task(self) -> None:
+        await self._ensure_tasks_downloaded()
+        await super()._reset_task()
 
 
 class _Janitor:
