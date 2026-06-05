@@ -7,7 +7,7 @@ packages = ["src/ares"]
 
 [project]
 name = "martian-ares"
-version = "0.0.2"
+version = "0.1.0"
 authors = [
     {name = "Joshua Greaves", email = "josh@withmartian.com"},
     {name = "Ryan Smith", email = "ryan@withmartian.com"},
@@ -51,6 +51,7 @@ transformer-lens = ["transformer-lens>=2.10.0"]
 [project.urls]
 Homepage = "https://github.com/withmartian/ares"
 Repository = "https://github.com/withmartian/ares"
+Changelog = "https://github.com/withmartian/ares/blob/main/CHANGELOG.md"
 
 [dependency-groups]
 dev = [
