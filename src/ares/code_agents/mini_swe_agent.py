@@ -33,7 +33,7 @@ os.environ["MSWEA_SILENT_STARTUP"] = "1"
 from minisweagent.agents import default as default_agent
 
 _LOGGER = logging.getLogger(__name__)
-_SWEBENCH_CONFIG_RESOURCE = importlib.resources.files("ares.code_agents").joinpath("configs/swebench_v1.yaml")
+_SWEBENCH_CONFIG_RESOURCE = importlib.resources.files("ares.code_agents") / "configs" / "swebench_v1.yaml"
 
 
 # Copied from minisweagent's default config.
