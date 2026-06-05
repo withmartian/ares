@@ -12,9 +12,9 @@ Commit hash: 6ff7d26ac371e5bb9611ec37074fc1bedf400895
 """
 
 import dataclasses
+import importlib.resources
 import logging
 import os
-import pathlib
 import re
 from typing import Literal, assert_never
 
@@ -31,9 +31,9 @@ from ares.llms import response
 # Ensure that MSWEA doesn't log its startup message on import.
 os.environ["MSWEA_SILENT_STARTUP"] = "1"
 from minisweagent.agents import default as default_agent
-import minisweagent.config
 
 _LOGGER = logging.getLogger(__name__)
+_SWEBENCH_CONFIG_RESOURCE = importlib.resources.files("ares.code_agents").joinpath("configs/swebench_v1.yaml")
 
 
 # Copied from minisweagent's default config.
@@ -75,7 +75,6 @@ class _LimitsExceededError(_TerminatingError):
 class _MiniSWEAgentOutput:
     returncode: int
     output: str
-    exception_info: str | None = None
 
 
 def _render_system_template(system_template: str) -> str:
@@ -100,25 +99,15 @@ def _render_action_observation_template(action_observation_template: str, output
     )
 
 
-def _render_format_error_template(format_error_template: str, error: str) -> str:
+def _render_format_error_template(format_error_template: str, actions: list[str]) -> str:
     return jinja2.Template(format_error_template, undefined=jinja2.StrictUndefined).render(
-        error=error,
+        actions=actions,
     )
 
 
 def _render_timeout_template(action: str, output: str) -> str:
     # TODO: Use jinja2, and allow updating of configuration.
     return _TIMEOUT_TEMPLATE.format(action=action, output=output)
-
-
-def _resolve_swebench_config_path(config_dir: pathlib.Path | str) -> pathlib.Path:
-    config_dir = pathlib.Path(config_dir)
-    config_path = config_dir / "benchmarks" / "swebench.yaml"
-
-    if config_path.is_file():
-        return config_path
-
-    raise FileNotFoundError(f"Could not find mini-swe-agent SWE-bench config: {config_path}")
 
 
 @dataclasses.dataclass(kw_only=True)
@@ -128,10 +117,8 @@ class MiniSWECodeAgent(code_agent_base.CodeAgent):
     tracker: stat_tracker.StatTracker = dataclasses.field(default_factory=stat_tracker.NullStatTracker)
 
     def __post_init__(self):
-        config_path = _resolve_swebench_config_path(minisweagent.config.builtin_config_dir)
-        self._config = yaml.safe_load(config_path.read_text())
+        self._config = yaml.safe_load(_SWEBENCH_CONFIG_RESOURCE.read_text(encoding="utf-8"))
         self._agent_config = self._config.get("agent", {})
-        self._model_config = self._config.get("model", {})
 
         environment_config = self._config.get("environment", {})
         self._env_timeout = environment_config.get("timeout", None)
@@ -261,7 +248,7 @@ class MiniSWECodeAgent(code_agent_base.CodeAgent):
         self._raise_if_finished(output)
 
         observation = _render_action_observation_template(
-            self._model_config["observation_template"],
+            self._agent_config["action_observation_template"],
             output=_MiniSWEAgentOutput(returncode=output.exit_code, output=output.output),
         )
         self._add_message("user", observation)
@@ -273,8 +260,8 @@ class MiniSWECodeAgent(code_agent_base.CodeAgent):
             return actions[0].strip()
 
         format_error_str = _render_format_error_template(
-            self._model_config["format_error_template"],
-            error=f"Expected exactly one bash command in triple backticks, found {len(actions)}.",
+            self._agent_config["format_error_template"],
+            actions=actions,
         )
         raise _FormatError(format_error_str)
 
