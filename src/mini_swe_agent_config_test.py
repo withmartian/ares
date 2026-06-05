@@ -19,7 +19,7 @@ with mock.patch.object(harbor_client_factory.RegistryClientFactory, "create", re
 def test_swebench_config_is_repo_owned_v1_copy() -> None:
     config_text = mini_swe_agent._SWEBENCH_CONFIG_RESOURCE.read_text(encoding="utf-8")
 
-    assert "Copied from mini-swe-agent==1.17.5" in config_text
+    assert "Copied from mini-swe-agent==1.17.3" in config_text
     assert "action_observation_template" in config_text
     assert "format_error_template" in config_text
 

@@ -1,4 +1,4 @@
-# Copied from mini-swe-agent==1.17.5: minisweagent/config/extra/swebench.yaml
+# Copied from mini-swe-agent==1.17.3: minisweagent/config/extra/swebench.yaml
 # ARES owns this copy so MiniSWECodeAgent's text-based behavior does not depend on
 # mini-swe-agent's bundled config layout or later tool-call-oriented config changes.
 agent:
