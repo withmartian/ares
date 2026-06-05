@@ -12,9 +12,8 @@ Commit hash: 6ff7d26ac371e5bb9611ec37074fc1bedf400895
 """
 
 import dataclasses
+import importlib.resources
 import logging
-import os
-import pathlib
 import re
 from typing import Literal, assert_never
 
@@ -28,12 +27,18 @@ from ares.llms import llm_clients
 from ares.llms import request
 from ares.llms import response
 
-# Ensure that MSWEA doesn't log its startup message on import.
-os.environ["MSWEA_SILENT_STARTUP"] = "1"
-from minisweagent.agents import default as default_agent
-import minisweagent.config
-
 _LOGGER = logging.getLogger(__name__)
+_SWEBENCH_CONFIG_RESOURCE = importlib.resources.files("ares.code_agents") / "configs" / "swebench_v1.yaml"
+_AGENT_CONFIG_KEYS = frozenset(
+    {
+        "action_observation_template",
+        "cost_limit",
+        "format_error_template",
+        "instance_template",
+        "step_limit",
+        "system_template",
+    }
+)
 
 
 # Copied from minisweagent's default config.
@@ -117,22 +122,15 @@ class MiniSWECodeAgent(code_agent_base.CodeAgent):
     tracker: stat_tracker.StatTracker = dataclasses.field(default_factory=stat_tracker.NullStatTracker)
 
     def __post_init__(self):
-        config_path = pathlib.Path(minisweagent.config.builtin_config_dir) / "extra" / "swebench.yaml"
-        self._config = yaml.safe_load(config_path.read_text())
+        self._config = yaml.safe_load(_SWEBENCH_CONFIG_RESOURCE.read_text(encoding="utf-8"))
         self._agent_config = self._config.get("agent", {})
 
         environment_config = self._config.get("environment", {})
         self._env_timeout = environment_config.get("timeout", None)
         self._environment_env_vars = environment_config.get("env", None)
 
-        # Somewhat frustratingly, minisweagent uses kwargs.
-        # We handle this by inspecting whether an argument will be accepted by the agent config.
-        agent_config_dict = self._config.get("agent", {})
-        agent_config = default_agent.AgentConfig()
-        for k, v in agent_config_dict.items():
-            if hasattr(default_agent.AgentConfig, k):
-                setattr(agent_config, k, v)
-            else:
+        for k in self._config.get("agent", {}):
+            if k not in _AGENT_CONFIG_KEYS:
                 _LOGGER.info("Ignoring argument %s in agent configuration.", k)
 
         # Initialize step and cost tracking
@@ -263,7 +261,10 @@ class MiniSWECodeAgent(code_agent_base.CodeAgent):
         if len(actions) == 1:
             return actions[0].strip()
 
-        format_error_str = _render_format_error_template(self._agent_config["format_error_template"], actions=actions)
+        format_error_str = _render_format_error_template(
+            self._agent_config["format_error_template"],
+            actions=actions,
+        )
         raise _FormatError(format_error_str)
 
     def _raise_if_finished(self, output: containers.ExecResult):
