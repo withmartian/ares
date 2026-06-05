@@ -6,17 +6,16 @@ This environment will use a new container for each instance at every reset.
 
 import asyncio
 import atexit
-from collections.abc import Awaitable, Coroutine, Sequence
+from collections.abc import Coroutine, Sequence
 import contextlib
 import functools
-import inspect
 import json
 import logging
 import pathlib
 import random
 import time
 from types import TracebackType
-from typing import Any, Self, TypeVar, cast
+from typing import Any, Self
 
 from harbor.models import registry as harbor_registry
 from harbor.models.task import task as harbor_task
@@ -35,17 +34,11 @@ from ares.llms import response
 
 _LOGGER = logging.getLogger(__name__)
 
-_HarborResult = TypeVar("_HarborResult")
-
-
-def _resolve_harbor_result(value: _HarborResult | Awaitable[_HarborResult]) -> _HarborResult:
-    if not inspect.isawaitable(value):
-        return value
-
+def _run_harbor_coroutine[HarborResult](coroutine: Coroutine[Any, Any, HarborResult]) -> HarborResult:
     try:
         asyncio.get_running_loop()
     except RuntimeError:
-        return asyncio.run(cast(Coroutine[Any, Any, _HarborResult], value))
+        return asyncio.run(coroutine)
 
     raise RuntimeError("Harbor async registry methods cannot be called from a running event loop")
 
@@ -58,15 +51,7 @@ def get_harbor_dataset_client() -> harbor_dataset_client.BaseRegistryClient:
 @functools.lru_cache(maxsize=250)
 def load_harbor_dataset(name: str, version: str) -> list[harbor_task.Task]:
     client = get_harbor_dataset_client()
-    download_dataset = cast(Any, client.download_dataset)
-    download_name = name
-    download_kwargs: dict[str, str] = {}
-    if "version" in inspect.signature(download_dataset).parameters:
-        download_kwargs["version"] = version
-    else:
-        download_name = f"{name}@{version}"
-
-    downloaded_tasks = _resolve_harbor_result(download_dataset(name=download_name, **download_kwargs))
+    downloaded_tasks = _run_harbor_coroutine(client.download_dataset(name=f"{name}@{version}"))
     return [
         harbor_task.Task(task_dir=task_item.downloaded_path)
         for task_item in downloaded_tasks
@@ -74,11 +59,9 @@ def load_harbor_dataset(name: str, version: str) -> list[harbor_task.Task]:
 
 
 @functools.lru_cache(maxsize=1)
-def list_harbor_datasets() -> tuple[harbor_registry.DatasetSpec, ...]:
+def list_harbor_datasets() -> tuple[harbor_registry.DatasetSummary, ...]:
     client = get_harbor_dataset_client()
-    # Harbor renamed get_datasets to list_datasets after 0.1.x.
-    method_name = "list_datasets" if "list_datasets" in dir(client) else "get_datasets"
-    return tuple(_resolve_harbor_result(getattr(client, method_name)()))
+    return tuple(_run_harbor_coroutine(client.list_datasets()))
 
 
 class CodeEnvironment(base.Environment[response.LLMResponse, request.LLMRequest | None, float, float]):
