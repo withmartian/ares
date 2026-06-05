@@ -50,12 +50,12 @@ class _MockEnvSpec:
 
 
 @dataclasses.dataclass(frozen=True)
-class _FakeHarborDatasetSpec:
-    """Minimal fake for the Harbor DatasetSpec fields presets.py reads."""
+class _FakeHarborDatasetSummary:
+    """Minimal fake for the Harbor DatasetSummary fields presets.py reads."""
 
     name: str
     version: str
-    tasks: tuple[object, ...] = ()
+    task_count: int = 1
 
 
 def test_list_presets():
@@ -86,14 +86,14 @@ def test_register_default_presets_versions_and_unambiguous_aliases(monkeypatch):
     from ares import presets
 
     fake_ds_specs = (
-        _FakeHarborDatasetSpec(name="kumo", version="parity", tasks=(object(),)),
-        _FakeHarborDatasetSpec(name="kumo", version="1.0", tasks=(object(),)),
-        _FakeHarborDatasetSpec(name="kumo", version="easy", tasks=(object(),)),
-        _FakeHarborDatasetSpec(name="swebench-verified", version="latest", tasks=(object(),)),
-        _FakeHarborDatasetSpec(name="terminal-bench", version="latest", tasks=(object(),)),
+        _FakeHarborDatasetSummary(name="kumo", version="parity"),
+        _FakeHarborDatasetSummary(name="kumo", version="1.0"),
+        _FakeHarborDatasetSummary(name="kumo", version="easy"),
+        _FakeHarborDatasetSummary(name="swebench-verified", version="latest"),
+        _FakeHarborDatasetSummary(name="terminal-bench", version="latest"),
     )
     original_registry = dict(registry._REGISTRY)
-    monkeypatch.setattr(presets.code_env, "list_harbor_datasets", lambda: fake_ds_specs)
+    monkeypatch.setattr(presets, "_DEFAULT_HARBOR_DATASETS", fake_ds_specs)
 
     registry.clear_registry()
     try:

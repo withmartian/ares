@@ -1,19 +1,11 @@
-from unittest import mock
-
-from harbor.registry.client import factory as harbor_client_factory
 import pytest
 import yaml
 
-_harbor_client = mock.Mock()
-_harbor_client.get_datasets.return_value = ()
-
-# Keep this test outside the ares package so Harbor can be patched before ares.__init__ registers presets.
-with mock.patch.object(harbor_client_factory.RegistryClientFactory, "create", return_value=_harbor_client):
-    from ares.code_agents import mini_swe_agent
-    from ares.containers import containers
-    from ares.llms import response
-    from ares.testing.mock_container import MockContainer
-    from ares.testing.mock_llm import MockLLMClient
+from ares.code_agents import mini_swe_agent
+from ares.containers import containers
+from ares.llms import response
+from ares.testing.mock_container import MockContainer
+from ares.testing.mock_llm import MockLLMClient
 
 
 def test_swebench_config_is_repo_owned_v1_copy() -> None:

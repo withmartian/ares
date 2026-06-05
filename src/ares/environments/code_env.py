@@ -6,7 +6,7 @@ This environment will use a new container for each instance at every reset.
 
 import asyncio
 import atexit
-from collections.abc import Coroutine, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 import contextlib
 import functools
 import json
@@ -15,7 +15,7 @@ import pathlib
 import random
 import time
 from types import TracebackType
-from typing import Any, Self
+from typing import Self
 
 from harbor.models import registry as harbor_registry
 from harbor.models.task import task as harbor_task
@@ -34,34 +34,27 @@ from ares.llms import response
 
 _LOGGER = logging.getLogger(__name__)
 
-def _run_harbor_coroutine[HarborResult](coroutine: Coroutine[Any, Any, HarborResult]) -> HarborResult:
-    try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        return asyncio.run(coroutine)
-
-    raise RuntimeError("Harbor async registry methods cannot be called from a running event loop")
-
 
 @functools.lru_cache(maxsize=1)
 def get_harbor_dataset_client() -> harbor_dataset_client.BaseRegistryClient:
     return harbor_dataset_client.RegistryClientFactory.create()
 
 
-@functools.lru_cache(maxsize=250)
-def load_harbor_dataset(name: str, version: str) -> list[harbor_task.Task]:
+async def load_harbor_dataset(name: str, version: str) -> list[harbor_task.Task]:
     client = get_harbor_dataset_client()
-    downloaded_tasks = _run_harbor_coroutine(client.download_dataset(name=f"{name}@{version}"))
+    downloaded_tasks = await client.download_dataset(name=f"{name}@{version}")
     return [
         harbor_task.Task(task_dir=task_item.downloaded_path)
         for task_item in downloaded_tasks
     ]
 
 
-@functools.lru_cache(maxsize=1)
-def list_harbor_datasets() -> tuple[harbor_registry.DatasetSummary, ...]:
+async def list_harbor_datasets() -> tuple[harbor_registry.DatasetSummary, ...]:
     client = get_harbor_dataset_client()
-    return tuple(_run_harbor_coroutine(client.list_datasets()))
+    return tuple(await client.list_datasets())
+
+
+type TaskLoader = Callable[[], Awaitable[Sequence[harbor_task.Task]]]
 
 
 class CodeEnvironment(base.Environment[response.LLMResponse, request.LLMRequest | None, float, float]):
@@ -69,15 +62,20 @@ class CodeEnvironment(base.Environment[response.LLMResponse, request.LLMRequest 
 
     def __init__(
         self,
-        tasks: Sequence[harbor_task.Task],
+        tasks: Sequence[harbor_task.Task] | None = None,
         *,
+        task_loader: TaskLoader | None = None,
         container_factory: containers.ContainerFactory = ares_daytona.DaytonaContainer,
         code_agent_factory: code_agent_base.CodeAgentFactory = mini_swe_agent.MiniSWECodeAgent,
         step_limit: int = 250,  # Same as mini-swe-agent default.
         prefix: str = "harbor_env",
         tracker: stat_tracker.StatTracker | None = None,
     ):
+        if (tasks is None) == (task_loader is None):
+            raise ValueError("Exactly one of tasks or task_loader must be provided.")
+
         self._tasks = tasks
+        self._task_loader = task_loader
         self._container_factory = container_factory
         self._code_agent_factory = code_agent_factory
         self._step_limit = step_limit
@@ -243,9 +241,18 @@ class CodeEnvironment(base.Environment[response.LLMResponse, request.LLMRequest 
         if not self._is_active:
             raise RuntimeError("Environment is not active.")
 
+    async def _ensure_tasks_downloaded(self) -> Sequence[harbor_task.Task]:
+        if self._tasks is None:
+            if self._task_loader is None:
+                raise RuntimeError("Task loader is not configured.")
+            self._tasks = tuple(await self._task_loader())
+
+        return self._tasks
+
     async def _reset_task(self) -> None:
         """Randomly select a task from the task list."""
-        self._current_task = random.choice(self._tasks)
+        tasks = await self._ensure_tasks_downloaded()
+        self._current_task = random.choice(tasks)
         _LOGGER.debug("[%d] Selected task %s.", id(self), self._current_task.name)
 
     async def _start_container(self) -> None:
