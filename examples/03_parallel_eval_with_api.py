@@ -59,6 +59,10 @@ class Args:
     num_parallel_workers: int = 20
     # If None, run on all tasks. Otherwise, limit to `num_tasks` tasks.
     num_tasks: int | None = None
+    # Maximum wall-clock time per task in seconds. Tasks that exceed this limit are
+    # cancelled and reported as errors. Prevents hung container execs from blocking
+    # semaphore slots indefinitely.
+    task_timeout_s: float = 30 * 60  # 30 minutes
 
 
 async def evaluate_task(
@@ -131,7 +135,10 @@ async def main(args: Args):
         task: Awaitable[ares.TimeStep[Any, float, float]],
     ) -> ares.TimeStep[Any, float, float]:
         async with sem:
-            return await task
+            # Wrap each task with a wall-clock timeout. This is the outermost safeguard against
+            # hung container exec calls that bypass per-operation timeouts (e.g., when the
+            # underlying container runtime doesn't properly propagate asyncio cancellation).
+            return await asyncio.wait_for(task, timeout=args.task_timeout_s)
 
     tasks = [
         _await_with_semaphore(evaluate_task(args.preset_name, task_idx, agent, container_factory, dashboard))
