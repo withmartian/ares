@@ -1,11 +1,15 @@
 """Library for tracking LLM costs."""
 
+from collections.abc import Mapping
 import decimal
 import functools
+from typing import assert_never
 
+import anthropic.types
 import frozendict
 import httpx
-from openai.types.chat import chat_completion as chat_completion_types
+import openai.types.chat.chat_completion
+import openai.types.responses
 import pydantic
 
 from ares import config
@@ -69,29 +73,63 @@ def martian_cost_list(
 
 def get_llm_cost(
     model_id: str,
-    completion: chat_completion_types.ChatCompletion,
+    completion: (
+        openai.types.chat.chat_completion.ChatCompletion | openai.types.responses.Response | anthropic.types.Message
+    ),
     *,
-    cost_mapping: frozendict.frozendict[str, ModelCost],
+    cost_mapping: Mapping[str, ModelCost],
 ) -> decimal.Decimal:
-    """Get the cost of an LLM call."""
+    """Get the cost of an LLM call.
+
+    Args:
+        model_id: The model ID to look up in the cost mapping
+        completion: The completion object from OpenAI Chat Completions, OpenAI Responses, or Anthropic Messages API
+        cost_mapping: Mapping of model IDs to cost information
+
+    Returns:
+        The cost in decimal format
+
+    Raises:
+        ValueError: If model not in cost mapping or completion has no usage
+
+    Note:
+        This doesn't take into account:
+        - completion_tokens_details.reasoning_tokens
+        - prompt_tokens_details.cached_tokens
+        It seems for now that the Martian API doesn't include internal reasoning tokens in cost,
+        and just considers them all output tokens.
+    """
     if model_id not in cost_mapping:
         raise ValueError(f"Model {model_id} not found in cost mapping.")
     model_pricing = cost_mapping[model_id].pricing
 
-    usage = completion.usage
-    if usage is None:
-        raise ValueError("Cannot compute cost of a completion with no usage.")
-
-    # Note: This doesn't take into account:
-    # - completion_tokens_details.reasoning_tokens
-    # - prompt_tokens_details.cached_tokens
-    # It seems for now that the Martian API doesn't include internal reasoning tokens in cost,
-    # and just considers them all output tokens.
-
     zero = decimal.Decimal("0")
 
-    return (
-        (model_pricing.request or zero)
-        + (model_pricing.prompt or zero) * usage.prompt_tokens
-        + (model_pricing.completion or zero) * usage.completion_tokens
-    )
+    # Handle different API response types with different field names
+    if isinstance(completion, openai.types.chat.chat_completion.ChatCompletion):
+        # Chat Completions API uses prompt_tokens/completion_tokens
+        if completion.usage is None:
+            raise ValueError("Cannot compute cost of a completion with no usage.")
+        return (
+            (model_pricing.request or zero)
+            + (model_pricing.prompt or zero) * completion.usage.prompt_tokens
+            + (model_pricing.completion or zero) * completion.usage.completion_tokens
+        )
+    elif isinstance(completion, openai.types.responses.Response):
+        # Responses API uses input_tokens/output_tokens
+        if completion.usage is None:
+            raise ValueError("Cannot compute cost of a response with no usage.")
+        return (
+            (model_pricing.request or zero)
+            + (model_pricing.prompt or zero) * completion.usage.input_tokens
+            + (model_pricing.completion or zero) * completion.usage.output_tokens
+        )
+    elif isinstance(completion, anthropic.types.Message):
+        # Anthropic Messages API uses input_tokens/output_tokens
+        return (
+            (model_pricing.request or zero)
+            + (model_pricing.prompt or zero) * completion.usage.input_tokens
+            + (model_pricing.completion or zero) * completion.usage.output_tokens
+        )
+    else:
+        assert_never(completion)

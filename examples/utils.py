@@ -3,7 +3,7 @@
 import asyncio
 from collections.abc import Awaitable
 import logging
-from typing import Any
+from typing import Any, assert_never
 
 import ares
 from ares import llms
@@ -39,7 +39,12 @@ def print_step(
             observation_preview += "..."
         print(f"Observation (from environment): {observation_preview}")
 
-    action_content = action.data[0].content
+    if isinstance(action.data[0], llms.TextData):
+        action_content = action.data[0].content
+    elif isinstance(action.data[0], llms.ToolUseData):
+        action_content = action.data[0].input
+    else:
+        assert_never(action.data[0])
     action_preview = str(action_content)[:200]
     if len(action_content) > 200:
         action_preview += "..."

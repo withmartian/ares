@@ -12,13 +12,17 @@ Conversion Notes:
     - messages converted to/from input items
 """
 
+from collections.abc import Mapping
+import json
 import logging
 from typing import Any, cast
 
 import openai.types.responses
 import openai.types.responses.response_create_params
 
+from ares.llms import accounting
 from ares.llms import request as llm_request
+from ares.llms import response as response_lib
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -432,4 +436,178 @@ def from_external(
         metadata=cast(dict[str, Any] | None, kwargs.get("metadata")),
         service_tier=kwargs.get("service_tier"),
         system_prompt=kwargs.get("instructions"),
+    )
+
+
+def ares_response_from_external(
+    response: openai.types.responses.Response,
+    *,
+    model: str,
+    cost_mapping: Mapping[str, accounting.ModelCost],
+    strict: bool = True,
+) -> response_lib.LLMResponse:
+    """Convert OpenAI Response to ARES LLMResponse.
+
+    Args:
+        response: OpenAI Response object
+        model: Model name used for cost calculation
+        cost_mapping: Cost mapping for calculating cost (e.g., accounting.martian_cost_list())
+        strict: If True, raise ValueError for unsupported output types. If False, log warnings and skip.
+
+    Returns:
+        LLMResponse with TextData and/or ToolUseData
+
+    Raises:
+        ValueError: If strict=True and unsupported output type is encountered
+    """
+    data: list[response_lib.TextData | response_lib.ToolUseData] = []
+
+    # Process output items
+    for item in response.output:
+        # Handle message output (text content)
+        if isinstance(item, openai.types.responses.ResponseOutputMessage):
+            # Extract text from content blocks
+            for content_block in item.content:
+                if isinstance(content_block, openai.types.responses.ResponseOutputText):
+                    text = content_block.text
+                    if text:
+                        data.append(response_lib.TextData(content=text))
+
+        # Handle function_call output (tool use)
+        elif isinstance(item, openai.types.responses.ResponseFunctionToolCall):
+            call_id = item.call_id
+            name = item.name
+            arguments_str = item.arguments
+
+            # Parse arguments JSON
+            try:
+                input_dict = json.loads(arguments_str)
+            except json.JSONDecodeError:
+                input_dict = {
+                    "_raw_arguments": arguments_str,
+                    "_parse_error": "Invalid JSON",
+                }
+
+            data.append(
+                response_lib.ToolUseData(
+                    id=call_id,
+                    name=name,
+                    input=input_dict,
+                )
+            )
+
+        else:
+            msg = (
+                f"Unsupported output type: {type(item).__name__}. "
+                "Only ResponseOutputMessage and ResponseFunctionToolCall are supported."
+            )
+            if strict:
+                raise ValueError(msg)
+            _LOGGER.warning(msg)
+
+    # Ensure we always have at least one data block
+    if not data:
+        data.append(response_lib.TextData(content=""))
+
+    # Calculate cost
+    cost = accounting.get_llm_cost(model, response, cost_mapping=cost_mapping)
+    cost_float = float(cost)
+
+    # Extract usage
+    usage = response_lib.Usage(
+        prompt_tokens=response.usage.input_tokens if response.usage else 0,
+        generated_tokens=response.usage.output_tokens if response.usage else 0,
+    )
+
+    return response_lib.LLMResponse(
+        data=data,
+        cost=cost_float,
+        usage=usage,
+        id=response.id,
+        model=response.model,
+        created_at=response.created_at,
+        status=response.status,
+        parallel_tool_calls=response.parallel_tool_calls,
+        response_tool_choice=response.tool_choice,
+        response_tools=response.tools,
+    )
+
+
+def ares_response_to_external(
+    response: response_lib.LLMResponse,
+) -> openai.types.responses.Response:
+    """Convert ARES LLMResponse to OpenAI Response format.
+
+    Args:
+        response: ARES LLMResponse with TextData and/or ToolUseData
+
+    Returns:
+        OpenAI Response object
+    """
+    output: list[openai.types.responses.ResponseOutputItem] = []
+
+    # Process data blocks
+    text_blocks = [block for block in response.data if isinstance(block, response_lib.TextData)]
+    tool_blocks = [block for block in response.data if isinstance(block, response_lib.ToolUseData)]
+
+    # Add text content as message output
+    if text_blocks:
+        message_output = openai.types.responses.ResponseOutputMessage(
+            id="msg_001",
+            type="message",
+            role="assistant",
+            status="completed",
+            content=[
+                openai.types.responses.ResponseOutputText(
+                    type="output_text",
+                    text=block.content,
+                    annotations=[],
+                )
+                for block in text_blocks
+            ],
+        )
+        output.append(message_output)
+
+    # Add tool calls as function_call output
+    for block in tool_blocks:
+        function_call_output = openai.types.responses.ResponseFunctionToolCall(
+            id=block.id,
+            type="function_call",
+            call_id=block.id,
+            name=block.name,
+            arguments=json.dumps(block.input),
+            status="completed",
+        )
+        output.append(function_call_output)
+
+    # Validate Responses-specific fields are present
+    if response.created_at is None:
+        raise ValueError("Cannot convert to Responses API format: created_at is required")
+    if response.status is None:
+        raise ValueError("Cannot convert to Responses API format: status is required")
+    if response.parallel_tool_calls is None:
+        raise ValueError("Cannot convert to Responses API format: parallel_tool_calls is required")
+    if response.response_tool_choice is None:
+        raise ValueError("Cannot convert to Responses API format: response_tool_choice is required")
+    if response.response_tools is None:
+        raise ValueError("Cannot convert to Responses API format: response_tools is required")
+
+    # Construct Response object using stored metadata
+    return openai.types.responses.Response(
+        id=response.id,
+        object="response",
+        created_at=response.created_at,
+        model=response.model,
+        status=response.status,
+        parallel_tool_calls=response.parallel_tool_calls,
+        tool_choice=response.response_tool_choice,
+        tools=response.response_tools,
+        output=output,
+        usage=openai.types.responses.ResponseUsage(
+            input_tokens=response.usage.prompt_tokens,
+            input_tokens_details=openai.types.responses.response_usage.InputTokensDetails(cached_tokens=0),
+            output_tokens=response.usage.generated_tokens,
+            output_tokens_details=openai.types.responses.response_usage.OutputTokensDetails(reasoning_tokens=0),
+            total_tokens=response.usage.total_tokens,
+        ),
     )

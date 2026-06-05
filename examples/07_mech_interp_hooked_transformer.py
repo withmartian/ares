@@ -16,6 +16,7 @@ Example usage:
 import asyncio
 
 import ares
+from ares import llms
 from ares.contrib import mech_interp
 import transformer_lens
 
@@ -60,6 +61,7 @@ async def main():
                 action = await client(ts.observation, max_output_tokens=256)
 
                 # End capture for this step
+                assert isinstance(action.data[0], llms.TextData)
                 capture.end_step()
                 capture.record_step_metadata(
                     {

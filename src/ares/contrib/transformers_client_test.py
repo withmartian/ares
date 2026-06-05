@@ -240,6 +240,7 @@ class TestTransformersLLMClientBatching:
 
                 assert isinstance(resp, response_lib.LLMResponse)
                 assert len(resp.data) == 1
+                assert isinstance(resp.data[0], response_lib.TextData)
                 assert resp.data[0].content == "Response text"
                 assert resp.cost == 0.0
                 assert resp.usage.prompt_tokens > 0
@@ -282,6 +283,7 @@ class TestTransformersLLMClientBatching:
                 assert len(responses) == 3
                 for i, resp in enumerate(responses):
                     assert isinstance(resp, response_lib.LLMResponse)
+                    assert isinstance(resp.data[0], response_lib.TextData)
                     assert resp.data[0].content == f"Response {i + 1}"
 
                 # Verify generate was called once with batch
@@ -350,6 +352,7 @@ async def test_integration_with_minimal_model():
 
             assert isinstance(resp, response_lib.LLMResponse)
             assert len(resp.data) == 1
+            assert isinstance(resp.data[0], response_lib.TextData)
             assert isinstance(resp.data[0].content, str)
             assert resp.cost == 0.0
             assert resp.usage.prompt_tokens > 0

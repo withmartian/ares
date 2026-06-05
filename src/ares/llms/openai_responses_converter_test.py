@@ -1,11 +1,16 @@
 """Unit tests for OpenAI Responses API converter."""
 
+import decimal
+import json
+import pathlib
 from typing import cast
 
+import frozendict
 import openai.types.responses
 import openai.types.responses.response_create_params
 import pytest
 
+from ares.llms import accounting
 from ares.llms import openai_responses_converter
 from ares.llms import request as request_lib
 
@@ -404,3 +409,53 @@ class TestLLMRequestResponsesConversion:
         request = openai_responses_converter.from_external(kwargs, strict=False)
 
         assert request.tools is None
+
+
+_MOCK_COST_MAPPING = frozendict.frozendict(
+    {
+        "gpt-5": accounting.ModelCost(
+            id="gpt-5",
+            pricing=accounting.ModelPricing(
+                prompt=decimal.Decimal("0.00003"),
+                completion=decimal.Decimal("0.00006"),
+                image=None,
+                request=None,
+                web_search=None,
+                internal_reasoning=None,
+            ),
+        )
+    }
+)
+
+
+def _load_test_response(filename: str) -> openai.types.responses.Response:
+    """Load a test JSON file and convert to OpenAI Response."""
+    test_data_dir = pathlib.Path(__file__).parent / "test_data"
+    with open(test_data_dir / filename) as f:
+        data = json.load(f)
+    return openai.types.responses.Response(**data)
+
+
+class TestResponseConversion:
+    """Tests for OpenAI Responses API response conversion."""
+
+    @pytest.mark.parametrize(
+        "filename",
+        [
+            "openai_responses_text_only.json",
+            "openai_responses_tool_call_single.json",
+        ],
+    )
+    def test_response_roundtrip(self, filename: str):
+        """Test that API → ARES → API preserves response data."""
+        # Load original
+        original_response = _load_test_response(filename)
+
+        # Convert to ARES and back
+        ares_response = openai_responses_converter.ares_response_from_external(
+            original_response, model="gpt-5", cost_mapping=_MOCK_COST_MAPPING
+        )
+        converted_response = openai_responses_converter.ares_response_to_external(ares_response)
+
+        # Verify round-trip
+        assert original_response == converted_response
