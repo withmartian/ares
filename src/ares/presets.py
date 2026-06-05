@@ -53,12 +53,15 @@ class HarborSpec:
 
     def get_info(self) -> registry.EnvironmentInfo:
         """Return metadata about Harbor Verified."""
+        num_tasks = getattr(self.ds_spec, "task_count", None)
+        if num_tasks is None:
+            num_tasks = len(self.ds_spec.tasks)
         return registry.EnvironmentInfo(
             name=f"{self.dataset_id}-{self.code_agent_id}",
             description=(
                 f"{self.ds_spec.name}@{self.ds_spec.version} (through Harbor registry) with {self.code_agent_id}"
             ),
-            num_tasks=len(self.ds_spec.tasks),
+            num_tasks=num_tasks,
         )
 
     def get_env(
