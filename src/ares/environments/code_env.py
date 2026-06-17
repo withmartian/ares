@@ -160,6 +160,11 @@ class CodeEnvironment(base.Environment[response.LLMResponse, request.LLMRequest 
 
         return ts
 
+    # Maximum time to wait for the code agent to make an LLM request or complete.
+    # This is a backstop against cases where individual operation timeouts are bypassed
+    # (e.g., if the underlying container runtime doesn't properly propagate cancellation).
+    _GET_TIME_STEP_TIMEOUT_S = 600  # 10 minutes
+
     async def _get_time_step(
         self,
     ) -> base.TimeStep[request.LLMRequest | None, float, float]:
@@ -168,7 +173,21 @@ class CodeEnvironment(base.Environment[response.LLMResponse, request.LLMRequest 
         with self._tracker.timeit(f"{self._prefix}/get_from_queue"):
             get_from_queue_task = asyncio.create_task(self._llm_client.q.get())
             tasks = [self._code_agent_task, get_from_queue_task]
-            done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+            done, pending = await asyncio.wait(
+                tasks, return_when=asyncio.FIRST_COMPLETED, timeout=self._GET_TIME_STEP_TIMEOUT_S
+            )
+
+        if not done:
+            # Neither the code agent nor the LLM request queue responded within the timeout.
+            # Cancel both tasks to prevent resource leaks.
+            for task in pending:
+                task.cancel()
+            raise TimeoutError(
+                f"[{id(self)}] Timed out waiting for code agent to make an LLM request or complete "
+                f"(timeout={self._GET_TIME_STEP_TIMEOUT_S}s). "
+                "This may indicate a hung container exec call or a non-cancellable async operation."
+            )
+
         _LOGGER.debug("[%d] Code agent or LLM request completed.", id(self))
 
         if self._code_agent_task in done:
@@ -274,6 +293,9 @@ class CodeEnvironment(base.Environment[response.LLMResponse, request.LLMRequest 
         self._code_agent_task = asyncio.create_task(self._code_agent.run(self._current_task.instruction))
         _LOGGER.debug("[%d] Code agent started.", id(self))
 
+    # Timeout for the full test evaluation suite. Tests can be slow, but must not hang forever.
+    _REWARD_EXEC_TIMEOUT_S = 300  # 5 minutes
+
     async def _compute_reward(self) -> float:
         """Run tests and compute the reward for the current episode."""
         if self._container is None:
@@ -289,14 +311,14 @@ class CodeEnvironment(base.Environment[response.LLMResponse, request.LLMRequest 
 
         _LOGGER.debug("[%d] Creating verifier directory", id(self))
         verifier_dir = str(harbor_paths.EnvironmentPaths.verifier_dir)
-        await self._container.exec_run(command=f"mkdir -p {verifier_dir}")
+        await self._container.exec_run(command=f"mkdir -p {verifier_dir}", timeout_s=self._REWARD_EXEC_TIMEOUT_S)
 
         _LOGGER.debug("[%d] Running tests and evaluating.", id(self))
         test_path = str(
             pathlib.Path("/tests") / self._current_task.paths.test_path.relative_to(self._current_task.paths.tests_dir)
         )
         # TODO: Log the output of the test execution somewhere that makes sense
-        test_result = await self._container.exec_run(command=f"bash {test_path}")
+        test_result = await self._container.exec_run(command=f"bash {test_path}", timeout_s=self._REWARD_EXEC_TIMEOUT_S)
         _LOGGER.debug("[%d] Test result: %s.", id(self), test_result.output)
 
         # Try to read reward from both
@@ -322,7 +344,7 @@ class CodeEnvironment(base.Environment[response.LLMResponse, request.LLMRequest 
             raise RuntimeError("Container has not been created before parsing reward file.")
 
         remote_path = str(remote_path)
-        cat_result = await self._container.exec_run(command=f"cat {remote_path}")
+        cat_result = await self._container.exec_run(command=f"cat {remote_path}", timeout_s=self._REWARD_EXEC_TIMEOUT_S)
         if cat_result.exit_code != 0:
             # File doesn't exist
             return None
