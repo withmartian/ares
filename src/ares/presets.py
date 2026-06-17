@@ -19,6 +19,7 @@ from harbor.models.task import task as harbor_task
 from ares import registry
 from ares.code_agents import code_agent_base
 from ares.code_agents import mini_swe_agent
+from ares.code_agents import mini_swe_agent_v2
 from ares.code_agents.terminus2 import terminus2_agent
 from ares.containers import containers
 from ares.environments import base
@@ -136,6 +137,7 @@ def _register_default_presets() -> None:
 
         for code_agent_id, code_agent_factory in [
             ("mswea", mini_swe_agent.MiniSWECodeAgent),
+            ("msweav2", mini_swe_agent_v2.MiniSWECodeAgentV2),
             ("terminus2", terminus2_agent.Terminus2Agent),
         ]:
             registry.register_preset(

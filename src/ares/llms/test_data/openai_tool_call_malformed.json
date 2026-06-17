@@ -1,0 +1,31 @@
+{
+  "id": "chatcmpl-malformed",
+  "object": "chat.completion",
+  "created": 1677652288,
+  "model": "gpt-5",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": null,
+        "tool_calls": [
+          {
+            "id": "call_bad123",
+            "type": "function",
+            "function": {
+              "name": "bash",
+              "arguments": "{\"command\": \"ls -la\", invalid_json_here"
+            }
+          }
+        ]
+      },
+      "finish_reason": "tool_calls"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 50,
+    "completion_tokens": 15,
+    "total_tokens": 65
+  }
+}

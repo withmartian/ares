@@ -49,7 +49,9 @@ def _get_llm_client(base_url: str, api_key: str) -> openai.AsyncClient:
 async def _query_llm_with_retry(
     llm_client: openai.AsyncClient, model: str, req: request.LLMRequest
 ) -> openai.types.chat.chat_completion.ChatCompletion:
-    response = await llm_client.chat.completions.create(model=model, **openai_chat_converter.to_external(req))
+    response = await llm_client.chat.completions.create(
+        model=model, **openai_chat_converter.ares_request_to_external(req)
+    )
     return response
 
 
@@ -69,12 +71,7 @@ class ChatCompletionCompatibleLLMClient(llm_clients.LLMClient):
         resp = await _query_llm_with_retry(_get_llm_client(self.base_url, self.api_key), self.model, request)
         _LOGGER.debug("[%d] LLM response received.", id(self))
 
-        cost = accounting.get_llm_cost(self.model, resp, cost_mapping=accounting.martian_cost_list())
-        cost = float(cost)
-
-        content = resp.choices[0].message.content or ""
-        usage = response.Usage(
-            prompt_tokens=resp.usage.prompt_tokens if resp.usage else 0,
-            generated_tokens=resp.usage.completion_tokens if resp.usage else 0,
+        # Use the converter to handle both text and tool calls
+        return openai_chat_converter.ares_response_from_external(
+            resp, model=self.model, cost_mapping=accounting.martian_cost_list()
         )
-        return response.LLMResponse(data=[response.TextData(content=content)], cost=cost, usage=usage)

@@ -215,7 +215,7 @@ class TransformersLLMClient(llm_clients.LLMClient):
             try:
                 first_item = await self._request_queue.get()
                 collected_items.append(first_item)
-                kwargs = openai_chat_converter.to_external(first_item.value, strict=False)
+                kwargs = openai_chat_converter.ares_request_to_external(first_item.value, strict=False)
                 temp = kwargs.get("temperature")
                 max_tokens = kwargs.get("max_completion_tokens")
                 first_params = (
@@ -239,7 +239,7 @@ class TransformersLLMClient(llm_clients.LLMClient):
                     try:
                         item = await asyncio.wait_for(self._request_queue.get(), timeout=timeout)
                         collected_items.append(item)
-                        kwargs = openai_chat_converter.to_external(item.value, strict=False)
+                        kwargs = openai_chat_converter.ares_request_to_external(item.value, strict=False)
                         temp = kwargs.get("temperature")
                         max_tokens = kwargs.get("max_completion_tokens")
                         params = (
@@ -277,7 +277,7 @@ class TransformersLLMClient(llm_clients.LLMClient):
 
             chat_conversations = []
             for item in batch:
-                kwargs = openai_chat_converter.to_external(item.value, strict=False)
+                kwargs = openai_chat_converter.ares_request_to_external(item.value, strict=False)
                 chat_conversations.append(kwargs["messages"])
 
             responses = await asyncio.to_thread(  # transformers is not async
