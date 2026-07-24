@@ -38,6 +38,17 @@ def _make_harbor_dataset_id(name: str, version: str | None = None) -> str:
     return f"{dataset_id}-{version}"
 
 
+def _make_mswea_factory(ds_spec: harbor_registry.DatasetSpec) -> code_agent_base.CodeAgentFactory:
+    """Return the Mini-SWE agent factory with the right dataset prompt config."""
+    if ds_spec.name == "terminal-bench":
+        return functools.partial(
+            mini_swe_agent.MiniSWECodeAgent,
+            config_name=mini_swe_agent.MINI_SWE_V1_14_4_CONFIG_NAME,
+        )
+
+    return mini_swe_agent.MiniSWECodeAgent
+
+
 @dataclasses.dataclass(frozen=True)
 class HarborSpec:
     """Environment spec for Harbor Verified with mini-swe-agent."""
@@ -135,7 +146,7 @@ def _register_default_presets() -> None:
         alias_ds_id = _make_harbor_dataset_id(ds_spec.name)
 
         for code_agent_id, code_agent_factory in [
-            ("mswea", mini_swe_agent.MiniSWECodeAgent),
+            ("mswea", _make_mswea_factory(ds_spec)),
             ("terminus2", terminus2_agent.Terminus2Agent),
         ]:
             registry.register_preset(

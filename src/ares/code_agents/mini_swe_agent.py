@@ -28,7 +28,10 @@ from ares.llms import request
 from ares.llms import response
 
 _LOGGER = logging.getLogger(__name__)
-_SWEBENCH_CONFIG_RESOURCE = importlib.resources.files("ares.code_agents") / "configs" / "swebench_v1.yaml"
+SWEBENCH_CONFIG_NAME = "swebench_v1.yaml"
+MINI_SWE_V1_14_4_CONFIG_NAME = "mini_swe_v1_14_4.yaml"
+_CONFIGS_RESOURCE = importlib.resources.files("ares.code_agents") / "configs"
+_SWEBENCH_CONFIG_RESOURCE = _CONFIGS_RESOURCE / SWEBENCH_CONFIG_NAME
 _AGENT_CONFIG_KEYS = frozenset(
     {
         "action_observation_template",
@@ -120,14 +123,17 @@ class MiniSWECodeAgent(code_agent_base.CodeAgent):
     container: containers.Container
     llm_client: llm_clients.LLMClient
     tracker: stat_tracker.StatTracker = dataclasses.field(default_factory=stat_tracker.NullStatTracker)
+    config_name: str = SWEBENCH_CONFIG_NAME
 
     def __post_init__(self):
-        self._config = yaml.safe_load(_SWEBENCH_CONFIG_RESOURCE.read_text(encoding="utf-8"))
+        config_resource = _CONFIGS_RESOURCE / self.config_name
+        self._config = yaml.safe_load(config_resource.read_text(encoding="utf-8"))
         self._agent_config = self._config.get("agent", {})
 
         environment_config = self._config.get("environment", {})
         self._env_timeout = environment_config.get("timeout", None)
         self._environment_env_vars = environment_config.get("env", None)
+        self._system_command = environment_config.get("system_command", "uname -a")
 
         for k in self._config.get("agent", {}):
             if k not in _AGENT_CONFIG_KEYS:
@@ -157,7 +163,9 @@ class MiniSWECodeAgent(code_agent_base.CodeAgent):
         with self.tracker.timeit("mswea/setup"):
             _LOGGER.debug("[%d] Starting mini-swe-agent run.", id(self))
 
-            system = (await self.container.exec_run("uname -a", env=self._environment_env_vars)).output.strip()
+            system = (
+                await self.container.exec_run(self._system_command, env=self._environment_env_vars)
+            ).output.strip()
             release = (await self.container.exec_run("uname -r", env=self._environment_env_vars)).output.strip()
             version = (await self.container.exec_run("uname -v", env=self._environment_env_vars)).output.strip()
             machine = (await self.container.exec_run("uname -m", env=self._environment_env_vars)).output.strip()

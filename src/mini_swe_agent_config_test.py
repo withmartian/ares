@@ -1,3 +1,4 @@
+import typing
 from unittest import mock
 
 from harbor.registry.client import factory as harbor_client_factory
@@ -11,6 +12,7 @@ _harbor_client.get_datasets.return_value = ()
 with mock.patch.object(harbor_client_factory.RegistryClientFactory, "create", return_value=_harbor_client):
     from ares.code_agents import mini_swe_agent
     from ares.containers import containers
+    from ares.llms import request
     from ares.llms import response
     from ares.testing.mock_container import MockContainer
     from ares.testing.mock_llm import MockLLMClient
@@ -40,6 +42,21 @@ def test_mini_swe_code_agent_initializes_from_repo_config() -> None:
     assert agent._environment_env_vars["PAGER"] == "cat"
 
 
+def test_mini_swe_code_agent_initializes_from_terminal_bench_config() -> None:
+    agent = mini_swe_agent.MiniSWECodeAgent(
+        container=MockContainer(),
+        llm_client=MockLLMClient(),
+        config_name=mini_swe_agent.MINI_SWE_V1_14_4_CONFIG_NAME,
+    )
+
+    assert agent._system_prompt.startswith("You are a helpful assistant")
+    assert agent._step_limit == 0
+    assert agent._cost_limit == 3.0
+    assert agent._env_timeout == 30
+    assert agent._system_command == "uname -s"
+    assert "echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT`." in agent._agent_config["instance_template"]
+
+
 @pytest.mark.asyncio
 async def test_mini_swe_code_agent_uses_agent_observation_template() -> None:
     container = MockContainer(exec_responses={"echo hi": containers.ExecResult(output="hi", exit_code=0)})
@@ -53,8 +70,9 @@ async def test_mini_swe_code_agent_uses_agent_observation_template() -> None:
         )
     )
 
-    assert "<returncode>0</returncode>" in agent._messages[-1]["content"]
-    assert "hi" in agent._messages[-1]["content"]
+    message = typing.cast(request.UserMessage, agent._messages[-1])
+    assert "<returncode>0</returncode>" in message["content"]
+    assert "hi" in message["content"]
 
 
 def test_mini_swe_code_agent_uses_agent_format_error_template() -> None:

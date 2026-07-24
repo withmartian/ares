@@ -2,11 +2,13 @@
 
 from collections.abc import Sequence
 import dataclasses
+import functools
 from typing import Any
 
 import pytest
 
 from ares import registry
+from ares.code_agents import mini_swe_agent
 from ares.containers import containers
 from ares.containers import docker
 from ares.experiment_tracking import stat_tracker
@@ -113,6 +115,18 @@ def test_register_default_presets_versions_and_unambiguous_aliases(monkeypatch):
         assert "sbv-mswea" in preset_names
         assert "tbench-mswea" in preset_names
         assert "20q" in preset_names
+
+        tbench_spec = registry._REGISTRY["tbench-latest-mswea"]
+        assert isinstance(tbench_spec, presets.HarborSpec)
+        assert isinstance(tbench_spec.code_agent_factory, functools.partial)
+        assert tbench_spec.code_agent_factory.func is mini_swe_agent.MiniSWECodeAgent
+        assert tbench_spec.code_agent_factory.keywords == {
+            "config_name": mini_swe_agent.MINI_SWE_V1_14_4_CONFIG_NAME,
+        }
+
+        sbv_spec = registry._REGISTRY["sbv-latest-mswea"]
+        assert isinstance(sbv_spec, presets.HarborSpec)
+        assert sbv_spec.code_agent_factory is mini_swe_agent.MiniSWECodeAgent
     finally:
         registry._REGISTRY.clear()
         registry._REGISTRY.update(original_registry)
