@@ -1,5 +1,6 @@
 """Tests for the registry system."""
 
+import asyncio
 from collections.abc import Sequence
 import dataclasses
 import functools
@@ -11,7 +12,10 @@ from ares import registry
 from ares.code_agents import mini_swe_agent
 from ares.containers import containers
 from ares.containers import docker
+from ares.environments import base
+from ares.environments import code_env
 from ares.experiment_tracking import stat_tracker
+from ares.llms import response
 
 
 @dataclasses.dataclass(frozen=True)
@@ -93,6 +97,8 @@ def test_register_default_presets_versions_and_unambiguous_aliases(monkeypatch):
         _FakeHarborDatasetSpec(name="kumo", version="easy", tasks=(object(),)),
         _FakeHarborDatasetSpec(name="swebench-verified", version="latest", tasks=(object(),)),
         _FakeHarborDatasetSpec(name="terminal-bench", version="latest", tasks=(object(),)),
+        _FakeHarborDatasetSpec(name="terminal-bench-sample", version="2.0", tasks=(object(),)),
+        _FakeHarborDatasetSpec(name="terminal-bench-pro", version="1.0", tasks=(object(),)),
     )
     original_registry = dict(registry._REGISTRY)
     monkeypatch.setattr(presets.code_env, "list_harbor_datasets", lambda: fake_ds_specs)
@@ -110,6 +116,8 @@ def test_register_default_presets_versions_and_unambiguous_aliases(monkeypatch):
         assert "kumo-easy-terminus2" in preset_names
         assert "sbv-latest-mswea" in preset_names
         assert "tbench-latest-mswea" in preset_names
+        assert "tbench-sample-2.0-mswea" in preset_names
+        assert "tbench-pro-1.0-mswea" in preset_names
         assert "kumo-mswea" not in preset_names
         assert "kumo-terminus2" not in preset_names
         assert "sbv-mswea" in preset_names
@@ -118,18 +126,62 @@ def test_register_default_presets_versions_and_unambiguous_aliases(monkeypatch):
 
         tbench_spec = registry._REGISTRY["tbench-latest-mswea"]
         assert isinstance(tbench_spec, presets.HarborSpec)
-        assert isinstance(tbench_spec.code_agent_factory, functools.partial)
-        assert tbench_spec.code_agent_factory.func is mini_swe_agent.MiniSWECodeAgent
-        assert tbench_spec.code_agent_factory.keywords == {
-            "config_name": mini_swe_agent.MINI_SWE_V1_14_4_CONFIG_NAME,
-        }
+        assert tbench_spec.code_agent_factory is mini_swe_agent.MiniSWECodeAgent
+        assert tbench_spec.step_limit == 0
+
+        tbench_sample_spec = registry._REGISTRY["tbench-sample-2.0-mswea"]
+        assert isinstance(tbench_sample_spec, presets.HarborSpec)
+        assert tbench_sample_spec.code_agent_factory is mini_swe_agent.MiniSWECodeAgent
+        assert tbench_sample_spec.step_limit == 0
+
+        tbench_pro_spec = registry._REGISTRY["tbench-pro-1.0-mswea"]
+        assert isinstance(tbench_pro_spec, presets.HarborSpec)
+        assert tbench_pro_spec.code_agent_factory is mini_swe_agent.MiniSWECodeAgent
+        assert tbench_pro_spec.step_limit == 0
 
         sbv_spec = registry._REGISTRY["sbv-latest-mswea"]
         assert isinstance(sbv_spec, presets.HarborSpec)
-        assert sbv_spec.code_agent_factory is mini_swe_agent.MiniSWECodeAgent
+        assert isinstance(sbv_spec.code_agent_factory, functools.partial)
+        assert sbv_spec.code_agent_factory.func is mini_swe_agent.MiniSWECodeAgent
+        assert sbv_spec.code_agent_factory.keywords == {
+            "config_name": mini_swe_agent.SWEBENCH_CONFIG_NAME,
+        }
+        assert sbv_spec.step_limit == 0
+
+        tbench_terminus2_spec = registry._REGISTRY["tbench-latest-terminus2"]
+        assert isinstance(tbench_terminus2_spec, presets.HarborSpec)
+        assert tbench_terminus2_spec.step_limit == presets.code_env.DEFAULT_STEP_LIMIT
     finally:
         registry._REGISTRY.clear()
         registry._REGISTRY.update(original_registry)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("step_limit", "expected_step_type"), [(0, "MID"), (1, "LAST")])
+async def test_code_environment_step_limit(
+    monkeypatch: pytest.MonkeyPatch,
+    step_limit: int,
+    expected_step_type: base.StepType,
+) -> None:
+    env = code_env.CodeEnvironment(tasks=(), step_limit=step_limit)
+
+    async def get_time_step() -> base.TimeStep[None, float, float]:
+        return base.TimeStep(step_type="MID", reward=0.0, discount=1.0, observation=None)
+
+    monkeypatch.setattr(env, "_get_time_step", get_time_step)
+
+    async with env:
+        env._llm_req_future = asyncio.get_running_loop().create_future()
+        env._code_agent_task = asyncio.create_task(asyncio.sleep(60))
+        result = await env.step(
+            response.LLMResponse(
+                data=[response.TextData(content="")],
+                cost=0.0,
+                usage=response.Usage(prompt_tokens=0, generated_tokens=0),
+            )
+        )
+
+        assert result.step_type == expected_step_type
 
 
 def test_info_missing_preset():

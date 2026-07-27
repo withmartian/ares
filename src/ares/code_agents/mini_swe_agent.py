@@ -123,7 +123,7 @@ class MiniSWECodeAgent(code_agent_base.CodeAgent):
     container: containers.Container
     llm_client: llm_clients.LLMClient
     tracker: stat_tracker.StatTracker = dataclasses.field(default_factory=stat_tracker.NullStatTracker)
-    config_name: str = SWEBENCH_CONFIG_NAME
+    config_name: str = MINI_SWE_V1_14_4_CONFIG_NAME
 
     def __post_init__(self):
         config_resource = _CONFIGS_RESOURCE / self.config_name

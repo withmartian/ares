@@ -33,6 +33,7 @@ from ares.llms import request
 from ares.llms import response
 
 _LOGGER = logging.getLogger(__name__)
+DEFAULT_STEP_LIMIT = 250
 
 
 @functools.lru_cache(maxsize=1)
@@ -64,7 +65,7 @@ class CodeEnvironment(base.Environment[response.LLMResponse, request.LLMRequest 
         *,
         container_factory: containers.ContainerFactory = ares_daytona.DaytonaContainer,
         code_agent_factory: code_agent_base.CodeAgentFactory = mini_swe_agent.MiniSWECodeAgent,
-        step_limit: int = 250,  # Same as mini-swe-agent default.
+        step_limit: int = DEFAULT_STEP_LIMIT,
         prefix: str = "harbor_env",
         tracker: stat_tracker.StatTracker | None = None,
     ):
@@ -145,7 +146,7 @@ class CodeEnvironment(base.Environment[response.LLMResponse, request.LLMRequest 
         with self._tracker.timeit(f"{self._prefix}/get_time_step"):
             ts = await self._get_time_step()
 
-        if self._step_count >= self._step_limit:
+        if 0 < self._step_limit <= self._step_count:
             _LOGGER.debug("[%d] Step limit reached. Returning LAST timestep.", id(self))
             assert self._code_agent_task is not None
             self._code_agent_task.cancel()

@@ -40,10 +40,10 @@ def _make_harbor_dataset_id(name: str, version: str | None = None) -> str:
 
 def _make_mswea_factory(ds_spec: harbor_registry.DatasetSpec) -> code_agent_base.CodeAgentFactory:
     """Return the Mini-SWE agent factory with the right dataset prompt config."""
-    if ds_spec.name == "terminal-bench":
+    if ds_spec.name == "swebench-verified":
         return functools.partial(
             mini_swe_agent.MiniSWECodeAgent,
-            config_name=mini_swe_agent.MINI_SWE_V1_14_4_CONFIG_NAME,
+            config_name=mini_swe_agent.SWEBENCH_CONFIG_NAME,
         )
 
     return mini_swe_agent.MiniSWECodeAgent
@@ -57,6 +57,7 @@ class HarborSpec:
     dataset_id: str
     code_agent_factory: code_agent_base.CodeAgentFactory
     code_agent_id: str
+    step_limit: int = code_env.DEFAULT_STEP_LIMIT
 
     @functools.cached_property
     def ds(self) -> list[harbor_task.Task]:
@@ -90,7 +91,7 @@ class HarborSpec:
             tasks=selected_tasks,
             container_factory=container_factory,
             code_agent_factory=self.code_agent_factory,
-            step_limit=250,  # Same as mini-swe-agent default.
+            step_limit=self.step_limit,
             tracker=tracker,
         )
 
@@ -145,9 +146,9 @@ def _register_default_presets() -> None:
         ds_id = _make_harbor_dataset_id(ds_spec.name, ds_spec.version)
         alias_ds_id = _make_harbor_dataset_id(ds_spec.name)
 
-        for code_agent_id, code_agent_factory in [
-            ("mswea", _make_mswea_factory(ds_spec)),
-            ("terminus2", terminus2_agent.Terminus2Agent),
+        for code_agent_id, code_agent_factory, step_limit in [
+            ("mswea", _make_mswea_factory(ds_spec), 0),
+            ("terminus2", terminus2_agent.Terminus2Agent, code_env.DEFAULT_STEP_LIMIT),
         ]:
             registry.register_preset(
                 f"{ds_id}-{code_agent_id}",
@@ -156,6 +157,7 @@ def _register_default_presets() -> None:
                     dataset_id=ds_id,
                     code_agent_factory=code_agent_factory,
                     code_agent_id=code_agent_id,
+                    step_limit=step_limit,
                 ),
             )
             if alias_id_counts[alias_ds_id] == 1:
@@ -166,6 +168,7 @@ def _register_default_presets() -> None:
                         dataset_id=alias_ds_id,
                         code_agent_factory=code_agent_factory,
                         code_agent_id=code_agent_id,
+                        step_limit=step_limit,
                     ),
                 )
 

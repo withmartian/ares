@@ -1,3 +1,6 @@
+# Copied from mini-swe-agent==1.14.4: minisweagent/config/mini.yaml
+# ARES owns this copy so MiniSWECodeAgent's default text-based behavior does not depend on
+# mini-swe-agent's bundled config layout or later tool-call-oriented config changes.
 agent:
   system_template: |
     You are a helpful assistant that can interact with a computer.

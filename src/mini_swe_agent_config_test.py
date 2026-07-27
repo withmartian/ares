@@ -32,29 +32,30 @@ def test_agent_config_keys_match_v1_agent_section() -> None:
     assert frozenset(config["agent"]) == mini_swe_agent._AGENT_CONFIG_KEYS
 
 
-def test_mini_swe_code_agent_initializes_from_repo_config() -> None:
+def test_mini_swe_code_agent_initializes_from_default_config() -> None:
     agent = mini_swe_agent.MiniSWECodeAgent(container=MockContainer(), llm_client=MockLLMClient())
-
-    assert agent._system_prompt.startswith("You are a helpful assistant")
-    assert agent._step_limit == 250
-    assert agent._cost_limit == 3.0
-    assert agent._env_timeout == 60
-    assert agent._environment_env_vars["PAGER"] == "cat"
-
-
-def test_mini_swe_code_agent_initializes_from_terminal_bench_config() -> None:
-    agent = mini_swe_agent.MiniSWECodeAgent(
-        container=MockContainer(),
-        llm_client=MockLLMClient(),
-        config_name=mini_swe_agent.MINI_SWE_V1_14_4_CONFIG_NAME,
-    )
 
     assert agent._system_prompt.startswith("You are a helpful assistant")
     assert agent._step_limit == 0
     assert agent._cost_limit == 3.0
     assert agent._env_timeout == 30
     assert agent._system_command == "uname -s"
-    assert "echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT`." in agent._agent_config["instance_template"]
+    assert agent._environment_env_vars["PAGER"] == "cat"
+
+
+def test_mini_swe_code_agent_initializes_from_swebench_config() -> None:
+    agent = mini_swe_agent.MiniSWECodeAgent(
+        container=MockContainer(),
+        llm_client=MockLLMClient(),
+        config_name=mini_swe_agent.SWEBENCH_CONFIG_NAME,
+    )
+
+    assert agent._system_prompt.startswith("You are a helpful assistant")
+    assert agent._step_limit == 250
+    assert agent._cost_limit == 3.0
+    assert agent._env_timeout == 60
+    assert agent._system_command == "uname -a"
+    assert "Regular source code files in /testbed" in agent._agent_config["instance_template"]
 
 
 @pytest.mark.asyncio
