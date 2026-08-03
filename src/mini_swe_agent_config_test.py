@@ -1,3 +1,4 @@
+import typing
 from unittest import mock
 
 from harbor.registry.client import factory as harbor_client_factory
@@ -11,6 +12,7 @@ _harbor_client.get_datasets.return_value = ()
 with mock.patch.object(harbor_client_factory.RegistryClientFactory, "create", return_value=_harbor_client):
     from ares.code_agents import mini_swe_agent
     from ares.containers import containers
+    from ares.llms import request
     from ares.llms import response
     from ares.testing.mock_container import MockContainer
     from ares.testing.mock_llm import MockLLMClient
@@ -30,14 +32,30 @@ def test_agent_config_keys_match_v1_agent_section() -> None:
     assert frozenset(config["agent"]) == mini_swe_agent._AGENT_CONFIG_KEYS
 
 
-def test_mini_swe_code_agent_initializes_from_repo_config() -> None:
+def test_mini_swe_code_agent_initializes_from_default_config() -> None:
     agent = mini_swe_agent.MiniSWECodeAgent(container=MockContainer(), llm_client=MockLLMClient())
+
+    assert agent._system_prompt.startswith("You are a helpful assistant")
+    assert agent._step_limit == 0
+    assert agent._cost_limit == 3.0
+    assert agent._env_timeout == 30
+    assert agent._system_command == "uname -s"
+    assert agent._environment_env_vars["PAGER"] == "cat"
+
+
+def test_mini_swe_code_agent_initializes_from_swebench_config() -> None:
+    agent = mini_swe_agent.MiniSWECodeAgent(
+        container=MockContainer(),
+        llm_client=MockLLMClient(),
+        config_name=mini_swe_agent.SWEBENCH_CONFIG_NAME,
+    )
 
     assert agent._system_prompt.startswith("You are a helpful assistant")
     assert agent._step_limit == 250
     assert agent._cost_limit == 3.0
     assert agent._env_timeout == 60
-    assert agent._environment_env_vars["PAGER"] == "cat"
+    assert agent._system_command == "uname -a"
+    assert "Regular source code files in /testbed" in agent._agent_config["instance_template"]
 
 
 @pytest.mark.asyncio
@@ -53,8 +71,9 @@ async def test_mini_swe_code_agent_uses_agent_observation_template() -> None:
         )
     )
 
-    assert "<returncode>0</returncode>" in agent._messages[-1]["content"]
-    assert "hi" in agent._messages[-1]["content"]
+    message = typing.cast(request.UserMessage, agent._messages[-1])
+    assert "<returncode>0</returncode>" in message["content"]
+    assert "hi" in message["content"]
 
 
 def test_mini_swe_code_agent_uses_agent_format_error_template() -> None:
