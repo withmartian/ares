@@ -195,7 +195,7 @@ Without this pattern, agents would need explicit RL-aware interfaces, breaking t
 
 #### 5. ARES Proxy (`ares-proxy/`)
 
-Go-based HTTP proxy that acts as man-in-the-middle between code agents and LLM APIs. Enables the queue-mediated pattern over HTTP (agents don't need to be in the same process):
+Rust-based HTTP proxy (axum/tokio) that acts as man-in-the-middle between code agents and LLM APIs. Enables the queue-mediated pattern over HTTP (agents don't need to be in the same process):
 - `POST /v1/chat/completions` - Receives agent LLM requests (blocks until response arrives)
 - `GET /poll` - Environment polls for pending requests
 - `POST /respond` - Environment sends responses back to agents
@@ -323,7 +323,7 @@ Create `.env` file from `.env.example`:
 GitHub Actions workflows run on PRs and main branch:
 - **ruff.yml**: Linting (`ruff check`) and formatting (`ruff format --check`)
 - **unit-tests.yml**: Python tests (`uv run -m pytest -q`)
-- **go-tests.yml**: Go tests for ares-proxy (`make test` and `make build`, only on ares-proxy/ changes)
+- **rust-tests.yml**: Rust checks for ares-proxy (`cargo fmt --check`, `cargo clippy`, `make test`, `make build`, only on ares-proxy/ changes)
 
 Before pushing, ensure:
 ```bash

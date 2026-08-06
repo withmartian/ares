@@ -2,7 +2,7 @@
 
 A lightweight HTTP proxy server that intercepts OpenAI-compatible chat completion requests and routes them through a queue-mediated polling system. Designed for use with the ARES (Agentic Research and Evaluation Suite) framework to enable RL-based control of LLM interactions.
 
-The proxy doesn't validate the request/response types; this should be handled by the clients.
+The proxy doesn't validate the request/response types beyond structural JSON validity; this should be handled by the clients.
 
 ## Overview
 
@@ -34,13 +34,14 @@ This architecture enables the ARES RL loop to intercept and control LLM interact
 
 ### Components
 
-#### Broker (`broker.go`)
+#### Broker (`src/broker.rs`)
 The core coordination engine that manages:
 - **Request queue**: Holds pending LLM requests
-- **Response channels**: Maps request IDs to response delivery channels
+- **Response channels**: Maps request IDs to oneshot response channels
 - **Timeout handling**: Cleans up stale requests after a configurable timeout (i.e. removes them)
+- **Disconnect handling**: A drop guard cleans up broker state if a client disconnects mid-request
 
-#### HTTP Endpoints (`main.go`)
+#### HTTP Endpoints (`src/main.rs`)
 
 1. **`POST /v1/chat/completions`**
    - OpenAI-compatible endpoint for LLM clients
@@ -83,17 +84,17 @@ export TIMEOUT_MINUTES=30
 
 ```bash
 # Using Makefile (recommended)
-make build   # Build the binary
+make build   # Build the release binary (copied to ./ares-proxy)
 make run     # Run with defaults (port 8080, 15 min timeout)
 make test    # Run all tests
 make clean   # Remove build artifacts
 
 # Or manually
-go build -o ares-proxy
-./ares-proxy
+cargo build --release
+./target/release/ares-proxy
 
 # Run with custom configuration
-PORT=9000 TIMEOUT_MINUTES=30 ./ares-proxy
+PORT=9000 TIMEOUT_MINUTES=30 ./target/release/ares-proxy
 ```
 
 ### Client Usage
@@ -154,9 +155,10 @@ for req in requests_list:
 make test
 
 # Or manually
-go test -v                                  # Run all tests
-go test -v -run TestBroker_SubmitAndPoll   # Run specific test
-go test -cover                              # Run with coverage
+cargo test                          # Run all tests
+cargo test submit_and_poll          # Run specific test
+cargo clippy --all-targets          # Lint
+cargo fmt                           # Format
 ```
 
 Tests run automatically in CI via GitHub Actions when any files in `ares-proxy/` are modified.
@@ -165,12 +167,13 @@ Tests run automatically in CI via GitHub Actions when any files in `ares-proxy/`
 
 ```
 ares-proxy/
-├── main.go         # HTTP server and endpoint handlers
-├── broker.go       # Core request/response coordination logic
-├── broker_test.go  # Unit tests for broker
-├── config.go       # Configuration loading
-├── types.go        # Data structures (PendingRequest, RespondRequest)
-├── go.mod          # Go module definition
+├── src/
+│   ├── main.rs     # HTTP server and endpoint handlers (axum)
+│   ├── broker.rs   # Core request/response coordination logic + unit tests
+│   ├── config.rs   # Configuration loading
+│   └── types.rs    # Data structures (PendingRequest, RespondRequest)
+├── Cargo.toml      # Crate definition and dependencies
+├── Makefile        # Build/test/run/clean targets
 └── README.md       # This file
 ```
 
@@ -193,36 +196,43 @@ This architecture allows ARES to treat LLM interactions as part of the RL loop w
 ### Timeouts
 If no response is received within `TIMEOUT_MINUTES`, the client request returns an error:
 ```
-request timeout after 15m0s
+Request failed: request timeout after 900s
 ```
 
 ### Invalid Request IDs
 If responding to a non-existent or timed-out request:
 ```
-request ID abc-123 not found (may have timed out)
+Failed to respond: request ID abc-123 not found (may have timed out)
 ```
 
-### Context Cancellation
-If the client disconnects, the request is cleaned up automatically and returns:
-```
-context canceled
-```
+### Client Disconnects
+If the client disconnects, the request is cleaned up automatically (the handler
+future is dropped and a guard removes the request from broker state).
+
+### Invalid JSON
+Request bodies sent to `/v1/chat/completions` must be valid JSON; invalid JSON
+is rejected with `400 Bad Request`.
 
 ## Concurrency
 
 ares-proxy is fully concurrent and thread-safe:
 - Multiple clients can submit requests simultaneously
 - Polling and responding can happen concurrently
-- All shared state is protected by mutexes
-- Tested with concurrent workloads (see `broker_test.go`)
+- All shared state is protected by a mutex
+- Tested with concurrent workloads (see `src/broker.rs` tests)
 
 ## Performance
 
 The proxy is designed for low latency:
 - Minimal processing overhead (just queuing/routing)
-- Buffered channels prevent blocking on response delivery
+- Oneshot channels deliver responses without blocking
 - Atomic queue operations minimize lock contention
-- No external dependencies (stdlib only)
+- Request/response payloads pass through as raw JSON (no re-serialization)
+
+## History
+
+This is a Rust port of the original Go implementation, preserving its HTTP API,
+configuration, and behavior. The Go version lives in git history prior to this port.
 
 ## License
 

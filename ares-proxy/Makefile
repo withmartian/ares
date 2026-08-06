@@ -2,16 +2,18 @@
 
 # Build the ares-proxy binary
 build:
-	go build -o ares-proxy .
+	cargo build --release
+	cp target/release/ares-proxy ares-proxy
 
 # Run tests
 test:
-	go test -v ./...
+	cargo test
 
 # Run the server
 run:
-	go run .
+	cargo run
 
 # Clean build artifacts
 clean:
+	cargo clean
 	rm -f ares-proxy

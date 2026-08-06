@@ -1,0 +1,23 @@
+[package]
+name = "ares-proxy"
+version = "0.1.0"
+edition = "2021"
+description = "Queue-mediated OpenAI-compatible HTTP proxy for the ARES RL loop (Rust port of ares-proxy)"
+license = "MIT"
+
+[[bin]]
+name = "ares-proxy"
+path = "src/main.rs"
+
+[dependencies]
+axum = "0.8"
+chrono = { version = "0.4", features = ["serde"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["raw_value"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "sync", "net"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+uuid = { version = "1", features = ["v4"] }
+
+[profile.release]
+strip = true
