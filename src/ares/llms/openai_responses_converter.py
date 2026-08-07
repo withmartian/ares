@@ -12,25 +12,39 @@ Conversion Notes:
     - messages converted to/from input items
 """
 
+from collections.abc import Iterable
 import logging
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 import openai.types.responses
+from openai.types.responses import response_input_message_content_list_param
+from openai.types.responses import response_output_message_param
 import openai.types.responses.response_create_params
 
 from ares.llms import request as llm_request
 
 _LOGGER = logging.getLogger(__name__)
 
+type _ResponsesContentBlock = (
+    response_input_message_content_list_param.ResponseInputContentParam | response_output_message_param.Content
+)
+type _ResponsesMessageContent = str | Iterable[_ResponsesContentBlock]
+type _ResponsesMessageRole = Literal["user", "assistant", "system", "developer"]
 
-def _message_content_from_responses(content: Any, *, strict: bool, role: str) -> str:
+
+def _message_content_from_responses(
+    content: _ResponsesMessageContent,
+    *,
+    strict: bool,
+    role: _ResponsesMessageRole,
+) -> str:
     """Extract text from Responses API message content."""
-    if not isinstance(content, list):
-        return llm_request._extract_string_content(content, strict=strict, context=f"Message content (role={role})")
+    if isinstance(content, str):
+        return content
 
     text_parts = []
     for block in content:
-        if isinstance(block, dict) and block.get("type") in {"input_text", "output_text", "text"}:
+        if block.get("type") in {"input_text", "output_text"}:
             text = block.get("text", "")
             if isinstance(text, str):
                 text_parts.append(text)
@@ -395,9 +409,14 @@ def from_external(
             # EasyInputMessage permits omitting type when role is present.
             elif item_type == "message" or (item_type is None and "role" in item):
                 role = item.get("role")
+                content = cast(_ResponsesMessageContent, item.get("content", ""))
 
                 if role in {"system", "developer"}:
-                    content_str = _message_content_from_responses(item.get("content", ""), strict=strict, role=role)
+                    content_str = _message_content_from_responses(
+                        content,
+                        strict=strict,
+                        role=cast(_ResponsesMessageRole, role),
+                    )
                     system_prompt = "\n\n".join(part for part in [system_prompt, content_str] if part)
                     continue
 
@@ -408,7 +427,11 @@ def from_external(
                     _LOGGER.warning("Skipping message with unsupported role: %s", role)
                     continue
 
-                content_str = _message_content_from_responses(item.get("content", ""), strict=strict, role=role)
+                content_str = _message_content_from_responses(
+                    content,
+                    strict=strict,
+                    role=cast(_ResponsesMessageRole, role),
+                )
 
                 # Build message dict with required fields
                 message_dict: dict[str, Any] = {"role": role, "content": content_str}
