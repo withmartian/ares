@@ -12,6 +12,7 @@ import collections
 import dataclasses
 import functools
 import logging
+import pathlib
 
 from harbor.models import registry as harbor_registry
 from harbor.models.task import task as harbor_task
@@ -19,6 +20,7 @@ from harbor.models.task import task as harbor_task
 from ares import registry
 from ares.code_agents import code_agent_base
 from ares.code_agents import mini_swe_agent
+from ares.code_agents import opencode_agent
 from ares.code_agents.terminus2 import terminus2_agent
 from ares.containers import containers
 from ares.environments import base
@@ -93,6 +95,7 @@ class HarborSpec:
             code_agent_factory=self.code_agent_factory,
             step_limit=self.step_limit,
             tracker=tracker,
+            artifact_root=pathlib.Path("logs") if self.code_agent_id == "opencode" else None,
         )
 
 
@@ -148,6 +151,7 @@ def _register_default_presets() -> None:
 
         for code_agent_id, code_agent_factory, step_limit in [
             ("mswea", _make_mswea_factory(ds_spec), 0),
+            ("opencode", opencode_agent.OpenCodeAgent, code_env.DEFAULT_STEP_LIMIT),
             ("terminus2", terminus2_agent.Terminus2Agent, code_env.DEFAULT_STEP_LIMIT),
         ]:
             registry.register_preset(

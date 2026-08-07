@@ -24,6 +24,15 @@ class TextData:
 
 
 @dataclasses.dataclass(frozen=True)
+class ToolCallData:
+    """A function call requested by the LLM."""
+
+    call_id: str
+    name: str
+    arguments: str
+
+
+@dataclasses.dataclass(frozen=True)
 class LLMResponse:
     """Response from an LLM call.
 
@@ -31,8 +40,10 @@ class LLMResponse:
         data: List of content blocks (currently only TextData, but extensible to ImageData, etc.)
         cost: Cost of the LLM call in USD.
         usage: Token usage information.
+        tool_calls: Function calls requested by the LLM.
     """
 
     data: list[TextData]
     cost: float
     usage: Usage
+    tool_calls: list[ToolCallData] = dataclasses.field(default_factory=list)

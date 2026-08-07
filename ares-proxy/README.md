@@ -1,8 +1,8 @@
 # ares-proxy
 
-A lightweight HTTP proxy server that intercepts OpenAI-compatible chat completion requests and routes them through a queue-mediated polling system. Designed for use with the ARES (Agentic Research and Evaluation Suite) framework to enable RL-based control of LLM interactions.
+A lightweight HTTP proxy server that intercepts LLM API requests and routes them through a queue-mediated polling system. Designed for use with the ARES (Agentic Research and Evaluation Suite) framework to enable RL-based control of LLM interactions.
 
-The proxy doesn't validate the request/response types; this should be handled by the clients.
+The proxy validates JSON syntax but not provider request/response schemas; schema validation belongs in the controller.
 
 ## Overview
 
@@ -22,8 +22,8 @@ This architecture enables the ARES RL loop to intercept and control LLM interact
 │ (Agent)     │         │              │         │ (RL Environment)│
 └─────────────┘         └──────────────┘         └─────────────────┘
      │                         │                          │
-     │ POST /v1/chat/          │ GET /poll                │
-     │   completions           │ (retrieve requests)      │
+     │ POST /v1/...            │ GET /poll                │
+     │ (blocks waiting)        │ (retrieve requests)      │
      │ (blocks waiting)        │◀─────────────────────────┤
      │                         │                          │
      │                         │ POST /respond            │
@@ -42,23 +42,27 @@ The core coordination engine that manages:
 
 #### HTTP Endpoints (`main.go`)
 
-1. **`POST /v1/chat/completions`**
-   - OpenAI-compatible endpoint for LLM clients
-   - Accepts standard chat completion requests
+1. **Intercepted LLM endpoints**
+   - `POST /v1/chat/completions` for OpenAI-compatible Chat Completions clients
+   - `POST /v1/responses` for OpenAI Responses clients
+   - `POST /v1/messages` for Anthropic Messages clients
+   - Accept raw request JSON without schema validation
    - Blocks until a response is available or timeout occurs
-   - Returns the response as JSON
+   - Returns the response using the content type supplied by the controller
 
 2. **`GET /poll`**
    - Retrieves all pending requests from the queue
    - Clears the queue atomically
    - Returns an array of pending requests, each containing:
      - `id`: Unique request identifier
+     - `endpoint`: The intercepted API path
      - `timestamp`: When the request was submitted
-     - `request`: The original request payload (chat completion JSON)
+     - `request`: The original request payload JSON
 
 3. **`POST /respond`**
    - Sends a response back to a waiting request
    - Requires request ID and response payload
+   - Accepts an optional `content_type`; `application/json` is the default and `text/event-stream` carries buffered SSE
    - Returns error if request ID not found (e.g., timed out)
 
 ## Configuration
@@ -96,9 +100,11 @@ go build -o ares-proxy
 PORT=9000 TIMEOUT_MINUTES=30 ./ares-proxy
 ```
 
+The proxy binds to localhost because its control endpoints are intentionally unauthenticated and are only used from within the sandbox.
+
 ### Client Usage
 
-Configure your LLM client to point at the proxy:
+Configure your LLM client to point at the proxy. The proxy currently intercepts Chat Completions, OpenAI Responses, and Anthropic Messages requests under `/v1`.
 
 ```python
 from openai import OpenAI
@@ -130,17 +136,19 @@ requests_list = response.json()
 
 for req in requests_list:
     request_id = req["id"]
+    endpoint = req["endpoint"]
     request_body = req["request"]
 
     # Process the request (e.g., send to real LLM)
-    llm_response = process_request(request_body)
+    llm_response = process_request(endpoint, request_body)
 
     # Send response back to waiting client
     requests.post(
         "http://localhost:8080/respond",
         json={
             "id": request_id,
-            "response": llm_response
+            "response": llm_response,
+            "content_type": "application/json",
         }
     )
 ```
@@ -166,6 +174,7 @@ Tests run automatically in CI via GitHub Actions when any files in `ares-proxy/`
 ```
 ares-proxy/
 ├── main.go         # HTTP server and endpoint handlers
+├── main_test.go    # HTTP endpoint tests
 ├── broker.go       # Core request/response coordination logic
 ├── broker_test.go  # Unit tests for broker
 ├── config.go       # Configuration loading
@@ -187,6 +196,8 @@ ares-proxy is designed to work with ARES's `QueueMediatedLLMClient`. The integra
 7. Proxy unblocks and returns response to code agent
 
 This architecture allows ARES to treat LLM interactions as part of the RL loop without agents needing to be modified.
+
+ARES actions are atomic rather than token streams. For streaming clients, the controller sends a complete SSE body to `/respond`; the proxy returns that buffered stream with `Content-Type: text/event-stream`.
 
 ## Error Handling
 

@@ -6,6 +6,7 @@ import functools
 import logging
 import os
 import pathlib
+import re
 import time
 from types import TracebackType
 from typing import Literal, NamedTuple, Protocol, Self
@@ -186,7 +187,11 @@ async def create_container(
     else:
         raise ValueError("Must specify one of image_name or dockerfile_path")
 
-    container_name = f"ares.{container_prefix}.{image_name_short}.{timestamp}.{unique_id}"
+    container_name = re.sub(
+        r"[^a-zA-Z0-9_.-]",
+        "-",
+        f"ares.{container_prefix}.{image_name_short}.{timestamp}.{unique_id}",
+    )
     container = create_fn(name=container_name, resources=resources)
 
     return container

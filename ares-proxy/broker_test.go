@@ -7,6 +7,10 @@ import (
 	"time"
 )
 
+func jsonProxyResponse(body json.RawMessage) ProxyResponse {
+	return ProxyResponse{Body: body, ContentType: "application/json"}
+}
+
 func TestBroker_SubmitAndPoll(t *testing.T) {
 	broker := NewBroker(1 * time.Minute)
 
@@ -14,10 +18,10 @@ func TestBroker_SubmitAndPoll(t *testing.T) {
 	testRequest := json.RawMessage(`{"model": "gpt-4", "messages": [{"role": "user", "content": "Hello"}]}`)
 
 	// Submit request in background
-	responseChan := make(chan json.RawMessage, 1)
+	responseChan := make(chan ProxyResponse, 1)
 	go func() {
 		ctx := context.Background()
-		response, err := broker.SubmitRequest(ctx, testRequest)
+		response, err := broker.SubmitRequest(ctx, "/v1/chat/completions", testRequest)
 		if err != nil {
 			t.Errorf("SubmitRequest failed: %v", err)
 			return
@@ -37,10 +41,13 @@ func TestBroker_SubmitAndPoll(t *testing.T) {
 	if string(pending[0].Request) != string(testRequest) {
 		t.Errorf("Request mismatch: got %s, want %s", pending[0].Request, testRequest)
 	}
+	if pending[0].Endpoint != "/v1/chat/completions" {
+		t.Errorf("Endpoint mismatch: got %s, want /v1/chat/completions", pending[0].Endpoint)
+	}
 
 	// Send response
 	testResponse := json.RawMessage(`{"id": "test", "choices": [{"message": {"role": "assistant", "content": "Hi"}}]}`)
-	err := broker.RespondToRequest(pending[0].ID, testResponse)
+	err := broker.RespondToRequest(pending[0].ID, jsonProxyResponse(testResponse))
 	if err != nil {
 		t.Fatalf("RespondToRequest failed: %v", err)
 	}
@@ -48,8 +55,8 @@ func TestBroker_SubmitAndPoll(t *testing.T) {
 	// Verify the original SubmitRequest call received the response
 	select {
 	case response := <-responseChan:
-		if string(response) != string(testResponse) {
-			t.Errorf("Response mismatch: got %s, want %s", response, testResponse)
+		if string(response.Body) != string(testResponse) {
+			t.Errorf("Response mismatch: got %s, want %s", response.Body, testResponse)
 		}
 	case <-time.After(1 * time.Second):
 		t.Fatal("Timeout waiting for response")
@@ -60,15 +67,15 @@ func TestBroker_MultipleConcurrentRequests(t *testing.T) {
 	broker := NewBroker(1 * time.Minute)
 
 	numRequests := 5
-	responses := make([]chan json.RawMessage, numRequests)
+	responses := make([]chan ProxyResponse, numRequests)
 
 	// Submit multiple requests concurrently
 	for i := 0; i < numRequests; i++ {
-		responses[i] = make(chan json.RawMessage, 1)
+		responses[i] = make(chan ProxyResponse, 1)
 		go func(idx int) {
 			ctx := context.Background()
 			req := json.RawMessage(`{"request": "` + string(rune('A'+idx)) + `"}`)
-			response, err := broker.SubmitRequest(ctx, req)
+			response, err := broker.SubmitRequest(ctx, "/v1/chat/completions", req)
 			if err != nil {
 				t.Errorf("Submit %d failed: %v", idx, err)
 				return
@@ -89,7 +96,7 @@ func TestBroker_MultipleConcurrentRequests(t *testing.T) {
 	// Respond to all
 	testResponse := json.RawMessage(`{"response": "ok"}`)
 	for _, req := range pending {
-		err := broker.RespondToRequest(req.ID, testResponse)
+		err := broker.RespondToRequest(req.ID, jsonProxyResponse(testResponse))
 		if err != nil {
 			t.Errorf("Respond failed for %s: %v", req.ID, err)
 		}
@@ -120,7 +127,7 @@ func TestBroker_RespondToNonexistentRequest(t *testing.T) {
 	broker := NewBroker(1 * time.Minute)
 
 	testResponse := json.RawMessage(`{"response": "test"}`)
-	err := broker.RespondToRequest("nonexistent-id", testResponse)
+	err := broker.RespondToRequest("nonexistent-id", jsonProxyResponse(testResponse))
 	if err == nil {
 		t.Error("Expected error when responding to nonexistent request")
 	}
@@ -138,7 +145,7 @@ func TestBroker_Timeout(t *testing.T) {
 	ctx := context.Background()
 
 	// Submit will timeout because no one responds
-	_, err := broker.SubmitRequest(ctx, testRequest)
+	_, err := broker.SubmitRequest(ctx, "/v1/chat/completions", testRequest)
 	if err == nil {
 		t.Fatal("Expected timeout error, got nil")
 	}
@@ -163,7 +170,7 @@ func TestBroker_ContextCancellation(t *testing.T) {
 	// Submit in background
 	errChan := make(chan error, 1)
 	go func() {
-		_, err := broker.SubmitRequest(ctx, testRequest)
+		_, err := broker.SubmitRequest(ctx, "/v1/chat/completions", testRequest)
 		errChan <- err
 	}()
 
@@ -200,7 +207,7 @@ func TestBroker_PollClearsQueue(t *testing.T) {
 	go func() {
 		ctx := context.Background()
 		testRequest := json.RawMessage(`{"test": "request"}`)
-		broker.SubmitRequest(ctx, testRequest)
+		broker.SubmitRequest(ctx, "/v1/chat/completions", testRequest)
 	}()
 
 	// Give it time to queue
@@ -228,7 +235,7 @@ func TestBroker_RequestTimestamp(t *testing.T) {
 	go func() {
 		ctx := context.Background()
 		testRequest := json.RawMessage(`{"test": "request"}`)
-		broker.SubmitRequest(ctx, testRequest)
+		broker.SubmitRequest(ctx, "/v1/chat/completions", testRequest)
 	}()
 
 	// Give it time to queue
@@ -262,13 +269,13 @@ func TestBroker_ExactlyOnceDelivery(t *testing.T) {
 
 	// Submit all requests
 	go func() {
-		broker.SubmitRequest(ctx1, testRequest1)
+		broker.SubmitRequest(ctx1, "/v1/chat/completions", testRequest1)
 	}()
 	go func() {
-		broker.SubmitRequest(ctx2, testRequest2) // Will timeout
+		broker.SubmitRequest(ctx2, "/v1/chat/completions", testRequest2) // Will timeout
 	}()
 	go func() {
-		broker.SubmitRequest(ctx3, testRequest3)
+		broker.SubmitRequest(ctx3, "/v1/chat/completions", testRequest3)
 	}()
 
 	// Give them time to queue
@@ -288,7 +295,7 @@ func TestBroker_ExactlyOnceDelivery(t *testing.T) {
 
 	// Respond to request 1 only
 	testResponse := json.RawMessage(`{"response": "ok"}`)
-	err := broker.RespondToRequest(pending1[0].ID, testResponse)
+	err := broker.RespondToRequest(pending1[0].ID, jsonProxyResponse(testResponse))
 	if err != nil {
 		t.Errorf("Failed to respond to request 1: %v", err)
 	}
@@ -306,12 +313,12 @@ func TestBroker_ExactlyOnceDelivery(t *testing.T) {
 	}
 
 	// Verify we can't respond to timed-out or cancelled requests
-	err = broker.RespondToRequest(pending1[1].ID, testResponse)
+	err = broker.RespondToRequest(pending1[1].ID, jsonProxyResponse(testResponse))
 	if err == nil {
 		t.Error("Expected error when responding to timed-out request")
 	}
 
-	err = broker.RespondToRequest(pending1[2].ID, testResponse)
+	err = broker.RespondToRequest(pending1[2].ID, jsonProxyResponse(testResponse))
 	if err == nil {
 		t.Error("Expected error when responding to cancelled request")
 	}

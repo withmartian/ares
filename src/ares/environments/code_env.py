@@ -13,9 +13,12 @@ import json
 import logging
 import pathlib
 import random
+import re
+import shlex
 import time
 from types import TracebackType
 from typing import Self
+import uuid
 
 from harbor.models import registry as harbor_registry
 from harbor.models.task import task as harbor_task
@@ -68,6 +71,7 @@ class CodeEnvironment(base.Environment[response.LLMResponse, request.LLMRequest 
         step_limit: int = DEFAULT_STEP_LIMIT,
         prefix: str = "harbor_env",
         tracker: stat_tracker.StatTracker | None = None,
+        artifact_root: pathlib.Path | str | None = None,
     ):
         self._tasks = tasks
         self._container_factory = container_factory
@@ -75,6 +79,7 @@ class CodeEnvironment(base.Environment[response.LLMResponse, request.LLMRequest 
         self._step_limit = step_limit
         self._prefix = prefix
         self._tracker = tracker if tracker is not None else stat_tracker.NullStatTracker()
+        self._artifact_root = pathlib.Path(artifact_root) if artifact_root is not None else None
 
         # We set the LLM client to a queue mediated client so that
         # we can return LLM requests in the reset and step methods.
@@ -89,6 +94,8 @@ class CodeEnvironment(base.Environment[response.LLMResponse, request.LLMRequest 
         self._code_agent_task: asyncio.Task[None] | None = None
         self._step_count = 0
         self._requires_reset = False
+        self._episode_artifact_dir: pathlib.Path | None = None
+        self._artifacts_persisted = False
 
         # Register for cleanup on exit.
         _ENVIRONMENT_JANITOR.register_for_cleanup(self)
@@ -102,11 +109,7 @@ class CodeEnvironment(base.Environment[response.LLMResponse, request.LLMRequest 
         self._step_count = 0
         self._requires_reset = False
 
-        if self._container is not None:
-            _LOGGER.debug("[%d] Stopping container on reset.", id(self))
-            # Stop the container to free resources.
-            await self._container.stop()
-            self._container = None
+        await self._stop_container()
 
         await self._reset_task()
         await self._start_container()
@@ -184,8 +187,11 @@ class CodeEnvironment(base.Environment[response.LLMResponse, request.LLMRequest 
             assert self._container is not None
             assert self._current_task is not None
             _LOGGER.debug("[%d] Running tests and evaluating.", id(self))
-            with self._tracker.timeit(f"{self._prefix}/run_tests_and_evaluate"):
-                reward = await self._compute_reward()
+            try:
+                with self._tracker.timeit(f"{self._prefix}/run_tests_and_evaluate"):
+                    reward = await self._compute_reward()
+            finally:
+                await self._persist_artifacts()
             _LOGGER.debug("[%d] Tests and evaluation completed. Reward: %f.", id(self), reward)
 
             # Cancel the queue get task.
@@ -211,10 +217,15 @@ class CodeEnvironment(base.Environment[response.LLMResponse, request.LLMRequest 
                 await self._code_agent_task
             self._code_agent_task = None
 
-        if self._container is not None:
-            _LOGGER.debug("[%d] Stopping container on exit.", id(self))
-            await self._container.stop()
-            self._container = None
+        await self._stop_container()
+
+    async def _stop_container(self) -> None:
+        if self._container is None:
+            return
+        _LOGGER.debug("[%d] Persisting artifacts and stopping container.", id(self))
+        await self._persist_artifacts()
+        await self._container.stop()
+        self._container = None
 
     async def __aenter__(self) -> Self:
         self._is_active = True
@@ -238,6 +249,13 @@ class CodeEnvironment(base.Environment[response.LLMResponse, request.LLMRequest 
     async def _reset_task(self) -> None:
         """Randomly select a task from the task list."""
         self._current_task = random.choice(self._tasks)
+        self._artifacts_persisted = False
+        if self._artifact_root is not None:
+            task_name = re.sub(r"[^a-zA-Z0-9_.-]", "-", self._current_task.name)
+            episode_id = f"{int(time.time())}-{str(uuid.uuid4())[:8]}"
+            self._episode_artifact_dir = self._artifact_root / f"{task_name}-{episode_id}"
+        else:
+            self._episode_artifact_dir = None
         _LOGGER.debug("[%d] Selected task %s.", id(self), self._current_task.name)
 
     async def _start_container(self) -> None:
@@ -261,6 +279,9 @@ class CodeEnvironment(base.Environment[response.LLMResponse, request.LLMRequest 
                 ),
             )
             await self._container.start()
+            log_dirs_result = await self._container.exec_run("mkdir -p /logs/agent /logs/verifier /logs/artifacts")
+            if log_dirs_result.exit_code != 0:
+                raise RuntimeError(f"Failed to create container log directories: {log_dirs_result.output}")
         _LOGGER.debug("[%d] Container setup complete.", id(self))
 
     async def _start_code_agent(self) -> None:
@@ -296,9 +317,10 @@ class CodeEnvironment(base.Environment[response.LLMResponse, request.LLMRequest 
         test_path = str(
             pathlib.Path("/tests") / self._current_task.paths.test_path.relative_to(self._current_task.paths.tests_dir)
         )
-        # TODO: Log the output of the test execution somewhere that makes sense
-        test_result = await self._container.exec_run(command=f"bash {test_path}")
-        _LOGGER.debug("[%d] Test result: %s.", id(self), test_result.output)
+        test_result = await self._container.exec_run(
+            command=f"bash {shlex.quote(test_path)} > /logs/verifier/test-stdout.txt 2>&1"
+        )
+        _LOGGER.debug("[%d] Test exited with code %d.", id(self), test_result.exit_code)
 
         # Try to read reward from both
         for reward_path in [
@@ -316,6 +338,24 @@ class CodeEnvironment(base.Environment[response.LLMResponse, request.LLMRequest 
                 pass
 
         raise ValueError(f"[{id(self)}] No reward found for task {self._current_task.name}")
+
+    @property
+    def artifact_dir(self) -> pathlib.Path | None:
+        """Host directory containing the current episode's persisted logs."""
+        return self._episode_artifact_dir
+
+    async def _persist_artifacts(self) -> None:
+        if self._container is None or self._episode_artifact_dir is None or self._artifacts_persisted:
+            return
+
+        try:
+            await self._container.download_dir("/logs", self._episode_artifact_dir)
+        except Exception:
+            _LOGGER.exception("[%d] Failed to persist artifacts to %s", id(self), self._episode_artifact_dir)
+            return
+
+        self._artifacts_persisted = True
+        _LOGGER.info("[%d] Persisted episode artifacts to %s", id(self), self._episode_artifact_dir)
 
     async def _parse_reward_file(self, remote_path: pathlib.Path | str) -> float | None:
         """Helper to parse a reward from a text or json file in the container."""

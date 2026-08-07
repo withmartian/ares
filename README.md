@@ -66,6 +66,10 @@ if __name__ == "__main__":
     asyncio.run(main())
 ```
 
+Use the corresponding `-opencode` preset, such as `sbv-opencode`, to run OpenCode inside the task sandbox. ARES installs OpenCode, configures it to use the in-sandbox ARES proxy through the OpenAI Responses API, and exposes each OpenCode model request through the same `reset()`/`step()` loop. Building the Linux proxy binary requires Go or Docker on the ARES client.
+
+OpenCode presets disable session-title generation so only task-relevant requests enter the RL loop. Episode artifacts are saved under `logs/`, including OpenCode JSONL, mediated request/action JSONL, proxy logs, and verifier output.
+
 To run the example above you'll need a Martian API key set in your `.env` file. To get a key:
 
 1) Go to https://app.withmartian.com
