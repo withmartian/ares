@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"mime"
 	"time"
 )
 
@@ -30,16 +31,30 @@ type ProxyResponse struct {
 
 // ProxyResponse converts a RespondRequest to a ProxyResponse for the intercepted LLM client.
 func (r RespondRequest) ProxyResponse() (ProxyResponse, error) {
-	contentType := r.ContentType
-	if contentType == "" || contentType == "application/json" {
-		return ProxyResponse{Body: r.Response, ContentType: "application/json"}, nil
+	if len(r.Response) == 0 {
+		return ProxyResponse{}, fmt.Errorf("response is required")
 	}
-	if contentType != "text/event-stream" {
+
+	contentType := r.ContentType
+	if contentType == "" {
+		contentType = "application/json"
+	}
+	mediaType, params, err := mime.ParseMediaType(contentType)
+	if err != nil {
+		return ProxyResponse{}, fmt.Errorf("invalid content type %q: %w", contentType, err)
+	}
+	contentType = mime.FormatMediaType(mediaType, params)
+
+	if mediaType == "application/json" {
+		return ProxyResponse{Body: r.Response, ContentType: contentType}, nil
+	}
+	if mediaType != "text/event-stream" {
 		return ProxyResponse{}, fmt.Errorf("unsupported content type %q", contentType)
 	}
 
+	// Non-JSON bodies travel inside /respond's JSON envelope as strings, then become raw HTTP bytes here.
 	var body string
-	if err := json.Unmarshal(r.Response, &body); err != nil {
+	if err = json.Unmarshal(r.Response, &body); err != nil {
 		return ProxyResponse{}, fmt.Errorf("response must be a JSON string for content type %q: %w", contentType, err)
 	}
 

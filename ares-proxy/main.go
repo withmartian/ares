@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strings"
 )
 
 func main() {
@@ -64,7 +65,7 @@ func handleLLMRequest(broker *Broker) http.HandlerFunc {
 
 		// Send the response back to the client
 		w.Header().Set("Content-Type", response.ContentType)
-		if response.ContentType == "text/event-stream" {
+		if strings.HasPrefix(response.ContentType, "text/event-stream") {
 			w.Header().Set("Cache-Control", "no-cache")
 			w.Header().Set("Connection", "keep-alive")
 		}

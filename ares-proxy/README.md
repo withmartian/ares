@@ -63,6 +63,7 @@ The core coordination engine that manages:
    - Sends a response back to a waiting request
    - Requires request ID and response payload
    - Accepts an optional `content_type`; `application/json` is the default and `text/event-stream` carries buffered SSE
+   - Non-JSON bodies, including buffered SSE, are JSON strings in the `/respond` envelope and become raw HTTP response bytes at this boundary
    - Returns error if request ID not found (e.g., timed out)
 
 ## Configuration
@@ -100,7 +101,7 @@ go build -o ares-proxy
 PORT=9000 TIMEOUT_MINUTES=30 ./ares-proxy
 ```
 
-The proxy binds to localhost because its control endpoints are intentionally unauthenticated and are only used from within the sandbox.
+The proxy binds to localhost because its control endpoints are intentionally unauthenticated and are only used from within a dedicated task sandbox. The ARES client invokes `/poll` and `/respond` through the container execution API, so no sandbox port exposure is required.
 
 ### Client Usage
 

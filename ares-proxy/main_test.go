@@ -132,7 +132,7 @@ func TestLLMEndpoints_RouteRawRequests(t *testing.T) {
 			endpoint:    "/v1/responses",
 			request:     `{"model":"gpt-5","input":[{"role":"user","content":[{"type":"input_text","text":"hello"}]}],"stream":true}`,
 			response:    "event: response.completed\ndata: {\"type\":\"response.completed\"}\n\n",
-			contentType: "text/event-stream",
+			contentType: "text/event-stream; charset=utf-8",
 		},
 		{
 			name:        "anthropic messages",
@@ -233,5 +233,24 @@ func TestLLMEndpoints_RejectInvalidJSON(t *testing.T) {
 	}
 	if pending := broker.PollRequests(); len(pending) != 0 {
 		t.Fatalf("invalid request was queued: %v", pending)
+	}
+}
+
+func TestRespondRejectsMissingResponse(t *testing.T) {
+	broker := NewBroker(1 * time.Minute)
+	server := newTestServer(broker)
+	defer server.Close()
+
+	resp, err := doRequest(
+		server.Client(),
+		http.MethodPost,
+		server.URL+"/respond",
+		bytes.NewBufferString(`{"id":"request-id"}`),
+	)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	if resp.statusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", resp.statusCode, http.StatusBadRequest)
 	}
 }
