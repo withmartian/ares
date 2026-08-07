@@ -50,7 +50,6 @@ func handleLLMRequest(broker *Broker) http.HandlerFunc {
 			http.Error(w, fmt.Sprintf("Failed to read request: %v", err), http.StatusBadRequest)
 			return
 		}
-		defer r.Body.Close()
 		if !json.Valid(body) {
 			http.Error(w, "Invalid JSON", http.StatusBadRequest)
 			return
@@ -69,7 +68,9 @@ func handleLLMRequest(broker *Broker) http.HandlerFunc {
 			w.Header().Set("Cache-Control", "no-cache")
 			w.Header().Set("Connection", "keep-alive")
 		}
-		w.Write(response.Body)
+		if _, err := w.Write(response.Body); err != nil {
+			log.Printf("Failed to write LLM response: %v", err)
+		}
 	}
 }
 
@@ -109,8 +110,6 @@ func handleRespond(broker *Broker) http.HandlerFunc {
 			http.Error(w, fmt.Sprintf("Invalid JSON: %v", err), http.StatusBadRequest)
 			return
 		}
-		defer r.Body.Close()
-
 		proxyResponse, err := req.ProxyResponse()
 		if err != nil {
 			http.Error(w, fmt.Sprintf("Invalid response: %v", err), http.StatusBadRequest)
@@ -125,6 +124,8 @@ func handleRespond(broker *Broker) http.HandlerFunc {
 
 		// Acknowledge success
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+		if err := json.NewEncoder(w).Encode(map[string]string{"status": "ok"}); err != nil {
+			log.Printf("Failed to write response acknowledgement: %v", err)
+		}
 	}
 }

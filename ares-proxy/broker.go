@@ -51,26 +51,37 @@ func (b *Broker) SubmitRequest(ctx context.Context, endpoint string, requestBody
 	})
 	b.mu.Unlock()
 
+	timer := time.NewTimer(b.timeout)
+	defer timer.Stop()
+
 	// Wait for response with timeout
 	select {
 	case response := <-responseChan:
 		// Got a response!
 		return response, nil
-	case <-time.After(b.timeout):
-		// Timeout - clean up both map and queue
-		b.mu.Lock()
-		delete(b.pendingRequests, id)
-		b.removePendingRequestFromQueue(id)
-		b.mu.Unlock()
-		return ProxyResponse{}, fmt.Errorf("request timeout after %s", b.timeout)
+	case <-timer.C:
+		if b.expireRequest(id) {
+			return ProxyResponse{}, fmt.Errorf("request timeout after %s", b.timeout)
+		}
+		return <-responseChan, nil
 	case <-ctx.Done():
-		// Client disconnected - clean up both map and queue
-		b.mu.Lock()
-		delete(b.pendingRequests, id)
-		b.removePendingRequestFromQueue(id)
-		b.mu.Unlock()
-		return ProxyResponse{}, ctx.Err()
+		if b.expireRequest(id) {
+			return ProxyResponse{}, ctx.Err()
+		}
+		return <-responseChan, nil
 	}
+}
+
+// expireRequest claims a pending request for expiration.
+func (b *Broker) expireRequest(id string) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if _, exists := b.pendingRequests[id]; !exists {
+		return false
+	}
+	delete(b.pendingRequests, id)
+	b.removePendingRequestFromQueue(id)
+	return true
 }
 
 // removePendingRequestFromQueue removes a request from the queue by ID
@@ -111,13 +122,11 @@ func (b *Broker) RespondToRequest(id string, response ProxyResponse) error {
 		b.mu.Unlock()
 		return fmt.Errorf("request ID %s not found (may have timed out)", id)
 	}
-	// Remove from pending requests
+	// Claim the request and deliver while holding the lock so expiration cannot win afterward.
 	delete(b.pendingRequests, id)
-	b.mu.Unlock()
-
-	// Send response (non-blocking since channel is buffered)
 	responseChan <- response
 	close(responseChan)
+	b.mu.Unlock()
 
 	return nil
 }

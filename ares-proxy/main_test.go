@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -14,6 +15,33 @@ import (
 type receivedResponse struct {
 	body        string
 	contentType string
+	statusCode  int
+}
+
+func doRequest(client *http.Client, method string, url string, body io.Reader) (receivedResponse, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, method, url, body)
+	if err != nil {
+		return receivedResponse{}, err
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return receivedResponse{}, err
+	}
+	responseBody, readErr := io.ReadAll(resp.Body)
+	closeErr := resp.Body.Close()
+	if readErr != nil {
+		return receivedResponse{}, readErr
+	}
+	if closeErr != nil {
+		return receivedResponse{}, closeErr
+	}
+	return receivedResponse{
+		body:        string(responseBody),
+		contentType: resp.Header.Get("Content-Type"),
+		statusCode:  resp.StatusCode,
+	}, nil
 }
 
 func newTestServer(broker *Broker) *httptest.Server {
@@ -27,22 +55,16 @@ func pollUntilRequest(t *testing.T, client *http.Client, serverURL string) Pendi
 
 	deadline := time.Now().Add(1 * time.Second)
 	for time.Now().Before(deadline) {
-		resp, err := client.Get(serverURL + "/poll")
+		resp, err := doRequest(client, http.MethodGet, serverURL+"/poll", nil)
 		if err != nil {
 			t.Fatalf("poll failed: %v", err)
 		}
-
-		body, err := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		if err != nil {
-			t.Fatalf("failed to read poll response: %v", err)
-		}
-		if resp.StatusCode != http.StatusOK {
-			t.Fatalf("poll status = %d, body = %s", resp.StatusCode, body)
+		if resp.statusCode != http.StatusOK {
+			t.Fatalf("poll status = %d, body = %s", resp.statusCode, resp.body)
 		}
 
 		var pending []PendingRequest
-		if err := json.Unmarshal(body, &pending); err != nil {
+		if err := json.Unmarshal([]byte(resp.body), &pending); err != nil {
 			t.Fatalf("failed to decode poll response: %v", err)
 		}
 		if len(pending) > 0 {
@@ -81,18 +103,12 @@ func respondToRequest(
 	if err != nil {
 		t.Fatalf("failed to encode respond request: %v", err)
 	}
-	resp, err := client.Post(serverURL+"/respond", "application/json", bytes.NewReader(body))
+	resp, err := doRequest(client, http.MethodPost, serverURL+"/respond", bytes.NewReader(body))
 	if err != nil {
 		t.Fatalf("respond failed: %v", err)
 	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, err := io.ReadAll(resp.Body)
-		if err != nil {
-			t.Fatalf("failed to read respond response: %v", err)
-		}
-		t.Fatalf("respond status = %d, body = %s", resp.StatusCode, body)
+	if resp.statusCode != http.StatusOK {
+		t.Fatalf("respond status = %d, body = %s", resp.statusCode, resp.body)
 	}
 }
 
@@ -136,27 +152,21 @@ func TestLLMEndpoints_RouteRawRequests(t *testing.T) {
 			responseChan := make(chan receivedResponse, 1)
 			errorChan := make(chan error, 1)
 			go func() {
-				resp, err := server.Client().Post(
+				resp, err := doRequest(
+					server.Client(),
+					http.MethodPost,
 					server.URL+tc.endpoint,
-					"application/json",
 					bytes.NewBufferString(tc.request),
 				)
 				if err != nil {
 					errorChan <- err
 					return
 				}
-				defer resp.Body.Close()
-
-				body, err := io.ReadAll(resp.Body)
-				if err != nil {
-					errorChan <- err
+				if resp.statusCode != http.StatusOK {
+					errorChan <- fmt.Errorf("status = %d, body = %s", resp.statusCode, resp.body)
 					return
 				}
-				if resp.StatusCode != http.StatusOK {
-					errorChan <- fmt.Errorf("status = %d, body = %s", resp.StatusCode, body)
-					return
-				}
-				responseChan <- receivedResponse{body: string(body), contentType: resp.Header.Get("Content-Type")}
+				responseChan <- resp
 			}()
 
 			pending := pollUntilRequest(t, server.Client(), server.URL)
@@ -193,14 +203,12 @@ func TestLLMEndpoints_RejectNonPost(t *testing.T) {
 
 	for _, endpoint := range []string{"/v1/chat/completions", "/v1/responses", "/v1/messages"} {
 		t.Run(endpoint, func(t *testing.T) {
-			resp, err := server.Client().Get(server.URL + endpoint)
+			resp, err := doRequest(server.Client(), http.MethodGet, server.URL+endpoint, nil)
 			if err != nil {
 				t.Fatalf("request failed: %v", err)
 			}
-			defer resp.Body.Close()
-
-			if resp.StatusCode != http.StatusMethodNotAllowed {
-				t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusMethodNotAllowed)
+			if resp.statusCode != http.StatusMethodNotAllowed {
+				t.Fatalf("status = %d, want %d", resp.statusCode, http.StatusMethodNotAllowed)
 			}
 		})
 	}
@@ -211,18 +219,17 @@ func TestLLMEndpoints_RejectInvalidJSON(t *testing.T) {
 	server := newTestServer(broker)
 	defer server.Close()
 
-	resp, err := server.Client().Post(
+	resp, err := doRequest(
+		server.Client(),
+		http.MethodPost,
 		server.URL+"/v1/responses",
-		"application/json",
 		bytes.NewBufferString("not-json"),
 	)
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusBadRequest)
+	if resp.statusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", resp.statusCode, http.StatusBadRequest)
 	}
 	if pending := broker.PollRequests(); len(pending) != 0 {
 		t.Fatalf("invalid request was queued: %v", pending)
