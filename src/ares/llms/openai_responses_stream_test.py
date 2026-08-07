@@ -20,6 +20,7 @@ def _parse_sse(stream: str) -> list[dict[str, Any]]:
         assert lines[1].startswith("data: ")
         event: dict[str, Any] = json.loads(lines[1].removeprefix("data: "))
         _STREAM_EVENT_ADAPTER.validate_python(event)
+        assert lines[0].removeprefix("event: ") == event["type"]
         events.append(event)
     return events
 
