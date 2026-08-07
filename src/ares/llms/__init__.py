@@ -14,6 +14,7 @@ from ares.llms.request import UserMessage
 # Response types
 from ares.llms.response import LLMResponse
 from ares.llms.response import TextData
+from ares.llms.response import ToolCallData
 from ares.llms.response import Usage
 
 __all__ = [
@@ -24,6 +25,7 @@ __all__ = [
     "LLMResponse",
     "Message",
     "TextData",
+    "ToolCallData",
     "ToolCallMessage",
     "ToolCallResponseMessage",
     "Usage",
