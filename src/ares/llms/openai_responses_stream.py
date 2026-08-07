@@ -9,6 +9,7 @@ from ares.llms import response
 
 
 def _sse_event(event: dict[str, Any]) -> str:
+    """Serialize one Responses event in SSE wire format."""
     return f"event: {event['type']}\ndata: {json.dumps(event, separators=(',', ':'))}\n\n"
 
 
@@ -20,6 +21,7 @@ def to_sse(llm_response: response.LLMResponse, *, model: str) -> str:
     sequence_number = 0
 
     def add_event(event_type: str, **values: Any) -> None:
+        """Append one event with the next sequence number."""
         nonlocal sequence_number
         events.append({"type": event_type, "sequence_number": sequence_number, **values})
         sequence_number += 1
@@ -31,6 +33,9 @@ def to_sse(llm_response: response.LLMResponse, *, model: str) -> str:
         "status": "in_progress",
         "model": model,
         "output": [],
+        "parallel_tool_calls": True,
+        "tool_choice": "auto",
+        "tools": [],
     }
     add_event("response.created", response=response_base)
     add_event("response.in_progress", response=response_base)
@@ -105,7 +110,6 @@ def to_sse(llm_response: response.LLMResponse, *, model: str) -> str:
             "response.function_call_arguments.done",
             item_id=item_id,
             output_index=output_index,
-            name=tool_call.name,
             arguments=tool_call.arguments,
         )
         completed_item = {**empty_item, "status": "completed", "arguments": tool_call.arguments}
@@ -114,7 +118,9 @@ def to_sse(llm_response: response.LLMResponse, *, model: str) -> str:
 
     usage = {
         "input_tokens": llm_response.usage.prompt_tokens,
+        "input_tokens_details": {"cached_tokens": 0},
         "output_tokens": llm_response.usage.generated_tokens,
+        "output_tokens_details": {"reasoning_tokens": 0},
         "total_tokens": llm_response.usage.total_tokens,
     }
     add_event(

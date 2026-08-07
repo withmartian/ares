@@ -1,18 +1,26 @@
 """Tests for OpenAI Responses stream serialization."""
 
 import json
+from typing import Any
+
+import openai.types.responses
+import pydantic
 
 from ares.llms import openai_responses_stream
 from ares.llms import response
 
+_STREAM_EVENT_ADAPTER = pydantic.TypeAdapter(openai.types.responses.ResponseStreamEvent)
 
-def _parse_sse(stream: str) -> list[dict]:
-    events = []
+
+def _parse_sse(stream: str) -> list[dict[str, Any]]:
+    events: list[dict[str, Any]] = []
     for block in stream.strip().split("\n\n"):
         lines = block.splitlines()
         assert lines[0].startswith("event: ")
         assert lines[1].startswith("data: ")
-        events.append(json.loads(lines[1].removeprefix("data: ")))
+        event: dict[str, Any] = json.loads(lines[1].removeprefix("data: "))
+        _STREAM_EVENT_ADAPTER.validate_python(event)
+        events.append(event)
     return events
 
 
@@ -48,6 +56,8 @@ def test_to_sse_serializes_text_and_tool_calls() -> None:
     assert function_call["arguments"] == '{"command":"pwd"}'
     assert events[-1]["response"]["usage"] == {
         "input_tokens": 12,
+        "input_tokens_details": {"cached_tokens": 0},
         "output_tokens": 7,
+        "output_tokens_details": {"reasoning_tokens": 0},
         "total_tokens": 19,
     }
