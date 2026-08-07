@@ -35,7 +35,7 @@ class TestStructuredContentHandling:
             openai_responses_converter.from_external(kwargs, strict=True)
 
     def test_from_responses_with_structured_content_non_strict(self):
-        """Test that structured content returns empty string in non-strict mode."""
+        """Test non-strict conversion preserves text and skips unsupported blocks."""
         kwargs = openai.types.responses.response_create_params.ResponseCreateParamsBase(
             model="gpt-4",
             input=[

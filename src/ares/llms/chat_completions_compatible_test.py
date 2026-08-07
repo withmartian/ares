@@ -1,9 +1,15 @@
 """Tests for the Chat Completions-compatible LLM client."""
 
+import decimal
+
+import frozendict
+import openai
 import openai.types.chat.chat_completion
 import pytest
 
+from ares.llms import accounting
 from ares.llms import chat_completions_compatible
+from ares.llms import request
 
 
 @pytest.mark.asyncio
@@ -35,17 +41,29 @@ async def test_client_preserves_tool_calls(monkeypatch: pytest.MonkeyPatch) -> N
         }
     )
 
-    async def query(*args, **kwargs):
-        del args, kwargs
+    async def query(
+        llm_client: openai.AsyncClient,
+        model: str,
+        req: request.LLMRequest,
+    ) -> openai.types.chat.chat_completion.ChatCompletion:
+        del llm_client, model, req
         return completion
 
-    def get_cost(*args, **kwargs):
-        del args, kwargs
-        return 0.0
+    def get_cost(
+        model_id: str,
+        completion: openai.types.chat.chat_completion.ChatCompletion,
+        *,
+        cost_mapping: frozendict.frozendict[str, accounting.ModelCost],
+    ) -> decimal.Decimal:
+        del model_id, completion, cost_mapping
+        return decimal.Decimal(0)
+
+    def cost_list() -> frozendict.frozendict[str, accounting.ModelCost]:
+        return frozendict.frozendict()
 
     monkeypatch.setattr(chat_completions_compatible, "_query_llm_with_retry", query)
     monkeypatch.setattr(chat_completions_compatible.accounting, "get_llm_cost", get_cost)
-    monkeypatch.setattr(chat_completions_compatible.accounting, "martian_cost_list", lambda: {})
+    monkeypatch.setattr(chat_completions_compatible.accounting, "martian_cost_list", cost_list)
 
     client = chat_completions_compatible.ChatCompletionCompatibleLLMClient(
         model="test-model",
