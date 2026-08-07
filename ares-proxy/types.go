@@ -28,6 +28,7 @@ type ProxyResponse struct {
 	ContentType string
 }
 
+// ProxyResponse converts a RespondRequest to a ProxyResponse for the intercepted LLM client.
 func (r RespondRequest) ProxyResponse() (ProxyResponse, error) {
 	contentType := r.ContentType
 	if contentType == "" || contentType == "application/json" {
