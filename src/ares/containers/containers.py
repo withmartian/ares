@@ -86,13 +86,14 @@ class Container(Protocol):
         """Upload a full directory to the container."""
         local_path_uploads = []
         remote_path_uploads = []
+        remote_root = pathlib.PurePosixPath(remote_path)
 
         for file_path in local_path.rglob("*"):
             if file_path.is_file():
                 relative_path = file_path.relative_to(local_path)
-                destination_path = str(remote_path / relative_path)
+                destination_path = str(remote_root / relative_path)
 
-                local_path_uploads.append(str(file_path))
+                local_path_uploads.append(file_path)
                 remote_path_uploads.append(destination_path)
 
         await self.upload_files(local_path_uploads, remote_path_uploads)
@@ -118,7 +119,7 @@ class Container(Protocol):
             local_file_path.parent.mkdir(parents=True, exist_ok=True)
 
             remote_path_downloads.append(file_path)
-            local_path_downloads.append(str(local_file_path))
+            local_path_downloads.append(local_file_path)
 
         if remote_path_downloads:
             await self.download_files(remote_path_downloads, local_path_downloads)
