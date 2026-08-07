@@ -50,3 +50,14 @@ async def test_create_container_sanitizes_image_tag_in_name() -> None:
     assert _CapturingContainerFactory.name is not None
     assert ":" not in _CapturingContainerFactory.name
     assert "gpt2-codegolf-20251031" in _CapturingContainerFactory.name
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("container_prefix", ["bad:prefix", "bad/prefix", "bad prefix", ""])
+async def test_create_container_rejects_invalid_prefix(container_prefix: str) -> None:
+    with pytest.raises(ValueError, match="container_prefix"):
+        await base.create_container(
+            container_factory=_CapturingContainerFactory,
+            container_prefix=container_prefix,
+            image_name="example:latest",
+        )
