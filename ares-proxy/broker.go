@@ -13,7 +13,7 @@ import (
 // Broker manages pending requests and coordinates responses
 type Broker struct {
 	// pendingRequests maps request ID to a response channel
-	pendingRequests map[string]chan json.RawMessage
+	pendingRequests map[string]chan ProxyResponse
 	// requestQueue holds requests waiting to be polled
 	requestQueue []PendingRequest
 	// mu protects both maps from concurrent access
@@ -25,51 +25,63 @@ type Broker struct {
 // NewBroker creates a new broker with the given timeout
 func NewBroker(timeout time.Duration) *Broker {
 	return &Broker{
-		pendingRequests: make(map[string]chan json.RawMessage),
+		pendingRequests: make(map[string]chan ProxyResponse),
 		requestQueue:    make([]PendingRequest, 0),
 		timeout:         timeout,
 	}
 }
 
-// SubmitRequest adds a request to the queue and waits for a response
-// This is called by the /v1/chat/completions endpoint
-func (b *Broker) SubmitRequest(ctx context.Context, requestBody json.RawMessage) (json.RawMessage, error) {
+// SubmitRequest adds a request to the queue and waits for a response.
+// This is called by the intercepted LLM API endpoints.
+func (b *Broker) SubmitRequest(ctx context.Context, endpoint string, requestBody json.RawMessage) (ProxyResponse, error) {
 	// Generate a unique ID for this request
 	id := uuid.New().String()
 
 	// Create a channel to receive the response
-	responseChan := make(chan json.RawMessage, 1)
+	responseChan := make(chan ProxyResponse, 1)
 
 	// Add to pending requests
 	b.mu.Lock()
 	b.pendingRequests[id] = responseChan
 	b.requestQueue = append(b.requestQueue, PendingRequest{
 		ID:        id,
+		Endpoint:  endpoint,
 		Request:   requestBody,
 		Timestamp: time.Now(),
 	})
 	b.mu.Unlock()
+
+	timer := time.NewTimer(b.timeout)
+	defer timer.Stop()
 
 	// Wait for response with timeout
 	select {
 	case response := <-responseChan:
 		// Got a response!
 		return response, nil
-	case <-time.After(b.timeout):
-		// Timeout - clean up both map and queue
-		b.mu.Lock()
-		delete(b.pendingRequests, id)
-		b.removePendingRequestFromQueue(id)
-		b.mu.Unlock()
-		return nil, fmt.Errorf("request timeout after %s", b.timeout)
+	case <-timer.C:
+		if b.expireRequest(id) {
+			return ProxyResponse{}, fmt.Errorf("request timeout after %s", b.timeout)
+		}
+		return <-responseChan, nil
 	case <-ctx.Done():
-		// Client disconnected - clean up both map and queue
-		b.mu.Lock()
-		delete(b.pendingRequests, id)
-		b.removePendingRequestFromQueue(id)
-		b.mu.Unlock()
-		return nil, ctx.Err()
+		if b.expireRequest(id) {
+			return ProxyResponse{}, ctx.Err()
+		}
+		return <-responseChan, nil
 	}
+}
+
+// expireRequest claims a pending request for expiration.
+func (b *Broker) expireRequest(id string) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if _, exists := b.pendingRequests[id]; !exists {
+		return false
+	}
+	delete(b.pendingRequests, id)
+	b.removePendingRequestFromQueue(id)
+	return true
 }
 
 // removePendingRequestFromQueue removes a request from the queue by ID
@@ -103,20 +115,18 @@ func (b *Broker) PollRequests() []PendingRequest {
 
 // RespondToRequest sends a response back to a waiting request
 // This is called by the /respond endpoint
-func (b *Broker) RespondToRequest(id string, response json.RawMessage) error {
+func (b *Broker) RespondToRequest(id string, response ProxyResponse) error {
 	b.mu.Lock()
 	responseChan, exists := b.pendingRequests[id]
 	if !exists {
 		b.mu.Unlock()
 		return fmt.Errorf("request ID %s not found (may have timed out)", id)
 	}
-	// Remove from pending requests
+	// Claim the request and deliver while holding the lock so expiration cannot win afterward.
 	delete(b.pendingRequests, id)
-	b.mu.Unlock()
-
-	// Send response (non-blocking since channel is buffered)
 	responseChan <- response
 	close(responseChan)
+	b.mu.Unlock()
 
 	return nil
 }

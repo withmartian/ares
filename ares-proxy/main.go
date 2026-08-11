@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strings"
 )
 
 func main() {
@@ -16,22 +17,28 @@ func main() {
 	// Create the broker
 	broker := NewBroker(config.Timeout)
 
-	// Set up HTTP routes
-	http.HandleFunc("/v1/chat/completions", handleChatCompletion(broker))
-	http.HandleFunc("/poll", handlePoll(broker))
-	http.HandleFunc("/respond", handleRespond(broker))
+	mux := http.NewServeMux()
+	registerRoutes(mux, broker)
 
 	// Start the server
-	addr := ":" + config.Port
+	addr := "127.0.0.1:" + config.Port
 	log.Printf("Server listening on %s", addr)
-	if err := http.ListenAndServe(addr, nil); err != nil {
+	if err := http.ListenAndServe(addr, mux); err != nil {
 		log.Fatalf("Server failed: %v", err)
 	}
 }
 
-// handleChatCompletion handles POST /v1/chat/completions
-// This holds the request and waits for a response
-func handleChatCompletion(broker *Broker) http.HandlerFunc {
+func registerRoutes(mux *http.ServeMux, broker *Broker) {
+	mux.HandleFunc("/v1/chat/completions", handleLLMRequest(broker))
+	mux.HandleFunc("/v1/responses", handleLLMRequest(broker))
+	mux.HandleFunc("/v1/messages", handleLLMRequest(broker))
+	mux.HandleFunc("/poll", handlePoll(broker))
+	mux.HandleFunc("/respond", handleRespond(broker))
+}
+
+// handleLLMRequest handles intercepted LLM API requests.
+// This holds the request and waits for a response.
+func handleLLMRequest(broker *Broker) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -44,18 +51,27 @@ func handleChatCompletion(broker *Broker) http.HandlerFunc {
 			http.Error(w, fmt.Sprintf("Failed to read request: %v", err), http.StatusBadRequest)
 			return
 		}
-		defer r.Body.Close()
+		if !json.Valid(body) {
+			http.Error(w, "Invalid JSON", http.StatusBadRequest)
+			return
+		}
 
 		// Submit the request and wait for response
-		response, err := broker.SubmitRequest(r.Context(), json.RawMessage(body))
+		response, err := broker.SubmitRequest(r.Context(), r.URL.Path, json.RawMessage(body))
 		if err != nil {
 			http.Error(w, fmt.Sprintf("Request failed: %v", err), http.StatusInternalServerError)
 			return
 		}
 
 		// Send the response back to the client
-		w.Header().Set("Content-Type", "application/json")
-		w.Write(response)
+		w.Header().Set("Content-Type", response.ContentType)
+		if strings.HasPrefix(response.ContentType, "text/event-stream") {
+			w.Header().Set("Cache-Control", "no-cache")
+			w.Header().Set("Connection", "keep-alive")
+		}
+		if _, err := w.Write(response.Body); err != nil {
+			log.Printf("Failed to write LLM response: %v", err)
+		}
 	}
 }
 
@@ -95,16 +111,22 @@ func handleRespond(broker *Broker) http.HandlerFunc {
 			http.Error(w, fmt.Sprintf("Invalid JSON: %v", err), http.StatusBadRequest)
 			return
 		}
-		defer r.Body.Close()
+		proxyResponse, err := req.ProxyResponse()
+		if err != nil {
+			http.Error(w, fmt.Sprintf("Invalid response: %v", err), http.StatusBadRequest)
+			return
+		}
 
 		// Send the response to the waiting request
-		if err := broker.RespondToRequest(req.ID, req.Response); err != nil {
+		if err := broker.RespondToRequest(req.ID, proxyResponse); err != nil {
 			http.Error(w, fmt.Sprintf("Failed to respond: %v", err), http.StatusNotFound)
 			return
 		}
 
 		// Acknowledge success
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+		if err := json.NewEncoder(w).Encode(map[string]string{"status": "ok"}); err != nil {
+			log.Printf("Failed to write response acknowledgement: %v", err)
+		}
 	}
 }
