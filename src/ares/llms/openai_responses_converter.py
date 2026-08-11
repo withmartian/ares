@@ -12,15 +12,50 @@ Conversion Notes:
     - messages converted to/from input items
 """
 
+from collections.abc import Iterable
 import logging
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 import openai.types.responses
+from openai.types.responses import response_input_message_content_list_param
+from openai.types.responses import response_output_message_param
 import openai.types.responses.response_create_params
 
 from ares.llms import request as llm_request
 
 _LOGGER = logging.getLogger(__name__)
+
+type _ResponsesContentBlock = (
+    response_input_message_content_list_param.ResponseInputContentParam | response_output_message_param.Content
+)
+type _ResponsesMessageContent = str | Iterable[_ResponsesContentBlock]
+type _ResponsesMessageRole = Literal["user", "assistant", "system", "developer"]
+
+
+def _message_content_from_responses(
+    content: _ResponsesMessageContent,
+    *,
+    strict: bool,
+    role: _ResponsesMessageRole,
+) -> str:
+    """Extract text from Responses API message content."""
+    if isinstance(content, str):
+        return content
+
+    text_parts = []
+    for block in content:
+        if block.get("type") in {"input_text", "output_text"}:
+            text = block.get("text", "")
+            if isinstance(text, str):
+                text_parts.append(text)
+                continue
+
+        msg = f"Unsupported Responses message content block for role={role}: {block}"
+        if strict:
+            raise ValueError(msg)
+        _LOGGER.warning(msg)
+
+    return "".join(text_parts)
 
 
 def _tool_to_responses(tool: llm_request.Tool) -> openai.types.responses.FunctionToolParam:
@@ -294,6 +329,7 @@ def from_external(
         "metadata",
         "service_tier",
         "instructions",
+        "store",  # Response persistence is provider-side state and is intentionally ignored.
     }
 
     # Check for unhandled parameters
@@ -307,6 +343,7 @@ def from_external(
     # Convert input items to messages
     input_param = kwargs.get("input", [])
     filtered_messages: list[llm_request.Message] = []
+    system_prompt = kwargs.get("instructions")
 
     if isinstance(input_param, str):
         filtered_messages = [llm_request.UserMessage(role="user", content=input_param)]
@@ -327,6 +364,10 @@ def from_external(
                         )
                     _LOGGER.warning("Tool call (function_call) missing required fields, skipping. Item: %s", item)
                     continue
+
+                previous = filtered_messages[-1] if filtered_messages else None
+                if previous is None or (previous.get("role") != "assistant" and "call_id" not in previous):
+                    filtered_messages.append(llm_request.AssistantMessage(role="assistant", content=""))
 
                 # Create ToolCallMessage
                 filtered_messages.append(
@@ -365,9 +406,19 @@ def from_external(
                         cast(llm_request.Message, {"role": "tool", "content": output_str, "tool_call_id": call_id})
                     )
 
-            # Handle regular messages
-            elif item_type == "message":
+            # EasyInputMessage permits omitting type when role is present.
+            elif item_type == "message" or (item_type is None and "role" in item):
                 role = item.get("role")
+                content = cast(_ResponsesMessageContent, item.get("content", ""))
+
+                if role in {"system", "developer"}:
+                    content_str = _message_content_from_responses(
+                        content,
+                        strict=strict,
+                        role=cast(_ResponsesMessageRole, role),
+                    )
+                    system_prompt = "\n\n".join(part for part in [system_prompt, content_str] if part)
+                    continue
 
                 # Validate role is supported
                 if role not in llm_request._VALID_ROLES:
@@ -376,10 +427,10 @@ def from_external(
                     _LOGGER.warning("Skipping message with unsupported role: %s", role)
                     continue
 
-                # Extract content - use helper to detect unsupported block formats
-                content_param = item.get("content", "")
-                content_str = llm_request._extract_string_content(
-                    content_param, strict=strict, context=f"Message content (role={role})"
+                content_str = _message_content_from_responses(
+                    content,
+                    strict=strict,
+                    role=cast(_ResponsesMessageRole, role),
                 )
 
                 # Build message dict with required fields
@@ -431,5 +482,5 @@ def from_external(
         tool_choice=resolved_tool_choice,
         metadata=cast(dict[str, Any] | None, kwargs.get("metadata")),
         service_tier=kwargs.get("service_tier"),
-        system_prompt=kwargs.get("instructions"),
+        system_prompt=system_prompt,
     )

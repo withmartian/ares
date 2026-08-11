@@ -31,11 +31,11 @@ class TestStructuredContentHandling:
             ],
         )
 
-        with pytest.raises(ValueError, match=r"list of blocks.*structured content"):
+        with pytest.raises(ValueError, match="Unsupported Responses message content block"):
             openai_responses_converter.from_external(kwargs, strict=True)
 
     def test_from_responses_with_structured_content_non_strict(self):
-        """Test that structured content returns empty string in non-strict mode."""
+        """Test non-strict conversion preserves text and skips unsupported blocks."""
         kwargs = openai.types.responses.response_create_params.ResponseCreateParamsBase(
             model="gpt-4",
             input=[
@@ -52,10 +52,10 @@ class TestStructuredContentHandling:
             ],
         )
 
-        # Should not raise, but content will be empty
+        # Unsupported blocks are skipped without losing supported text blocks.
         request = openai_responses_converter.from_external(kwargs, strict=False)
         assert len(request.messages) == 1
-        assert request.messages[0].get("content") == ""
+        assert request.messages[0].get("content") == "Hello"
 
 
 class TestLLMRequestResponsesConversion:
@@ -201,19 +201,33 @@ class TestLLMRequestResponsesConversion:
 
         assert list(request.messages) == [{"role": "user", "content": "Hello, world!"}]
 
-    def test_from_responses_list_input(self):
-        """Test parsing Responses with list input."""
-        kwargs: openai.types.responses.response_create_params.ResponseCreateParams = {
-            "model": "gpt-4o",
-            "input": [
-                {"type": "message", "role": "user", "content": "Hello"},
-                {"type": "message", "role": "assistant", "content": "Hi!"},
-            ],
-        }
+    def test_from_responses_opencode_easy_input_messages(self):
+        """Test OpenCode's block content and omitted message type."""
+        kwargs = cast(
+            openai.types.responses.response_create_params.ResponseCreateParams,
+            {
+                "model": "ares",
+                "input": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "input_text", "text": "Hello"},
+                            {"type": "input_text", "text": ", world!"},
+                        ],
+                    },
+                    {
+                        "role": "assistant",
+                        "content": [{"type": "output_text", "text": "Hi!"}],
+                    },
+                ],
+                "stream": True,
+            },
+        )
+
         request = openai_responses_converter.from_external(kwargs)
 
-        assert list(request.messages) == [
-            {"role": "user", "content": "Hello"},
+        assert request.messages == [
+            {"role": "user", "content": "Hello, world!"},
             {"role": "assistant", "content": "Hi!"},
         ]
 
@@ -320,7 +334,8 @@ class TestLLMRequestResponsesConversion:
         )
         request = openai_responses_converter.from_external(kwargs)
 
-        tool_call_msg = request.messages[1]
+        assert request.messages[1] == {"role": "assistant", "content": ""}
+        tool_call_msg = request.messages[2]
         assert "call_id" in tool_call_msg
         assert tool_call_msg["call_id"] == "call_456"  # type: ignore[typeddict-item]
         assert tool_call_msg["name"] == "get_weather"  # type: ignore[typeddict-item]
