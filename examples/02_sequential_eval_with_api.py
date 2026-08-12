@@ -14,29 +14,40 @@ Prerequisites:
 Example usage:
 
     uv run -m examples.02_sequential_eval_with_api
+
+    uv run -m examples.02_sequential_eval_with_api \
+        --model openai/gpt-5-mini \
+        --preset-name tbench-opencode
 """
 
 import asyncio
+import dataclasses
 
 import ares
 from ares import config
 from ares.llms import chat_completions_compatible
+import simple_parsing
 
 from . import utils
 
 
-async def main():
+@dataclasses.dataclass(frozen=True)
+class Args:
+    model: str = "openai/gpt-5-mini"
+    preset_name: str = "sbv-mswea"
+
+
+async def main(args: Args):
     # Fail fast if env vars aren't set.
     if not config.CONFIG.chat_completion_api_key:
         raise ValueError("CHAT_COMPLETION_API_KEY is not set")
 
     # Create an LLM client using the ChatCompletionCompatibleLLMClient
-    agent = chat_completions_compatible.ChatCompletionCompatibleLLMClient(model="openai/gpt-5-mini")
+    agent = chat_completions_compatible.ChatCompletionCompatibleLLMClient(model=args.model)
 
-    # `sbv-mswea` is SWE-bench Verified with mini-swe-agent.
     # `:0` means load only the first task.
     # By default, ares.make will use local Docker containers.
-    async with ares.make("sbv-mswea:0") as env:
+    async with ares.make(f"{args.preset_name}:0") as env:
         # Reset the environment to get the first timestep
         ts = await env.reset()
         step_count = 0
@@ -61,8 +72,11 @@ async def main():
         print(f"\n{'=' * 80}")
         print(f"Episode completed after {step_count} steps")
         print(f"Total reward: {total_reward}")
+        artifact_dir = getattr(env, "artifact_dir", None)
+        if artifact_dir is not None:
+            print(f"Artifacts: {artifact_dir}")
         print(f"{'=' * 80}")
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    asyncio.run(main(simple_parsing.parse(Args, add_option_string_dash_variants=simple_parsing.DashVariant.DASH)))
