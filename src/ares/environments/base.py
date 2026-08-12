@@ -6,6 +6,7 @@ import functools
 import logging
 import os
 import pathlib
+import re
 import time
 from types import TracebackType
 from typing import Literal, NamedTuple, Protocol, Self
@@ -16,6 +17,7 @@ from numpy.typing import NDArray
 from ares.containers import containers
 
 _LOGGER = logging.getLogger(__name__)
+_CONTAINER_NAME_COMPONENT_PATTERN = re.compile(r"^[a-zA-Z0-9_.-]+$")
 
 # Make sure using the correct docker socket
 # NOTE: Don't override user configuration (e.g. Colima/Docker Desktop on macOS).
@@ -170,8 +172,11 @@ async def create_container(
         A created container (not yet started).
 
     Raises:
-        ValueError: If neither image_name nor dockerfile_path is specified.
+        ValueError: If container_prefix is invalid or neither image_name nor dockerfile_path is specified.
     """
+    if not _CONTAINER_NAME_COMPONENT_PATTERN.fullmatch(container_prefix):
+        raise ValueError("container_prefix must contain only alphanumeric characters, underscores, periods, or hyphens")
+
     timestamp = int(time.time())
     unique_id = str(uuid.uuid4())[:8]  # Use first 8 chars of UUID for brevity
 
@@ -186,6 +191,8 @@ async def create_container(
     else:
         raise ValueError("Must specify one of image_name or dockerfile_path")
 
+    # Image-derived names can contain Docker-invalid tag separators such as ":".
+    image_name_short = re.sub(r"[^a-zA-Z0-9_.-]", "-", image_name_short)
     container_name = f"ares.{container_prefix}.{image_name_short}.{timestamp}.{unique_id}"
     container = create_fn(name=container_name, resources=resources)
 
