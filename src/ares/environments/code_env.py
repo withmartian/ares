@@ -20,10 +20,13 @@ from types import TracebackType
 from typing import Self
 import uuid
 
+import daytona.common.errors
+import docker.errors
 from harbor.models import registry as harbor_registry
 from harbor.models.task import task as harbor_task
 from harbor.models.trial import paths as harbor_paths
 from harbor.registry import client as harbor_dataset_client
+import tenacity
 
 from ares.code_agents import code_agent_base
 from ares.code_agents import mini_swe_agent
@@ -37,6 +40,22 @@ from ares.llms import response
 
 _LOGGER = logging.getLogger(__name__)
 DEFAULT_STEP_LIMIT = 250
+
+
+@tenacity.retry(
+    retry=tenacity.retry_if_exception_type((TimeoutError, daytona.common.errors.DaytonaError, docker.errors.APIError)),
+    stop=tenacity.stop_after_attempt(3),
+    wait=tenacity.wait_exponential_jitter(initial=0.1, max=1),
+    before_sleep=tenacity.before_sleep_log(_LOGGER, logging.WARNING),
+    reraise=True,
+)
+async def _download_artifacts(
+    container: containers.Container,
+    remote_path: str,
+    local_path: pathlib.Path,
+) -> None:
+    """Download artifacts, retrying transient container failures."""
+    await container.download_dir(remote_path, local_path)
 
 
 @functools.lru_cache(maxsize=1)
@@ -219,13 +238,19 @@ class CodeEnvironment(base.Environment[response.LLMResponse, request.LLMRequest 
 
         await self._stop_container()
 
-    async def _stop_container(self) -> None:
+    async def _stop_container(self, *, persist_artifacts: bool = True) -> None:
         if self._container is None:
             return
         _LOGGER.debug("[%d] Persisting artifacts and stopping container.", id(self))
-        await self._persist_artifacts()
-        await self._container.stop()
-        self._container = None
+        container = self._container
+        try:
+            if persist_artifacts:
+                await self._persist_artifacts()
+        finally:
+            try:
+                await container.stop()
+            finally:
+                self._container = None
 
     async def __aenter__(self) -> Self:
         self._is_active = True
@@ -278,10 +303,17 @@ class CodeEnvironment(base.Environment[response.LLMResponse, request.LLMRequest 
                     disk=self._current_task.config.environment.storage_mb // 1024,
                 ),
             )
-            await self._container.start()
-            log_dirs_result = await self._container.exec_run("mkdir -p /logs/agent /logs/verifier /logs/artifacts")
-            if log_dirs_result.exit_code != 0:
-                raise RuntimeError(f"Failed to create container log directories: {log_dirs_result.output}")
+            try:
+                await self._container.start()
+                log_dirs_result = await self._container.exec_run("mkdir -p /logs/agent /logs/verifier /logs/artifacts")
+                if log_dirs_result.exit_code != 0:
+                    raise RuntimeError(f"Failed to create container log directories: {log_dirs_result.output}")
+            except BaseException:
+                try:
+                    await self._stop_container(persist_artifacts=False)
+                except Exception:
+                    _LOGGER.exception("[%d] Failed to clean up partially started container", id(self))
+                raise
         _LOGGER.debug("[%d] Container setup complete.", id(self))
 
     async def _start_code_agent(self) -> None:
@@ -342,18 +374,13 @@ class CodeEnvironment(base.Environment[response.LLMResponse, request.LLMRequest 
     @property
     def artifact_dir(self) -> pathlib.Path | None:
         """Host directory containing the current episode's persisted logs."""
-        return self._episode_artifact_dir
+        return self._episode_artifact_dir if self._artifacts_persisted else None
 
     async def _persist_artifacts(self) -> None:
         if self._container is None or self._episode_artifact_dir is None or self._artifacts_persisted:
             return
 
-        try:
-            await self._container.download_dir("/logs", self._episode_artifact_dir)
-        except Exception:
-            _LOGGER.exception("[%d] Failed to persist artifacts to %s", id(self), self._episode_artifact_dir)
-            return
-
+        await _download_artifacts(self._container, "/logs", self._episode_artifact_dir)
         self._artifacts_persisted = True
         _LOGGER.info("[%d] Persisted episode artifacts to %s", id(self), self._episode_artifact_dir)
 

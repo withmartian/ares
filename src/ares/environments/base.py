@@ -172,7 +172,7 @@ async def create_container(
         A created container (not yet started).
 
     Raises:
-        ValueError: If neither image_name nor dockerfile_path is specified.
+        ValueError: If container_prefix is invalid or neither image_name nor dockerfile_path is specified.
     """
     if not _CONTAINER_NAME_COMPONENT_PATTERN.fullmatch(container_prefix):
         raise ValueError("container_prefix must contain only alphanumeric characters, underscores, periods, or hyphens")
