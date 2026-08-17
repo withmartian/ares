@@ -49,3 +49,4 @@ Each example file contains a detailed docstring at the top explaining what it do
 - **02_sequential_eval_with_api.py** - Shows how to swap the local LLM for a frontier model accessed via API (GPT-5-mini through Martian).
 - **03_parallel_eval_with_api.py** - Demonstrates parallel evaluation of all SWE-bench Verified tasks using cloud containers (Daytona) for scalability.
 - **05_tinker_train.py** - Shows how to train code agents using RL with ARES environments and Tinker's training infrastructure, featuring LoRA fine-tuning, async parallel rollouts, and WandB logging.
+- **06_discover_and_evaluate.py** - Interactive example showing how to discover available task presets in ARES and evaluate tasks from different datasets.
