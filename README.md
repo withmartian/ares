@@ -43,7 +43,7 @@ You can get started by using this minimal loop to run mini-swe-agent on SWE-benc
 Note: to run this particular example you will need:
 
 - Docker (with the daemon running)
-- A Martian API key (see below)
+- A Martian API key (see details below)
 
 ```python
 import asyncio
