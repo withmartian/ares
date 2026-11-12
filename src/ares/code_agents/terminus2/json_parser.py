@@ -112,7 +112,8 @@ class Terminus2JSONParser:
                 return (None, f"ERROR: Command at index {i} must be an object.")
 
             keystrokes = cmd.get("keystrokes")
-            if not keystrokes or not isinstance(keystrokes, str):
+            # Empty keystrokes are allowed: the prompt template uses {"keystrokes": "", "duration": N} to wait.
+            if not isinstance(keystrokes, str):
                 return (None, f"ERROR: Command at index {i} must have a 'keystrokes' string field.")
 
             duration = cmd.get("duration", 1.0)

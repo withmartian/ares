@@ -189,6 +189,29 @@ class TestJSONParserValidation:
         assert error is not None
         assert "keystrokes" in error.lower()
 
+    def test_empty_keystrokes_wait(self):
+        """The template's wait command, {"keystrokes": "", "duration": 10.0}, parses."""
+        response = """{
+  "analysis": "Build still running",
+  "plan": "Wait",
+  "commands": [
+    {
+      "keystrokes": "",
+      "duration": 10.0
+    }
+  ],
+  "task_complete": false
+}"""
+
+        parser = json_parser.Terminus2JSONParser()
+        result, error = parser.parse(response)
+
+        assert error is None
+        assert result is not None
+        assert len(result.commands) == 1
+        assert result.commands[0].keystrokes == ""
+        assert result.commands[0].duration == 10.0
+
     def test_invalid_duration_type(self):
         """Test error when duration is not a number."""
         response = """{
