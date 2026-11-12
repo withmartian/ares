@@ -139,20 +139,22 @@ class TestXMLParserValidation:
         assert "invalid duration attribute" in error.lower()
 
     def test_empty_keystrokes(self):
-        """Test error when keystrokes element has no text."""
+        """An empty keystrokes element is the template's wait command."""
         response = """<response>
 <analysis>Test</analysis>
 <plan>Test</plan>
 <commands>
-<keystrokes duration="1.0"></keystrokes>
+<keystrokes duration="10.0"></keystrokes>
+<keystrokes duration="5.0"/>
 </commands>
 </response>"""
 
         parser = xml_parser.Terminus2XMLParser()
-        _result, error = parser.parse(response)
+        result, error = parser.parse(response)
 
-        assert error is not None
-        assert "must have text content" in error.lower()
+        assert error is None
+        assert result is not None
+        assert [(c.keystrokes, c.duration) for c in result.commands] == [("", 10.0), ("", 5.0)]
 
     def test_multiple_commands(self):
         """Test parsing multiple commands."""

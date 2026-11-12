@@ -98,11 +98,11 @@ class Terminus2XMLParser:
 
             # Look for <keystrokes> elements directly (not wrapped in <command>)
             for i, keystrokes_elem in enumerate(commands_elem.findall("keystrokes")):
-                if keystrokes_elem.text is None:
-                    return (None, f"ERROR: Keystrokes element at index {i} must have text content.")
-
-                # Don't strip - preserve exact whitespace as in official implementation
-                keystrokes = keystrokes_elem.text
+                # Don't strip - preserve exact whitespace as in official implementation.
+                # An empty element is a wait: the prompt template uses <keystrokes duration="N"></keystrokes>.
+                if keystrokes_elem.text is None and len(keystrokes_elem):
+                    return (None, f"ERROR: Keystrokes element at index {i} must contain text, not child elements.")
+                keystrokes = keystrokes_elem.text or ""
 
                 # Duration is an XML attribute, not a child element
                 duration_attr = keystrokes_elem.get("duration")
